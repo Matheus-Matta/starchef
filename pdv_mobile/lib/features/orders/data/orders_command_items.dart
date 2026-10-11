@@ -37,6 +37,10 @@ extension OrdersCommandItems on OrdersRepository {
     kind: 'add_item',
     summary: '${quantity}x $productName',
     body: {
+      // A identidade da anotação, dada aqui e guardada na fila com o corpo:
+      // se a loja gravar e cair antes de responder, o reenvio (loja ou nuvem)
+      // leva o MESMO id, e a sincronização junta as cópias numa só.
+      'id': OperationId.uuid(),
       'product': productId,
       'quantity': quantity,
       'variations': variationId == null ? const [] : [variationId],

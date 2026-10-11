@@ -25,7 +25,11 @@ EXCLUDED = {
     "synchronization.SyncRun": "Tabela interna da sincronização (§14.5).",
     "synchronization.SyncConflict": "Tabela interna da sincronização (§14.5).",
     "synchronization.SyncFileTransfer": "Tabela interna da sincronização (§14.5).",
-    "synchronization.SyncDirty": "Tabela interna da sincronização (§14.5)."
+    "synchronization.SyncDirty": "Tabela interna da sincronização (§14.5).",
+    # O histórico do que CADA nó ignorou: sincronizá-lo mandaria ao outro lado
+    # a versão que ele mesmo já venceu — e o registro feito durante o apply
+    # geraria evento de volta, o laço de eco.
+    "synchronization.SyncDiscard": "Histórico local do que este nó ignorou."
     ,
     # Credencial de matrícula. Sincronizá-la mandaria para a LOJA o hash do
     # bilhete de todas as outras — e o bilhete é justamente o que autoriza

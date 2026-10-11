@@ -146,16 +146,25 @@ mixin _DraftFlowSection on _HomePageShared {
   /// falhou: o rascunho continua intacto, e quem chamou deve PARAR em vez de
   /// seguir para a cozinha ou para o pagamento.
   @override
-  Future<bool> _materializeDraft() async {
-    if (activeOrder != null) return true;
+  Future<bool> _materializeDraft({bool cozinha = false}) async {
+    if (activeOrder != null && !draft.simulada) return true;
     if (draft.isEmpty) return false;
 
-    final pedido = await _work(() async {
+    // UM envio: pedido, itens, comandas e — no F9 — a cozinha juntos.
+    final pedido = await _workResolvendo(() async {
       final materializer = OrderDraftMaterializer(api, accessToken: token);
-      return await materializer.materialize(draft, restaurantId: restaurantId);
+      return await materializer.materialize(
+        draft,
+        restaurantId: restaurantId,
+        cozinha: cozinha,
+      );
     }, errorTitle: 'Não foi possível abrir o pedido');
 
-    if (pedido == null || !mounted) return false;
+    // Recusa resolvida (a comanda estava em outra conta, que foi aberta):
+    // o F9 segue com ELA.
+    if (pedido == null || !mounted) {
+      return activeOrder != null && !draft.simulada;
+    }
 
     activeOrder = pedido;
     selectedCommand = draft.command;

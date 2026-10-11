@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.contrib.auth.hashers import check_password
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
@@ -15,6 +15,7 @@ from apps.core.numbers import parse_money
 from apps.core.tenant import tenant_context
 from apps.orders.models import Order
 from apps.orders.signals import order_fully_paid
+from apps.payments import recebimento_por_uuid
 from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
 from apps.payments.terminals import (
     CashSessionConflict,
@@ -512,20 +513,44 @@ def register_payment(
     cash_register_id=None,
     terminal=None,
     installation_id="",
+    payment_id=None,
+    client_updated_at=None,
 ):
     with tenant_context(order.account):
-        if idempotency_key:
-            existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
-            if existing:
-                return existing
-
         # PostgreSQL rejeita FOR UPDATE quando o JOIN inclui o lado nullable.
         # O `of` mantém o eager loading, mas restringe o lock ao pedido.
         order = Order.objects.select_related("branch").select_for_update(of=("self",)).get(pk=order.pk)
+        # O UUID do PDV é conferido DEPOIS da trava do pedido — dois envios
+        # simultâneos do mesmo UUID se enfileiram aqui e o segundo encontra o
+        # primeiro — e ANTES do "pedido já pago": o reenvio do recebimento que
+        # quitou o pedido é o mesmo recebimento (`recebimento_por_uuid.py`).
+        ja_existe, refazer = recebimento_por_uuid.conciliar(
+            order, payment_id, payment_method_id=payment_method_id, amount=amount,
+            metadata=metadata, client_updated_at=client_updated_at, user=user,
+        )
+        if ja_existe is not None and not refazer:
+            return ja_existe
+        if refazer:
+            # A versão anterior foi desfeita (`cancel_payment`): o pedido
+            # mudou de estado, e a nova é reaplicada na MESMA linha.
+            order.refresh_from_db()
+        # A chave antiga vem DEPOIS do UUID: conferida antes, ela devolvia o
+        # recebimento sem olhar horário nem valor (o PDV manda as duas). Segue
+        # valendo para o terminal que ainda não manda UUID.
+        if idempotency_key and ja_existe is None:
+            existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+            if existing:
+                recebimento_por_uuid.guardar_reenvio_pela_chave(
+                    existing, payment_method_id, amount, metadata, user)
+                return existing
         if order.status in {Order.STATUS_CANCELLED, Order.STATUS_REFUNDED}:
             raise ValidationError("Pedidos cancelados ou estornados não podem ser pagos.")
         if order.payment_status == Order.PAYMENT_PAID:
-            raise ValidationError("O pedido já foi pago.")
+            # Com o pedido, o PDV abre a venda paga em vez de mostrar o erro.
+            from apps.orders.conflitos import ConflitoComDestino, destino
+
+            raise ConflitoComDestino("O pedido já foi pago.", code="pedido_ja_pago",
+                                     **destino(order.pk))
 
         # `.get()` aqui transformava um id inválido — forma inativa, de outro
         # restaurante ou que nunca existiu — em `DoesNotExist` e 500. O id vem
@@ -606,20 +631,44 @@ def register_payment(
             # `CashRegisterSerializer.sales`).
             payment_metadata["cash_register"] = str(cash_register.pk)
 
-        payment = Payment.objects.create(
-            account=order.account,
-            restaurant=order.restaurant,
-            branch=order.branch,
-            order=order,
-            payment_method=payment_method,
-            card_subtype=card_subtype,
-            amount=accepted_amount,
-            change_amount=change_amount,
-            idempotency_key=idempotency_key,
-            metadata=payment_metadata,
-            created_by=user,
-            updated_by=user,
-        )
+        recebimento_por_uuid.marcar_horario(payment_metadata, client_updated_at)
+        campos = {
+            "payment_method": payment_method,
+            "card_subtype": card_subtype,
+            "amount": accepted_amount,
+            "change_amount": change_amount,
+            "metadata": payment_metadata,
+            "updated_by": user,
+        }
+        if ja_existe is not None:
+            # Versão nova do MESMO recebimento: mesma linha, mesmo UUID, e a
+            # chave de idempotência que ele já tinha.
+            payment = ja_existe
+            for campo, valor in campos.items():
+                setattr(payment, campo, valor)
+            payment.status = Payment.STATUS_APPROVED
+            payment.save(update_fields=[*campos, "status", "updated_at"])
+        else:
+            try:
+                with transaction.atomic():
+                    payment = Payment.objects.create(
+                        **({"id": payment_id} if payment_id else {}),
+                        account=order.account,
+                        restaurant=order.restaurant,
+                        branch=order.branch,
+                        order=order,
+                        idempotency_key=idempotency_key,
+                        created_by=user,
+                        **campos,
+                    )
+            except IntegrityError:
+                # O UUID chegou pela sincronização entre a conferência e a
+                # inserção: o recebimento existe, e ele é a resposta.
+                existente = recebimento_por_uuid.chegou_no_mesmo_instante(
+                    order, payment_id, payment_method_id, amount, metadata, user)
+                if existente is None:
+                    raise
+                return existente
 
         if cash_register and payment_method.method_type == PaymentMethod.TYPE_CASH:
             CashMovement.objects.create(

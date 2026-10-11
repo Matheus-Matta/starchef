@@ -2,10 +2,10 @@ import 'dart:math';
 
 /// Identificadores criados pelo terminal.
 ///
-/// Aqui eles nomeiam apenas o que é local: um trabalho na fila da impressora,
-/// a reserva do processo que está imprimindo. Nada de negócio nasce com id
-/// deste lado — pedido, pagamento e caixa são criados pelo backend, que
-/// devolve o identificador definitivo.
+/// Nomeiam o que é local — um trabalho na fila da impressora, a reserva do
+/// processo que está imprimindo — e o RECEBIMENTO: ele nasce com o UUID dado
+/// aqui, para ser o mesmo na loja e na nuvem (`home_page_payment.dart`).
+/// Pedido e caixa continuam recebendo o id do backend.
 abstract final class LocalId {
   static final Random _random = Random.secure();
 

@@ -124,14 +124,16 @@ void main() {
       expect(sondou, isFalse, reason: 'o veredito vale pela janela');
     });
 
-    test('a loja respondendo esquece o veredito', () async {
-      // É assim que o terminal VOLTA sozinho quando a loja sobe.
+    test('a loja respondendo NAO desfaz a janela de 5 minutos', () async {
+      // Antes isto trazia o terminal de volta, e ele pulava de servidor no
+      // meio de uma venda. Agora só o ping depois da janela traz
+      // (veredito_da_loja_test).
       final fallback = CloudFallback();
       await fallback.confirmarQuedaDoLocal(() async => false);
 
       fallback.localRespondeu();
 
-      expect(fallback.localForaDoAr, isFalse);
+      expect(fallback.localForaDoAr, isTrue);
     });
   });
 

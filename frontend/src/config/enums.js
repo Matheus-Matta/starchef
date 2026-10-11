@@ -209,6 +209,7 @@ export const FISCAL_CRT_OPTIONS = [
 export const FISCAL_PROVIDER_OPTIONS = [
   { label: "Manual (sem transmissao a SEFAZ)", value: "manual" },
   { label: "Focus NFe", value: "focus_nfe" },
+  { label: "ACBrLib (comunicador próprio)", value: "acbrlib" },
 ];
 
 // ── Perfil fiscal (grupo tributario reutilizado pelos produtos) ─────────────

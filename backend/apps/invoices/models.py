@@ -112,9 +112,13 @@ class FiscalConfig(TenantModel):
 
     PROVIDER_MANUAL = "manual"  # sem transmissao SEFAZ (scaffold/contingencia)
     PROVIDER_FOCUS_NFE = "focus_nfe"
+    # O backend transmite pela ACBrLib do comunicador da propria instalacao
+    # (`ACBRLIB_URL`) — ver docs/FISCAL_ACBRLIB.md.
+    PROVIDER_ACBRLIB = "acbrlib"
     PROVIDER_CHOICES = [
         (PROVIDER_MANUAL, "Manual (sem transmissao)"),
         (PROVIDER_FOCUS_NFE, "Focus NFe"),
+        (PROVIDER_ACBRLIB, "ACBrLib (comunicador proprio)"),
     ]
 
     FOCUS_SYNC_NOT_CONFIGURED = "not_configured"
@@ -161,6 +165,15 @@ class FiscalConfig(TenantModel):
     crt = models.CharField(max_length=1, choices=CRT_CHOICES, default=CRT_SIMPLES)
     series = models.PositiveIntegerField(default=1)
     next_number = models.PositiveIntegerField(default=1, help_text="Proximo numero sequencial (nNF).")
+    # Desligada por padrao: emitir em contingencia e decisao da empresa, e um
+    # documento emitido nao se apaga. So vale para NFC-e (modelo 65).
+    offline_contingency = models.BooleanField(
+        default=False,
+        help_text=(
+            "ACBrLib: sem resposta da SEFAZ, emite a NFC-e em contingencia offline "
+            "(tpEmis=9) e transmite depois."
+        ),
+    )
 
     # Emitente
     cnpj = models.CharField(max_length=18, blank=True)

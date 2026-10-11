@@ -122,6 +122,10 @@ segredo_se_faltar POSTGRES_PASSWORD 32
 segredo_se_faltar DJANGO_SECRET_KEY 48
 segredo_se_faltar DJANGO_FIRST_ACCESS_TOKEN 24
 segredo_se_faltar SYNC_METRICS_TOKEN 32
+segredo_se_faltar ACBRLIB_TOKEN 32
+# Onde a libacbrnfe64.so do emissor fiscal fica (docs/FISCAL_ACBRLIB.md).
+# Criada aqui para o Docker não a criar como root na primeira subida.
+mkdir -p acbr/libs
 if [ -z "$(ler STARCHEF_VERSION)" ]; then
   printf 'Versão da imagem StarChef [latest]: '
   read -r versao || versao=""

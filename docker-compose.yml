@@ -172,6 +172,30 @@ services:
     networks:
       - apps_net
 
+  # O emissor fiscal ACBrLib DA NUVEM (docs/FISCAL_ACBRLIB.md). Liga com
+  # COMPOSE_PROFILES=acbrlib no .env, e o backend o acha em
+  # ACBRLIB_URL=http://fiscal-acbr:8001. A libacbrnfe64.so (Projeto ACBr) fica
+  # em ./acbr/libs; sem ela o comunicador não sobe — de propósito. Sem porta
+  # publicada: só o backend e o Celery falam com ele, pela rede interna.
+  fiscal-acbr:
+    image: ghcr.io/matheus-matta/starchef-fiscal-acbr:latest
+    profiles: ["acbrlib"]
+    restart: unless-stopped
+    mem_limit: ${ACBR_MEM_LIMIT:-256m}
+    logging: *default-logging
+    environment:
+      ACBRLIB_TOKEN: ${ACBRLIB_TOKEN:-}
+    volumes:
+      - ./acbr/libs:/app/libs:ro
+      - fiscal_acbr_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - apps_net
+
   frontend:
     image: ghcr.io/matheus-matta/starchef-frontend:latest
     restart: unless-stopped
@@ -194,6 +218,7 @@ services:
 volumes:
   backend_media:
   backend_static:
+  fiscal_acbr_data:
 
 networks:
   apps_net:

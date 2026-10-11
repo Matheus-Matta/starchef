@@ -25,7 +25,10 @@ mixin _DraftSection on _HomePageShared {
 
   /// O rascunho está no ar: catálogo aberto, sem pedido no servidor.
   @override
-  bool get _draftIsLive => activeOrder == null;
+  ///
+  /// Também na tela de pagamento de uma venda SIMULADA: o pedido mostrado lá
+  /// foi calculado pelo servidor, mas ainda não existe — o rascunho é a venda.
+  bool get _draftIsLive => activeOrder == null || draft.simulada;
 
   /// O que o carrinho desenha: as linhas do rascunho enquanto não há pedido, e
   /// os itens de verdade depois.

@@ -30,6 +30,10 @@ extension ApiClientFallback on ApiClient {
     String? accessToken,
     String? operationId,
   }) async {
+    // Vencidos os 5 minutos na nuvem, um ping decide se o terminal volta.
+    await cloudFallback.conferirSeVenceu(
+      () => ping(timeout: const Duration(seconds: 3)),
+    );
     if (cloudFallback.irDiretoParaANuvem(path)) {
       try {
         final resposta = await _naNuvem(
@@ -39,15 +43,11 @@ extension ApiClientFallback on ApiClient {
           body: body,
           accessToken: accessToken,
           operationId: operationId,
-          naJanela: true,
         );
         lastServerOrigin = ServerOrigin.nuvem;
         _publishStatus(NetworkPhase.cloud);
         afinidade.lembrar(resposta);
         return resposta;
-      } on CobrarNaLoja {
-        // A loja está no ar (a nuvem sabe pelo sync): a janela acabou.
-        cloudFallback.localRespondeu();
       } on ApiException catch (erroDaNuvem) {
         // A nuvem também não atende: a loja pode ter voltado. Segue o caminho
         // normal, que tenta a loja primeiro.
@@ -96,8 +96,6 @@ extension ApiClientFallback on ApiClient {
         _publishStatus(NetworkPhase.cloud);
         afinidade.lembrar(resposta);
         return resposta;
-      } on CobrarNaLoja {
-        rethrow;
       } on ApiException {
         // A nuvem também não atendeu. Propaga o erro DA LOJA, não o da nuvem:
         // é na loja que o operador pode agir (a máquina, o cabo, o serviço), e
@@ -128,15 +126,9 @@ extension ApiClientFallback on ApiClient {
     Map<String, dynamic>? body,
     String? accessToken,
     String? operationId,
-    bool naJanela = false,
   }) async {
     final uri = cloudFallback.enderecoPara(path, query);
     final headers = <String, String>{'Content-Type': 'application/json'};
-    // Direto à nuvem pela janela do veredito, SEM ter tentado a loja agora: a
-    // nuvem pode mandar a comanda de volta (`cobrar_na_loja`). Só este caso é
-    // recusado — o terminal configurado na nuvem, ou que acabou de ver a loja
-    // falhar, fecha a comanda lá (a v3.0.86 travava os dois).
-    if (naJanela) headers['X-Desvio-Da-Loja'] = 'janela';
     if (accessToken != null) headers['Authorization'] = 'Bearer $accessToken';
     if (operationId != null) headers['Idempotency-Key'] = operationId;
     _addTerminalHeaders(headers);
@@ -149,19 +141,14 @@ extension ApiClientFallback on ApiClient {
           ? ''
           : utf8.decode(resposta.bodyBytes, allowMalformed: true);
       final decodificado = ApiClient._decodeBody(texto);
-      if (resposta.statusCode == 409 && texto.contains(CobrarNaLoja.codigo)) {
-        throw CobrarNaLoja(
-          decodificado == null
-              ? 'Feche a conta pela loja.'
-              : _messageFor(409, decodificado),
-        );
-      }
       if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
         throw ApiException(
           decodificado == null
               ? ApiClient._nonJsonErrorMessage(resposta.statusCode, texto)
               : _messageFor(resposta.statusCode, decodificado),
           statusCode: resposta.statusCode,
+          code: codigoDoErro(decodificado),
+          data: dadosDoErro(decodificado),
         );
       }
       return decodificado ?? <String, dynamic>{};

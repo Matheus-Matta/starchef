@@ -375,6 +375,8 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         É o lançamento do garçom e o do balcão na tela de comandas: o cartão é
         um bloco de notas, e o pedido só nasce no caixa.
         """
+        from apps.core import uuid_do_aparelho
+        from apps.orders.command_item_launch import AnotacaoEmConflito
         from apps.orders.command_items import launch_item
         from apps.orders.serializers import CommandItemSerializer
         command = self.get_object()
@@ -394,7 +396,12 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 variations=request.data.get("variations") or [],
                 addons=request.data.get("addons") or [],
                 metafields=request.data.get("metafields"),
+                # O UUID do aparelho: reenvio devolve a mesma, e a anotação
+                # gravada na loja e na nuvem vira uma só na sincronização.
+                item_id=uuid_do_aparelho.ler(request.data.get("id"), "item"),
             )
+        except AnotacaoEmConflito as exc:
+            return Response({"detail": str(exc)}, status=409)
         except ValidationError as exc:
             detalhe = getattr(exc, "messages", None) or [str(exc)]
             return Response({"detail": " ".join(detalhe)}, status=400)

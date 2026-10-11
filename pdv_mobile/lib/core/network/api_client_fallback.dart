@@ -19,6 +19,8 @@ extension ApiClientFallback on ApiClient {
     String? accessToken,
     String? idempotencyKey,
   }) async {
+    // Vencidos os 5 minutos na nuvem, um ping decide se o terminal volta.
+    await cloudFallback.conferirSeVenceu(_lojaResponde);
     if (cloudFallback.irDiretoParaANuvem(path)) {
       try {
         final resposta = await _naNuvem(
@@ -32,9 +34,6 @@ extension ApiClientFallback on ApiClient {
         lastServerOrigin = ServerOrigin.nuvem;
         afinidade.lembrar(resposta);
         return resposta;
-      } on CobrarNaLoja {
-        // A loja está no ar (a nuvem sabe pelo sync): a janela acabou.
-        cloudFallback.localRespondeu();
       } on ApiException catch (erroDaNuvem) {
         // A nuvem também não atende: a loja pode ter voltado. Segue o caminho
         // normal, que tenta a loja primeiro.
@@ -87,8 +86,6 @@ extension ApiClientFallback on ApiClient {
         lastServerOrigin = ServerOrigin.nuvem;
         afinidade.lembrar(resposta);
         return resposta;
-      } on CobrarNaLoja {
-        rethrow;
       } on ApiException {
         // A nuvem também não atendeu. Propaga o erro DA LOJA: é nela que o
         // garçom pode agir, e é o erro dela que carrega o código e o prazo que
@@ -137,12 +134,6 @@ extension ApiClientFallback on ApiClient {
     try {
       final transmitida = await _http.send(pedido).timeout(ApiClient._timeout);
       final resposta = await http.Response.fromStream(transmitida);
-      if (resposta.statusCode == 409 &&
-          resposta.body.contains(CobrarNaLoja.codigo)) {
-        throw CobrarNaLoja(
-          extractApiDetail(jsonDecode(resposta.body) as Map<String, dynamic>),
-        );
-      }
       return decodeApiResponse(resposta.statusCode, resposta.body);
     } on ApiException {
       rethrow;

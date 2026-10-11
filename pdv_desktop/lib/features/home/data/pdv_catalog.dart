@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../../../core/network/response_cache.dart';
 import 'pdv_repository.dart';
+
+export 'pdv_catalog_model.dart';
 
 /// Abaixo disso a cópia acabou de vir do servidor: reler seria em dobro.
 const catalogRevalidateAfter = Duration(seconds: 10);
@@ -18,8 +21,11 @@ extension CatalogoDoPdv on PdvRepository {
   Future<PdvCatalog> loadCatalog(String restaurantId) async {
     final guardado = cachedCatalog(restaurantId);
     if (guardado == null) return _completarDoServidor(restaurantId);
-    if (_idadeDoCatalogo(restaurantId) > catalogRevalidateAfter) {
-      unawaited(_revalidar(restaurantId, guardado));
+    // A tela abre com o guardado — mesmo VELHO, depois de uma venda ou de
+    // reiniciar o PDV — e relê em silêncio SÓ as listas que podem ter mudado.
+    final paraReler = _consultasParaReler(restaurantId);
+    if (paraReler.isNotEmpty) {
+      unawaited(_revalidar(restaurantId, guardado, paraReler));
     }
     return guardado;
   }
@@ -50,16 +56,41 @@ extension CatalogoDoPdv on PdvRepository {
     return PdvCatalog.fromLists(listas);
   }
 
-  Future<void> _revalidar(String restaurantId, PdvCatalog mostrado) async {
+  Future<void> _revalidar(
+    String restaurantId,
+    PdvCatalog mostrado,
+    List<(String, Map<String, dynamic>, bool)> consultas,
+  ) async {
     try {
-      final atual = await _loadCatalogFromServer(restaurantId);
-      if (jsonEncode(atual.toJson()) != jsonEncode(mostrado.toJson())) {
+      await Future.wait([
+        for (final (path, query, paginada) in consultas)
+          paginada ? listAll(path, query: query) : list(path, query: query),
+      ]);
+      final atual = cachedCatalog(restaurantId);
+      if (atual != null &&
+          jsonEncode(atual.toJson()) != jsonEncode(mostrado.toJson())) {
         api.signals.emit('realtime:pdv');
       }
     } catch (_) {
       // A tela já tem a última versão; o próximo evento ou abertura relê.
     }
   }
+
+  /// As listas velhas (escrita, evento, reconexão, disco) ou passadas da
+  /// janela de revalidação.
+  List<(String, Map<String, dynamic>, bool)> _consultasParaReler(
+    String restaurantId,
+  ) => [
+    for (final consulta in _consultasDoCatalogo(restaurantId))
+      if ((api.cacheAge(
+                consulta.$1,
+                query: consulta.$3 ? {...consulta.$2, 'page': 1} : consulta.$2,
+                accessToken: accessToken,
+              ) ??
+              ResponseCache.idadeDaVelha) >
+          catalogRevalidateAfter)
+        consulta,
+  ];
 
   List<(String, Map<String, dynamic>, bool)> _consultasDoCatalogo(
     String restaurantId,
@@ -88,19 +119,6 @@ extension CatalogoDoPdv on PdvRepository {
       listas.add(lista);
     }
     return PdvCatalog.fromLists(listas);
-  }
-
-  Duration _idadeDoCatalogo(String restaurantId) {
-    var maisVelha = Duration.zero;
-    for (final (path, query, paginada) in _consultasDoCatalogo(restaurantId)) {
-      final idade = api.cacheAge(
-        path,
-        query: paginada ? {...query, 'page': 1} : query,
-        accessToken: accessToken,
-      );
-      if (idade != null && idade > maisVelha) maisVelha = idade;
-    }
-    return maisVelha;
   }
 
   List<JsonMap>? _peekOne(String path, Map<String, dynamic> query) {
@@ -156,41 +174,4 @@ extension CatalogoDoPdv on PdvRepository {
     ]);
     return PdvCatalog.fromLists(responses);
   }
-}
-
-class PdvCatalog {
-  const PdvCatalog({
-    required this.cashStations,
-    required this.products,
-    required this.categories,
-    required this.tables,
-    required this.commands,
-    required this.paymentMethods,
-  });
-
-  /// Na ordem de [CatalogoDoPdv._consultasDoCatalogo].
-  factory PdvCatalog.fromLists(List<List<JsonMap>> listas) => PdvCatalog(
-    cashStations: listas[0],
-    products: listas[1],
-    categories: listas[2],
-    tables: listas[3],
-    commands: listas[4],
-    paymentMethods: listas[5],
-  );
-
-  Map<String, dynamic> toJson() => {
-    'cash_stations': cashStations,
-    'products': products,
-    'categories': categories,
-    'tables': tables,
-    'commands': commands,
-    'payment_methods': paymentMethods,
-  };
-
-  final List<JsonMap> cashStations;
-  final List<JsonMap> products;
-  final List<JsonMap> categories;
-  final List<JsonMap> tables;
-  final List<JsonMap> commands;
-  final List<JsonMap> paymentMethods;
 }

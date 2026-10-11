@@ -19,6 +19,7 @@ from apps.core.numbers import (
 )
 from apps.core.tenant import tenant_context
 from apps.customers.validators import is_valid_cnpj, is_valid_cpf, strip_cnpj, strip_cpf
+from apps.orders.production_ids import id_do_lote
 from apps.orders.events import broadcast_kitchen_event
 from apps.orders.command_billing import conclude_items_of_order
 from apps.menu.models import ProductVariation
@@ -244,7 +245,14 @@ def add_order_item(
     weight_kg=None,
     expected_unit_price=None,
     metafields=None,
+    item_id=None,
 ):
+    """Lança o item no pedido.
+
+    `item_id` é o UUID que o PDV deu à linha (venda inteira, `venda_inteira.py`):
+    com ele a linha NÃO é somada a outra igual — cada linha do PDV é um item com
+    a identidade dela, e é isso que deixa o reenvio reconhecível.
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         # O código é exigido somente pelo app do garçom. O backend apenas
@@ -319,7 +327,7 @@ def add_order_item(
                 )
 
         existing = None
-        if not product.is_weighed:
+        if not product.is_weighed and item_id is None:
             candidates = (
                 OrderItem.objects.select_for_update()
                 .filter(
@@ -356,6 +364,7 @@ def add_order_item(
             return existing
 
         item = OrderItem.objects.create(
+            **({"id": item_id} if item_id else {}),
             account=order.account,
             restaurant=order.restaurant,
             branch=order.branch,
@@ -508,7 +517,9 @@ def send_order_to_kitchen(order, user, *, client_batch_serial=None, offline_prin
             sent_by=user,
             created_by=user,
             updated_by=user,
-            **({"serial": batch_serial} if batch_serial else {}),
+            # Com o serial do PDV, o id é calculado dele: a mesma venda reenviada
+            # à outra ponta gera o MESMO lote (`production_ids.py`).
+            **({"serial": batch_serial, "id": id_do_lote(batch_serial)} if batch_serial else {}),
         )
 
         for item in items:
@@ -730,7 +741,10 @@ def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=Non
         due = due.filter(account_id=account_id)
     if restaurant_id:
         due = due.filter(restaurant_id=restaurant_id)
-    batch_ids = list(due.values_list("id", flat=True)[:500])
+    # Só quem tem a cozinha libera, e nunca a rodada imediata (`producao_da_loja`).
+    from apps.orders.producao_da_loja import a_liberar_aqui
+
+    batch_ids = list(a_liberar_aqui(due).values_list("id", flat=True)[:500])
     for batch_id in batch_ids:
         batch = OrderBatch.all_objects.select_related("account").get(pk=batch_id)
         dispatch_kitchen_batch(batch, now=now)

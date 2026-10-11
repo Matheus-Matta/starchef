@@ -183,13 +183,33 @@ mixin _OrdersSection on _HomePageShared {
     _leaveActiveOrder();
     await _sweepStaleDrafts();
     if (!mounted) return;
+    // A última lista guardada aparece NA HORA (até depois de reiniciar o PDV);
+    // a do servidor chega em seguida e substitui, sem tela de carregando.
+    final guardada = api.peek(
+      '/orders/',
+      query: _ordersServerQuery,
+      accessToken: token,
+    );
     setState(() {
       flowStep = 'orders';
       activeOrder = null;
+      if (orders.isEmpty && guardada != null) {
+        orders = _filtrarPedidos(
+          ((guardada['results'] ?? const []) as List)
+              .cast<Map<String, dynamic>>(),
+        );
+      }
       ordersLoading = orders.isEmpty;
     });
     await _reloadOrders();
   }
+
+  List<Map<String, dynamic>> _filtrarPedidos(
+    List<Map<String, dynamic>> lista,
+  ) => lista
+      .where((item) => '${item['restaurant']}' == restaurantId)
+      .where(_matchesStatusFilter)
+      .toList();
 
   /// Busca a lista com os filtros atuais.
   ///
@@ -199,10 +219,7 @@ mixin _OrdersSection on _HomePageShared {
   Future<void> _reloadOrders() async {
     try {
       final loaded = await _list('/orders/', query: _ordersServerQuery);
-      orders = loaded
-          .where((item) => '${item['restaurant']}' == restaurantId)
-          .where(_matchesStatusFilter)
-          .toList();
+      orders = _filtrarPedidos(loaded);
       ordersPartial = false;
     } catch (error) {
       if (mounted) {

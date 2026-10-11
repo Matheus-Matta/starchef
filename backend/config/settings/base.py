@@ -132,6 +132,14 @@ FOCUS_NFE_WEBHOOK_AUTHORIZATION_HEADER = config(
     "FOCUS_NFE_WEBHOOK_AUTHORIZATION_HEADER", default="Authorization"
 )
 
+# Emissor ACBrLib (docs/FISCAL_ACBRLIB.md): o comunicador da PROPRIA instalacao.
+# A URL muda entre a loja e a nuvem — cada uma aponta para o seu container.
+ACBRLIB_URL = config("ACBRLIB_URL", default="").rstrip("/")
+ACBRLIB_TOKEN = config("ACBRLIB_TOKEN", default="")
+# Maior que o prazo da SEFAZ: um timeout curto transforma uma nota autorizada
+# em "nao sei se emitiu", o estado mais caro de todos.
+ACBRLIB_TIMEOUT = config("ACBRLIB_TIMEOUT", default=40, cast=int)
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -365,6 +373,17 @@ CELERY_BEAT_SCHEDULE = {
     "dispatch-due-kitchen-batches": {
         "task": "orders.dispatch_due_kitchen_batches",
         "schedule": 5.0,
+    },
+    # Nota pendente (contingencia, espera, conciliacao) volta a ser
+    # transmitida sozinha: a NFC-e em contingencia tem 24 h (FISCAL_ACBRLIB.md).
+    "invoices-reprocess-pending": {
+        "task": "invoices.reprocess_pending",
+        "schedule": 120.0,
+    },
+    # Na loja com ACBrLib: a venda paga que chegou sem nota pela sincronizacao.
+    "invoices-emitir-pagos-sem-nota": {
+        "task": "invoices.emitir_pagos_sem_nota",
+        "schedule": 60.0,
     },
     "sync-inbound-nfe-sefaz": {
         "task": "apps.inbound_nfe.tasks.sync_all_inbound_nfe",

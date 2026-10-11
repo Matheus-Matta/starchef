@@ -141,10 +141,26 @@ mixin _OrderSection on _HomePageShared {
     // recebimento, e recebimento se anexa a pedido. A permissão é conferida
     // ANTES de materializar — abrir um pedido para em seguida recusar o
     // pagamento deixaria para trás exatamente o lixo que adiar evita.
-    if (_draftIsLive && !await _materializeDraft()) return;
-    if (activeOrder == null || orderItems.isEmpty) return;
-    await _refreshOrder();
-    if (!mounted || activeOrder == null) return;
+    //
+    // Com rascunho, o pedido NÃO nasce aqui: o servidor calcula o total sem
+    // gravar (`simular`), e o pedido nasce na conclusão, junto com os
+    // recebimentos — um envio só, em vez de criar, lançar item a item, fechar
+    // e pagar em chamadas separadas que uma troca loja/nuvem partia ao meio.
+    var simulando = _draftIsLive;
+    if (simulando && !await _simularVenda()) {
+      // A recusa abriu a conta onde a comanda já estava: se ela está em
+      // aberto, o caixa segue para pagá-la; paga, fica só aberta na tela.
+      final aberta =
+          activeOrder != null &&
+          !draft.simulada &&
+          activeOrder?['payment_status'] != 'paid';
+      if (!aberta) return;
+      simulando = false;
+    }
+    if (!simulando) {
+      await _refreshOrder();
+    }
+    if (!mounted || activeOrder == null || orderItems.isEmpty) return;
 
     final taxa = defaultServiceFeePercent > 0
         ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100
@@ -174,7 +190,24 @@ mixin _OrderSection on _HomePageShared {
     final fiscalCpf = escolha?.fiscalCpf ?? '';
     final fiscalCnpj = escolha?.fiscalCnpj ?? '';
     final couponCode = escolha?.couponCode ?? '';
-    if (!seguir) return;
+    if (!seguir) {
+      if (simulando) setState(_desfazerSimulacao);
+      return;
+    }
+    if (simulando) {
+      // Taxa, CPF e cupom vão no envio da conclusão; aqui o servidor só
+      // recalcula o total com eles, ainda sem gravar.
+      draft.fechamento = {
+        'discount': activeOrder?['discount'] ?? 0,
+        'service_fee_enabled': chargeService,
+        'fiscal_customer_cpf': fiscalCpf,
+        'fiscal_customer_cnpj': fiscalCnpj,
+        'coupon_code': couponCode,
+      };
+      if (!await _simularVenda()) return;
+      await _paymentDialog();
+      return;
+    }
 
     // O TITULO CITA O CUPOM porque ele e a causa mais provavel de o fechamento
     // ser recusado com o corpo todo certo: o servidor devolve 422

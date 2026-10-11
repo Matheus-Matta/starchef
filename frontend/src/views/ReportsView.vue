@@ -93,7 +93,7 @@
       <StatCard label="Ticket medio" :value="money(ticketMedio)" tone="neutral" caption="Por pedido pago">
         <template #icon><AppIcon name="trending-up" :size="19" /></template>
       </StatCard>
-      <StatCard label="Itens vendidos" :value="String(totalItems)" tone="neutral" caption="Total de unidades">
+      <StatCard label="Itens vendidos" :value="decimal(totalItems)" tone="neutral" caption="Total de unidades">
         <template #icon><AppIcon name="package" :size="19" /></template>
       </StatCard>
     </div>

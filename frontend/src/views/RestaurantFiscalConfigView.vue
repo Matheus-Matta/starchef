@@ -80,6 +80,7 @@
             />
             <small>
               Focus NFe cria e sincroniza a empresa e transmite NF-e/NFC-e pela API.
+              ACBrLib transmite pelo comunicador deste servidor e emite sem internet.
               Manual apenas monta o documento, sem transmissão.
             </small>
           </label>
@@ -201,7 +202,10 @@
         @certificate-selected="onSefazCertificateSelected"
       />
 
+      <AcbrLibSection v-if="form.provider === 'acbrlib'" :config="form" @update-field="updateFiscalField" />
+
       <LocalFiscalSection
+        v-else
         :config="form"
         :account-allows="form.account_allows_local_fiscal === true"
         @update-field="updateFiscalField"
@@ -294,6 +298,7 @@ import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
+import AcbrLibSection from "../components/restaurant/AcbrLibSection.vue";
 import LocalFiscalSection from "../components/restaurant/LocalFiscalSection.vue";
 import NfceCertificateSection from "../components/restaurant/NfceCertificateSection.vue";
 import { api } from "../services/api";
@@ -349,6 +354,7 @@ const EDITABLE_FIELDS = [
   "csc_id", "qr_base_url", "portal_url", "dfe_ult_nsu",
   // Emissão local: o endereço do Comunicador e as duas chaves que a ligam.
   "local_fiscal_enabled", "local_fiscal_contingency", "local_fiscal_url",
+  "offline_contingency",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
 const SECRET_FIELDS = ["csc_token", "provider_token", "certificate_password"];
@@ -375,6 +381,7 @@ const form = reactive({
   local_fiscal_enabled: false,
   local_fiscal_contingency: false,
   local_fiscal_url: "",
+  offline_contingency: false,
   account_allows_local_fiscal: false,
   csc_id: "",
   csc_token: "",

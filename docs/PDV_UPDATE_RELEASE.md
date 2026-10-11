@@ -521,8 +521,9 @@ git tag -a v1.0.34 -m "StarChef v1.0.34"
 git push origin v1.0.34
 ```
 
-Importante: a mesma tag `vX.Y.Z` também dispara os workflows do backend e do
-frontend, publicando as imagens GHCR correspondentes. Só envie a tag quando o
+Importante: a mesma tag `vX.Y.Z` também dispara os workflows do backend, do
+frontend e do comunicador fiscal (`fiscal-acbr`, docs/FISCAL_ACBRLIB.md),
+publicando as imagens GHCR correspondentes. Só envie a tag quando o
 conjunto completo estiver pronto para produção.
 
 ### 5. Acompanhar o GitHub Actions

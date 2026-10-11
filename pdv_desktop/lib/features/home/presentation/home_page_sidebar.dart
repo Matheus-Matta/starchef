@@ -203,7 +203,7 @@ mixin _SidebarSection on _HomePageShared {
     }
     if (flowStep == 'payment') {
       return (
-        activeOrder == null
+        activeOrder == null || draft.simulada
             ? 'Pagamento'
             : 'Pagamento · Pedido #${activeOrder!['sequence']}',
         'Conferência e finalização do pedido',

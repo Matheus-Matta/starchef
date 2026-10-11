@@ -8,7 +8,7 @@ terminal falso decide como o verdadeiro.
 * Tempo esgotado numa ESCRITA não desvia: a loja pode ter gravado.
 * Fiscal e caixa (`/invoices/`, `/cash-register/`) nunca desviam.
 * Confirmada a queda, as próximas vão direto à nuvem pela janela do veredito
-  (30 s, dobrando a cada recaída até 5 min).
+  (5 min fixos; vencida a janela, um ping decide se volta).
 * Escrita com tempo esgotado é repetida UMA vez com a MESMA chave, se a loja
   responde ao `/health/` (`_repetirSeAPerdeu`).
 * 404 da loja num caminho com id que a nuvem criou há pouco vai para a nuvem
@@ -126,8 +126,15 @@ class Terminal:
         return resultado
 
     def _chamar(self, metodo, caminho, corpo, chave):
-        # Fechar comanda tenta a loja antes, mesmo na janela (cobrança em dobro).
-        direto = not caminho.startswith(NUNCA_DESVIAM) and not caminho.endswith("/attach-commands/")
+        # Vencidos os 5 minutos na nuvem, um ping decide se o terminal volta.
+        if self.veredito.precisa_conferir():
+            if self._loja_responde():
+                self.veredito.voltou()
+            else:
+                self.veredito.caiu()
+        # Na janela, TUDO vai direto (fechar comanda também): o restaurante
+        # inteiro de um lado só. Só fiscal e caixa ficam na loja.
+        direto = not caminho.startswith(NUNCA_DESVIAM)
         if self.veredito.fora() and direto:
             try:
                 resposta = self._http(self.nuvem, metodo, caminho, corpo, chave, self.timeout)
@@ -135,9 +142,7 @@ class Terminal:
                 self._lembrar(resposta)
                 return resposta, "nuvem"
             except Falha as erro:
-                if erro.status == 409 and "cobrar_na_loja" in str(erro.corpo):
-                    self.veredito.respondeu()  # a loja está no ar: a janela acabou
-                elif not erro.conectividade:
+                if not erro.conectividade:
                     raise
         try:
             resposta = self._na_loja(metodo, caminho, corpo, chave)

@@ -1,67 +1,25 @@
 """Provedores de emissao fiscal do StarChef."""
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import FocusNfeConfig
-from apps.invoices.fiscal import only_digits
+from apps.invoices.documento import DocumentoFiscal
 from apps.invoices.focus_emission_errors import detail_from_focus, is_company_configuration_error
 from apps.invoices.models import FiscalConfig, Invoice
 
+from apps.invoices.providers_erros import (  # noqa: E402,F401 — reexportados
+    FiscalAmbiguous,
+    FiscalConfigurationError,
+    FiscalNotFound,
+    FiscalProviderError,
+    FiscalRejection,
+    FiscalUnavailable,
+)
+
 _REGISTRY = {}
 TWO_PLACES = Decimal("0.01")
-
-
-class FiscalProviderError(RuntimeError):
-    """Base das falhas de emissao.
-
-    O servico precisa saber POR QUE a emissao falhou para decidir o que fazer:
-    reenviar, parar, ou consultar antes de reenviar. Antes tudo era
-    ``RuntimeError`` e uma rejeicao tributaria era tratada igual a uma queda de
-    rede — o que gerava retransmissao infinita de uma nota que a SEFAZ ja
-    recusou em definitivo.
-    """
-
-
-class FiscalRejection(FiscalProviderError):
-    """Documento recusado: a SEFAZ negou, ou ele nem e valido para transmitir.
-
-    Nao existe retentativa automatica: reenviar repete a mesma recusa. So sai
-    do lugar depois que alguem corrigir o cadastro ou o pedido.
-    """
-
-
-class FiscalConfigurationError(FiscalProviderError):
-    """Certificado, token, CSC ou URL ausente/invalido.
-
-    Nenhuma nota da empresa sai enquanto nao for corrigido, entao nao adianta
-    tratar como indisponibilidade momentanea.
-    """
-
-
-class FiscalUnavailable(FiscalProviderError):
-    """Falha tecnica temporaria: rede, timeout, 5xx, SEFAZ fora do ar.
-
-    E a UNICA familia que justifica retentativa automatica.
-    """
-
-
-class FiscalNotFound(FiscalProviderError):
-    """A consulta nao encontrou o documento no provedor.
-
-    Nao e recusa: e a resposta esperada para uma nota que nunca chegou la. E a
-    unica forma de resolver com seguranca uma nota em reconciliacao — se o
-    provedor nao tem o documento, retransmitir nao duplica nada.
-    """
-
-
-class FiscalAmbiguous(FiscalProviderError):
-    """A emissao pode ter acontecido, mas o resultado nao foi confirmado.
-
-    Exige consulta pela referencia antes de qualquer reenvio — reenviar as
-    cegas e o caminho para duplicar documento fiscal.
-    """
 
 
 def register_provider(cls):
@@ -137,7 +95,7 @@ class ManualFiscalProvider(FiscalProvider):
 
 
 @register_provider
-class FocusNfeProvider(FiscalProvider):
+class FocusNfeProvider(DocumentoFiscal, FiscalProvider):
     """Emite NF-e/NFC-e pela Focus, sem comunicacao SEFAZ direta."""
 
     name = FiscalConfig.PROVIDER_FOCUS_NFE
@@ -228,214 +186,6 @@ class FocusNfeProvider(FiscalProvider):
         if document_model == FiscalConfig.MODEL_NFCE:
             return "nfce"
         raise FiscalConfigurationError("Focus NFe: o modelo SAT/CF-e nao e suportado por este provedor.")
-
-    @staticmethod
-    def _payment_code(payment):
-        method = payment.payment_method
-        if method.method_type == "cash":
-            return "01"
-        if method.method_type == "pix":
-            return "17"
-        if method.method_type == "voucher":
-            return "10"
-        if method.method_type == "card":
-            if payment.card_subtype == "debit":
-                return "04"
-            if payment.card_subtype == "credit":
-                return "03"
-        return "99"
-
-    def _build_payments(self, invoice):
-        from apps.payments.models import Payment
-
-        payments = invoice.order.payments.filter(status=Payment.STATUS_APPROVED).select_related("payment_method")
-        result = []
-        for payment in payments:
-            paid_value = payment.amount
-            if payment.payment_method.method_type == "cash":
-                paid_value += payment.change_amount
-            result.append({"forma_pagamento": self._payment_code(payment), "valor_pagamento": str(paid_value)})
-        return result or [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
-
-    @staticmethod
-    def _allocate_total(items, total):
-        """Rateia um total fiscal entre os itens sem perder centavos."""
-
-        total = Decimal(total).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-        if not total:
-            return {}
-
-        products_total = sum((item.total_price for item in items), start=Decimal("0.00"))
-        if products_total <= 0:
-            raise FiscalRejection("Focus NFe: nao e possivel ratear valores em uma nota sem produtos.")
-
-        allocations = {}
-        allocated = Decimal("0.00")
-        for item in items[:-1]:
-            amount = (total * item.total_price / products_total).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-            amount = min(amount, total - allocated)
-            allocations[item.pk] = amount
-            allocated += amount
-        allocations[items[-1].pk] = total - allocated
-        return allocations
-
-    @staticmethod
-    def _validate_totals(invoice, items):
-        """Valida e devolve despesas que explicam o total da NF-e."""
-
-        items_total = sum((item.total_price for item in items), start=Decimal("0.00")).quantize(
-            TWO_PLACES, rounding=ROUND_HALF_UP
-        )
-        products_total = invoice.products_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-        discount_total = invoice.discount_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-        invoice_total = invoice.total_amount.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-
-        if items_total != products_total:
-            raise FiscalRejection(
-                "Focus NFe: total dos itens difere do valor dos produtos "
-                f"({items_total} != {products_total})."
-            )
-        if discount_total < 0 or discount_total > products_total:
-            raise FiscalRejection("Focus NFe: o desconto fiscal deve estar entre zero e o valor dos produtos.")
-
-        other_expenses = invoice_total - products_total + discount_total
-        if other_expenses < 0:
-            raise FiscalRejection(
-                "Focus NFe: total fiscal inconsistente; o valor total deve corresponder a "
-                "produtos - desconto + outras despesas."
-            )
-        return other_expenses
-
-    @staticmethod
-    def _icms_situation(item, config):
-        """Situacao tributaria do ICMS, escolhida pelo REGIME da empresa.
-
-        Antes era `item.csosn or item.cst_icms or "102"`, sem olhar o CRT. Numa
-        empresa de regime normal isso mandava um CSOSN — que so existe no
-        Simples — e a SEFAZ recusava de qualquer jeito: o fallback nao evitava
-        problema nenhum, so trocava "cadastro incompleto" por "rejeicao".
-
-        Por isso o regime normal sem CST falha aqui mesmo com
-        `strict_fiscal_profile` desligado: nao existe valor padrao seguro, e
-        adivinhar um CST produziria um documento aceito e errado — pior que a
-        recusa. No Simples, CSOSN 102 (tributada sem permissao de credito)
-        continua valendo como padrao do varejo.
-        """
-        if str(config.crt) in {FiscalConfig.CRT_SIMPLES, FiscalConfig.CRT_SIMPLES_EXCESSO}:
-            return item.csosn or "102"
-        if item.cst_icms:
-            return item.cst_icms
-        raise FiscalRejection(
-            f'Focus NFe: o item "{item.description}" esta sem CST do ICMS e a empresa '
-            "esta em regime normal (CRT 3). Informe o CST no perfil fiscal do produto — "
-            "CSOSN so vale para o Simples Nacional."
-        )
-
-    def _build_item(self, item, config, *, discount=Decimal("0.00"), other_expenses=Decimal("0.00")):
-        payload = {
-            "numero_item": item.line_number,
-            "codigo_produto": item.code or str(item.line_number),
-            "descricao": item.description,
-            "codigo_ncm": item.ncm or "00000000",
-            "cfop": item.cfop or (config.default_profile and config.default_profile.cfop) or "5102",
-            "unidade_comercial": item.unit,
-            "quantidade_comercial": str(item.quantity),
-            "valor_unitario_comercial": str(item.unit_price),
-            "valor_bruto": str(item.total_price),
-            "unidade_tributavel": item.unit,
-            "quantidade_tributavel": str(item.quantity),
-            "valor_unitario_tributavel": str(item.unit_price),
-            "icms_origem": item.origem or "0",
-            "icms_situacao_tributaria": self._icms_situation(item, config),
-            "pis_situacao_tributaria": item.pis_cst or "49",
-            "pis_valor": str(item.pis_value),
-            "cofins_situacao_tributaria": item.cofins_cst or "49",
-            "cofins_valor": str(item.cofins_value),
-            "valor_total_tributos": str(item.approx_tax_value),
-        }
-        if item.cest:
-            payload["codigo_cest"] = item.cest
-        if discount:
-            payload["valor_desconto"] = str(discount)
-        if other_expenses:
-            payload["valor_outras_despesas"] = str(other_expenses)
-        if item.icms_rate:
-            payload.update(
-                {
-                    "icms_base_calculo": str(item.icms_base),
-                    "icms_aliquota": str(item.icms_rate),
-                    "icms_valor": str(item.icms_value),
-                }
-            )
-        if item.pis_rate:
-            payload["pis_base_calculo"] = str(item.total_price)
-            payload["pis_aliquota_porcentual"] = str(item.pis_rate)
-        if item.cofins_rate:
-            payload["cofins_base_calculo"] = str(item.total_price)
-            payload["cofins_aliquota_porcentual"] = str(item.cofins_rate)
-        return payload
-
-    def _build_payload(self, invoice, config):
-        items = list(invoice.items.all().order_by("line_number"))
-        if not items:
-            raise FiscalRejection("Focus NFe: a nota nao possui itens fiscais.")
-        other_expenses = self._validate_totals(invoice, items)
-        discounts_by_item = self._allocate_total(items, invoice.discount_total)
-        expenses_by_item = self._allocate_total(items, other_expenses)
-        payments = self._build_payments(invoice)
-        change_total = sum(
-            (
-                payment.change_amount
-                for payment in invoice.order.payments.filter(status="approved", payment_method__method_type="cash")
-            ),
-            start=0,
-        )
-        payload = {
-            "natureza_operacao": "Venda ao consumidor",
-            "data_emissao": invoice.fiscal_payload.get("emission"),
-            "indicador_inscricao_estadual_destinatario": "9",
-            "local_destino": "1",
-            "consumidor_final": "1",
-            "finalidade_emissao": "1",
-            "presenca_comprador": "4" if invoice.order.order_type == "delivery" else "1",
-            # SEM MASCARA. `FiscalConfig.cnpj` tem 18 caracteres justamente
-            # para caber "00.000.000/0000-00", e o cadastro aceita os dois
-            # formatos. A Focus compoe a CHAVE DE ACESSO a partir deste campo
-            # — mandar pontuacao produz uma chave cujo digito verificador nao
-            # fecha ("Rejeicao: Digito Verificador da chave de acesso composta
-            # invalida"). O cadastro da empresa (`focus.py`) ja normalizava; o
-            # payload da nota nao.
-            "cnpj_emitente": only_digits(config.cnpj),
-            "valor_produtos": str(invoice.products_total),
-            "valor_desconto": str(invoice.discount_total),
-            "valor_outras_despesas": str(other_expenses),
-            "valor_total": str(invoice.total_amount),
-            "valor_total_tributos": str(invoice.tax_approx_total),
-            "modalidade_frete": "9",
-            "items": [
-                self._build_item(
-                    item,
-                    config,
-                    discount=discounts_by_item.get(item.pk, Decimal("0.00")),
-                    other_expenses=expenses_by_item.get(item.pk, Decimal("0.00")),
-                )
-                for item in items
-            ],
-            "formas_pagamento": payments,
-        }
-        if change_total:
-            payload["valor_troco"] = str(change_total)
-        if invoice.recipient_cpf:
-            payload["cpf_destinatario"] = only_digits(invoice.recipient_cpf)
-            payload["nome_destinatario"] = invoice.recipient_name
-        elif invoice.recipient_cnpj:
-            payload["cnpj_destinatario"] = "".join(
-                character
-                for character in invoice.recipient_cnpj.upper()
-                if character.isalnum()
-            )
-            payload["nome_destinatario"] = invoice.recipient_name
-        return payload
 
     @staticmethod
     def _normalize_access_key(value):
@@ -638,3 +388,7 @@ class FocusNfeProvider(FiscalProvider):
             raise self._classify_http(codigo, data)
         self.apply_response(invoice, data)
         return invoice.status
+
+
+# O provedor ACBrLib se registra ao ser importado (docs/FISCAL_ACBRLIB.md).
+from apps.invoices.acbrlib import provider as _acbrlib  # noqa: E402,F401

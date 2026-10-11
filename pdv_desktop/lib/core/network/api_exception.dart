@@ -5,10 +5,21 @@ class ApiException implements Exception {
     this.isConnectivity = false,
     this.reachedServer = false,
     this.retryAfter,
+    this.code,
+    this.data = const {},
   });
 
   final String message;
   final int? statusCode;
+
+  /// O código da recusa (`error.code` do envelope), ex.: `comanda_ja_cobrada`.
+  ///
+  /// Com ele a tela pode AGIR em vez de mostrar o erro: abrir a conta onde a
+  /// comanda está, abrir o pedido já pago (`home_page_conflitos.dart`).
+  final String? code;
+
+  /// O resto do `error` que veio com o código — o pedido de destino, os totais.
+  final Map<String, dynamic> data;
 
   /// A falha foi de conectividade, não uma recusa do servidor.
   ///
@@ -50,13 +61,20 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// A nuvem recusou fechar a conta da comanda porque a LOJA está no ar.
-///
-/// Cobrar o mesmo cartão nos dois servidores é dinheiro em dobro (simulação do
-/// dia a dia, `loadtest/dia_a_dia`). O desvio para a nuvem lê esta recusa e
-/// manda a chamada para a loja.
-class CobrarNaLoja extends ApiException {
-  const CobrarNaLoja(super.message) : super(statusCode: 409);
+/// O `error.code` do envelope da API, ou `null`.
+String? codigoDoErro(Map<String, dynamic>? corpo) {
+  final erro = corpo?['error'];
+  if (erro is! Map) return null;
+  final codigo = erro['code'];
+  return codigo is String && codigo.isNotEmpty ? codigo : null;
+}
 
-  static const codigo = 'cobrar_na_loja';
+/// O resto do `error` do envelope (sem `code` e `message`).
+Map<String, dynamic> dadosDoErro(Map<String, dynamic>? corpo) {
+  final erro = corpo?['error'];
+  if (erro is! Map) return const {};
+  return {
+    for (final MapEntry(:key, :value) in erro.entries)
+      if (key != 'code' && key != 'message') '$key': value,
+  };
 }

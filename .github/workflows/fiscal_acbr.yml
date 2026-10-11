@@ -1,0 +1,122 @@
+name: fiscal-acbr
+
+# O comunicador ACBrLib (fiscal_acbr/, docs/FISCAL_ACBRLIB.md). Mesmo desenho
+# do backend.yml: testa em PR, publica imagem só em tag vX.Y.Z e só reconstrói
+# quando fiscal_acbr/ mudou desde a tag anterior — senão re-etiqueta.
+#
+# A imagem NÃO leva a libacbrnfe64.so (distribuída pelo Projeto ACBr): ela é
+# montada em /app/libs na loja e na nuvem.
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+    paths:
+      - "fiscal_acbr/**"
+      - ".github/workflows/fiscal_acbr.yml"
+  pull_request:
+    paths:
+      - "fiscal_acbr/**"
+      - ".github/workflows/fiscal_acbr.yml"
+
+defaults:
+  run:
+    working-directory: fiscal_acbr
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt httpx pytest
+
+      # Com a SEFAZ simulada (tests/conftest.py liga ACBR_SIMULADOR=1): a lib de
+      # verdade e o certificado só existem na homologação.
+      - name: Testes
+        run: pytest tests
+
+  build-and-push-image:
+    needs: test
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Igual ao backend.yml, inclusive no cuidado que custou caro lá: a tag
+      # anterior é achada pelo NOME, e o diff roda na RAIZ do repo. Com o
+      # working-directory padrão (fiscal_acbr/) o pathspec viraria
+      # `fiscal_acbr/fiscal_acbr`, o diff sairia sempre vazio e a imagem nunca
+      # seria reconstruída.
+      - name: Decidir se a imagem precisa ser reconstruida
+        id: changed
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/starchef-fiscal-acbr"
+          if [[ -z "$previous" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif ! docker manifest inspect "$image:latest" >/dev/null 2>&1; then
+            # Primeira publicação: não há imagem para re-etiquetar.
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ainda não há imagem publicada: será construída."
+          elif git diff --quiet "$previous" "$GITHUB_SHA" -- fiscal_acbr .github/workflows/fiscal_acbr.yml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Nada mudou em fiscal_acbr/ desde $previous: a imagem será re-etiquetada."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::fiscal_acbr/ mudou desde $previous: imagem será reconstruída."
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadados da imagem
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/starchef-fiscal-acbr
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build e push
+        if: steps.changed.outputs.changed == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: fiscal_acbr
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Re-etiquetar a imagem existente
+        if: steps.changed.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/starchef-fiscal-acbr"
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools create --tag "$image:$version" --tag "$image:${version%.*}" "$image:latest"

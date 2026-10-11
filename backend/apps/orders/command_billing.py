@@ -23,6 +23,7 @@ from django.utils import timezone
 
 from apps.core.tenant import tenant_context
 from apps.orders.command_item_to_order import copy_items_to_order
+from apps.orders.conflitos import ConflitoComDestino, destino
 from apps.orders.models import CommandItem, Order, OrderItem
 
 #: Teto por chamada. Não é o limite do desenho — é o limite do GESTO: um caixa
@@ -103,7 +104,7 @@ def command_has_pending_items(command_id):
     return billable_items_of([command_id]).exists()
 
 
-def attach_commands_to_order(*, order, command_ids, user):
+def attach_commands_to_order(*, order, command_ids, user, only_items=None):
     """Copia para o pedido o consumo pendente das comandas. Devolve os itens.
 
     Cada `CommandItem` pendente vira um `OrderItem` com `command_item`
@@ -157,7 +158,13 @@ def attach_commands_to_order(*, order, command_ids, user):
         # continua pendente no cartão, mas levá-lo ao pedido acrescentaria uma
         # linha de R$ 0,00 que ninguém sabe explicar — ele é encerrado junto
         # com o cartão, na liberação.
-        pendentes = list(billable_items_of(ids).select_for_update(of=("self",)))
+        pendentes = billable_items_of(ids)
+        if only_items is not None:
+            # Só as anotações que o caixa VIU (a venda inteira manda a lista):
+            # o que o garçom lançou depois fica para a próxima conta, em vez de
+            # entrar num total maior que o já recebido.
+            pendentes = pendentes.filter(pk__in=list(only_items))
+        pendentes = list(pendentes.select_for_update(of=("self",)))
         # A linha de uma conta EXCLUÍDA não é consumo de ninguém, mas ocupava a
         # vaga única da anotação (`unique_order_item_per_command_item`): o
         # cartão não entrava em conta nenhuma. Ela solta a anotação e fica
@@ -203,9 +210,8 @@ def attach_commands_to_order(*, order, command_ids, user):
             # devolve as anotações ao cartão é `detach-commands` — e é isso
             # que o operador precisa ler, com o número da conta na mão, em vez
             # de sair procurando.
-            contas = sorted(
-                Order.objects.filter(pk__in=presos).values_list("sequence", flat=True)
-            )
+            contas_por_id = dict(Order.objects.filter(pk__in=presos).values_list("id", "sequence"))
+            contas = sorted(contas_por_id.values())
             onde = ", ".join(f"#{numero}" for numero in contas)
             numeros = sorted(c.number for c in comandas.values())
             alvo = (
@@ -213,9 +219,11 @@ def attach_commands_to_order(*, order, command_ids, user):
                 if len(numeros) == 1
                 else "Estas comandas já estão"
             )
-            raise ValidationError(
+            primeira = min(presos, key=lambda pedido: contas_por_id.get(pedido, 0))
+            raise ConflitoComDestino(
                 f"{alvo} na conta {onde}, que continua aberta. Remova os "
-                "cartões daquela conta (ou conclua-a) antes de cobrar aqui."
+                "cartões daquela conta (ou conclua-a) antes de cobrar aqui.",
+                code="comanda_em_outra_conta", **destino(primeira),
             )
 
         novos = [p for p in pendentes if p.pk not in ja_cobrados]
@@ -226,6 +234,18 @@ def attach_commands_to_order(*, order, command_ids, user):
             # concluída. Dizer "não tem item pendente" para um operador que
             # está olhando os itens na tela manda ele procurar no lugar errado:
             # foi o que aconteceu, e a conta abandonada ficou lá.
+            #
+            # E com o pedido que levou o consumo, o PDV ABRE a conta certa em
+            # vez de mostrar o erro (`conflitos.py`).
+            onde = _onde_foi_cobrada(ids, order, ja_em_pedido)
+            if onde:
+                paga = onde.get("payment_status") == Order.PAYMENT_PAID
+                raise ConflitoComDestino(
+                    f"A comanda {numeros[0]} já foi cobrada no pedido #{onde['sequence']}." if paga
+                    else f"A comanda {numeros[0]} já está na conta #{onde['sequence']}.",
+                    code="comanda_ja_cobrada" if paga else "comanda_em_outra_conta",
+                    **onde,
+                )
             if pendentes:
                 raise ValidationError(
                     f"A comanda {numeros[0]} já está em outra conta aberta."
@@ -344,3 +364,14 @@ def detach_commands_from_order(*, order, command_ids, user):
     # Quem já foi para a produção volta para a comanda com o prato feito — o
     # cozinheiro não desfaz. Quem chamou decide se avisa o operador.
     return {"itens": len(anotacoes), "ja_produzidos": len(ja_produzidos)}
+
+
+def _onde_foi_cobrada(comanda_ids, pedido, ja_em_pedido):
+    """O pedido que levou o consumo destas comandas — o de agora, ou o último."""
+    outros = [conta for _, conta, _ in ja_em_pedido if conta != pedido.pk]
+    if not outros:
+        outros = list(
+            OrderItem.all_objects.filter(command_id__in=comanda_ids, order__deleted_at__isnull=True)
+            .exclude(order_id=pedido.pk).order_by("-created_at").values_list("order_id", flat=True)[:1]
+        )
+    return destino(outros[0]) if outros else {}

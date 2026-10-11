@@ -101,7 +101,7 @@ def consume_command_binding(scale, *, now=None):
 
 
 @transaction.atomic
-def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, send=True):
+def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, send=True, item_id=None):
     """Anota a pesagem NA COMANDA. Nenhum pedido é aberto.
 
     Antes, a primeira pesagem abria um pedido para o cartão — e era esse gesto
@@ -118,6 +118,7 @@ def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, se
         command=command,
         product=scale.product,
         user=user,
+        item_id=item_id,
         quantity=scale_reading.net_weight_kg,
         unit_price=scale.product.current_price,
     )
@@ -137,7 +138,7 @@ def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, se
     return item
 
 
-def send_weighing_to_production(*, command, items, user):
+def send_weighing_to_production(*, command, items, user, client_batch_serial=None):
     """O que foi pesado já foi servido: vai direto para a produção.
 
     Deixar o prato "a enviar" obrigava alguém a mandar à cozinha um consumo
@@ -146,4 +147,4 @@ def send_weighing_to_production(*, command, items, user):
     """
     from apps.orders.command_kitchen import send_command_to_kitchen
 
-    return send_command_to_kitchen(command, user, only=items)
+    return send_command_to_kitchen(command, user, only=items, client_batch_serial=client_batch_serial)

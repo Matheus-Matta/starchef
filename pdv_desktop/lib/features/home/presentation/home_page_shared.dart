@@ -82,7 +82,18 @@ mixin _HomePageShared on State<HomePage> {
   Future<void> _chooseCustomerForDraft();
   void _attachCommandToDraftDirectly(Map<String, dynamic> command);
   void _detachCommandFromDraft([String? commandId]);
-  Future<bool> _materializeDraft();
+  Future<bool> _materializeDraft({bool cozinha});
+
+  /// A venda inteira (`orders/venda_inteira.py`), providos por `_VendaInteiraSection`.
+  Future<bool> _simularVenda();
+  void _desfazerSimulacao();
+  Future<bool> _concluirVendaSimulada(List<Map<String, dynamic>> recebimentos);
+
+  /// `_work` que resolve a recusa indo ao lugar certo (`_ConflitosSection`).
+  Future<T?> _workResolvendo<T>(
+    Future<T> Function() action, {
+    required String errorTitle,
+  });
   void _discardDraft();
   Future<bool> _confirmLeavingPendingItems();
 }

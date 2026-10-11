@@ -52,11 +52,21 @@ mixin _PaymentCouponSection on _HomePageShared {
       couponError = '';
     });
     try {
-      final atualizado = await api.post(
-        '/orders/${activeOrder!['id']}/apply-coupon/',
-        body: {'code': codigo},
-        accessToken: token,
-      );
+      // Venda simulada: o cupom entra no fechamento e o servidor recalcula,
+      // ainda sem gravar. Recusado, o erro vem igual.
+      final simulada = draft.simulada;
+      final fechamento = {...?draft.fechamento, 'coupon_code': codigo};
+      final atualizado = simulada
+          ? await OrderDraftMaterializer(
+              api,
+              accessToken: token,
+            ).simular(draft, restaurantId: restaurantId, fechamento: fechamento)
+          : await api.post(
+              '/orders/${activeOrder!['id']}/apply-coupon/',
+              body: {'code': codigo},
+              accessToken: token,
+            );
+      if (simulada) draft.fechamento = fechamento;
       if (!mounted) return;
       // O pedido volta com o total JÁ refeito, e é dele que o teclado desenha o
       // restante e o troco. Recalcular no terminal faria a tela mostrar um

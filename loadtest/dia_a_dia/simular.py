@@ -57,7 +57,17 @@ def esperar_na_loja(dados, limite=300):
     while time.monotonic() < fim:
         if int(conferir.sql("loja", consulta)[0][0]) >= alvo:
             usuarios = conferir.sql("loja", "SELECT count(*) FROM auth_user WHERE username LIKE 'sim.%'")
-            if int(usuarios[0][0]) >= 8:
+            # As formas de pagamento também: o caixa que abre antes delas recebe
+            # "forma inválida" — era a carga inicial, não um defeito.
+            formas = ",".join(f"'{forma}'" for forma in dados["formas"].values())
+            chegaram = conferir.sql("loja", f"SELECT count(*) FROM payments_paymentmethod WHERE id IN ({formas})")
+            # E o vínculo estação ⇄ operador: o caixa que abre antes dele recebe
+            # "o operador não está vinculado a este caixa".
+            vinculos = conferir.sql("loja", "SELECT count(*) FROM payments_cashstation_operators o "
+                                            "JOIN payments_cashstation s ON s.id = o.cashstation_id "
+                                            "WHERE s.code LIKE 'SIM-%'")
+            if (int(usuarios[0][0]) >= 8 and int(chegaram[0][0]) >= len(dados["formas"])
+                    and int(vinculos[0][0]) >= len(dados["caixas"])):
                 return True
         time.sleep(5)
     return False

@@ -201,24 +201,21 @@ class OrderViewSet(BaseTenantViewSet):
         tem pedido: ela anota, e o pedido do caixa recebe as anotações
         pendentes.
         """
-        from apps.synchronization.services import loja_no_ar
-
         order = self.get_object()
-        if loja_no_ar.recusar_fechamento(request, order.restaurant):
-            # Fechar comanda na nuvem com a loja no ar cobraria o cartão duas
-            # vezes (ver `loja_no_ar.py`). O PDV lê o código e volta à loja.
-            return Response({"code": loja_no_ar.CODIGO, "message": loja_no_ar.MENSAGEM},
-                            status=status.HTTP_409_CONFLICT)
         referencias = request.data.get("commands") or []
         if not isinstance(referencias, list) or not referencias:
             return Response(
                 {"detail": "Informe as comandas a incluir nesta conta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from apps.orders.conflitos import ConflitoComDestino
+
         try:
             attach_commands_to_order(
                 order=order, command_ids=referencias, user=request.user
             )
+        except ConflitoComDestino as exc:
+            return exc.resposta()
         except ValidationError as exc:
             # 409, e não 400: o corpo está certo — o que mudou foi o estado do
             # cartão. O PDV trata 400 como erro de preenchimento e reenvia o
@@ -236,14 +233,7 @@ class OrderViewSet(BaseTenantViewSet):
         o que cobrar — cancelar a conta inteira para corrigir uma inclusão
         seria caro demais para um engano de um toque.
         """
-        from apps.synchronization.services import loja_no_ar
-
         order = self.get_object()
-        if loja_no_ar.recusar_fechamento(request, order.restaurant):
-            # Fechar comanda na nuvem com a loja no ar cobraria o cartão duas
-            # vezes (ver `loja_no_ar.py`). O PDV lê o código e volta à loja.
-            return Response({"code": loja_no_ar.CODIGO, "message": loja_no_ar.MENSAGEM},
-                            status=status.HTTP_409_CONFLICT)
         referencias = request.data.get("commands") or []
         if not isinstance(referencias, list) or not referencias:
             return Response(
@@ -285,6 +275,13 @@ class OrderViewSet(BaseTenantViewSet):
             )
         except (ValueError, ValidationError):
             return None
+
+    @action(detail=False, methods=["post"], url_path="submit")
+    def submit(self, request):
+        """A venda inteira num envio: pedido, itens, comandas e recebimentos."""
+        from apps.orders.venda_inteira_api import responder
+
+        return responder(self, request)
 
     @action(detail=False, methods=["post"], url_path="create-with-item")
     def create_with_item(self, request):
@@ -666,6 +663,8 @@ class OrderViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="pay")
     def pay(self, request, pk=None):
         from apps.payments.serializers import PaymentSerializer
+        from apps.orders.conflitos import ConflitoComDestino
+        from apps.payments import recebimento_por_uuid
         from apps.payments.services import register_payment
         from apps.payments.terminals import (
             CashSessionConflict,
@@ -711,9 +710,19 @@ class OrderViewSet(BaseTenantViewSet):
                 # segue a mesma regra de dono da sangria e do fechamento.
                 terminal=terminal_from_request(request, restaurant=order.restaurant),
                 installation_id=installation_id_from_request(request),
+                # Identidade dada pelo PDV: o mesmo recebimento na loja e na
+                # nuvem é uma linha só, e o envio atrasado não sobrescreve.
+                payment_id=recebimento_por_uuid.ler_id(request.data.get("id")),
+                client_updated_at=recebimento_por_uuid.ler_horario(request.data.get("client_updated_at")),
             )
         except (CashSessionConflict, CashSessionForbidden) as exc:
             return cash_session_error_response(exc)
+        except ConflitoComDestino as exc:
+            return exc.resposta()
+        except recebimento_por_uuid.RecebimentoEmConflito as exc:
+            # 409, não 400: o corpo está certo, o estado é que diverge — e o PDV
+            # reenvia 400 para sempre.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)

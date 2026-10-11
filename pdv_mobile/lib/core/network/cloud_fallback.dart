@@ -1,6 +1,8 @@
 import 'api_exception.dart';
 import 'veredito_da_loja.dart';
 
+export 'server_origin.dart';
+
 /// A nuvem como SEGUNDO SERVIDOR, quando o backend da loja não responde.
 ///
 /// A loja roda o próprio backend, e é ele quem atende. Se a máquina desliga, o
@@ -101,15 +103,6 @@ class CloudFallback {
   /// o servidor está de pé, e o problema é da rota.
   static const statusSemBackend = {502, 503, 504};
 
-  /// A janela INICIAL do veredito de "a loja está fora". Ela cresce quando a
-  /// loja recai logo depois de voltar — ver [VereditoDaLoja].
-  ///
-  /// Confirmado que caiu, as requisições seguintes vão direto para a nuvem: ir
-  /// bater na loja morta a cada chamada custaria o tempo do `timeout` em cada
-  /// gesto do operador. Vencida a janela, confere de novo — é assim que o
-  /// terminal VOLTA sozinho quando a loja sobe.
-  static const janelaDoVeredito = VereditoDaLoja.janelaBase;
-
   /// Quanto tempo o terminal fica na nuvem depois de a loja cair.
   final VereditoDaLoja veredito;
 
@@ -121,13 +114,32 @@ class CloudFallback {
 
   /// Com a loja confirmadamente fora, esta requisição vai DIRETO à nuvem?
   ///
-  /// Fiscal e caixa nunca desviam; fechar comanda tenta a loja antes — a loja
-  /// sem internet já tinha cobrado o cartão e a nuvem cobrava de novo.
+  /// Tudo vai, inclusive fechar comanda: dentro da janela o terminal está na
+  /// nuvem, e o restaurante inteiro de um lado só é o que evita a venda
+  /// espalhada pelos dois servidores. Só fiscal e caixa ficam na loja.
   bool irDiretoParaANuvem(String path) =>
-      enabled &&
-      localForaDoAr &&
-      !nuncaDesvia(path) &&
-      !path.endsWith('/attach-commands/');
+      enabled && localForaDoAr && !nuncaDesvia(path);
+
+  /// Vencida a janela de 5 minutos, o ping decide se o terminal volta.
+  ///
+  /// Respondeu: volta para a loja. Não respondeu: mais 5 minutos na nuvem.
+  /// Várias requisições ao mesmo tempo esperam o MESMO ping.
+  Future<void> conferirSeVenceu(Future<bool> Function() sonda) {
+    if (!veredito.precisaConferir) return Future.value();
+    return _conferindo ??= () async {
+      try {
+        if (await sonda()) {
+          veredito.voltou();
+        } else {
+          veredito.marcarForaDoAr();
+        }
+      } finally {
+        _conferindo = null;
+      }
+    }();
+  }
+
+  Future<void>? _conferindo;
 
   /// Esta falha justifica tentar a nuvem?
   ///
@@ -183,18 +195,4 @@ class CloudFallback {
   Uri enderecoPara(String path, Map<String, dynamic>? query) => Uri.parse(
     '$baseUrl$path',
   ).replace(queryParameters: query?.map((k, v) => MapEntry(k, '$v')));
-}
-
-/// QUAL SERVIDOR respondeu — a loja ou a nuvem.
-///
-/// A tela precisa dizer isso ao operador: o que ele está lendo da nuvem pode
-/// estar atrás do que a loja tem, e o que ele lançar não aparece ali até a
-/// sincronização rodar. Um dado de outra origem sem aviso é pior que tela
-/// vazia — ele parece atual.
-enum ServerOrigin {
-  /// O backend da loja respondeu. É o caminho normal.
-  loja,
-
-  /// A loja não respondeu e a nuvem atendeu no lugar.
-  nuvem,
 }

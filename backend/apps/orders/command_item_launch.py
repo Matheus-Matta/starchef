@@ -1,6 +1,6 @@
 from decimal import ROUND_HALF_UP, Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.core.tenant import tenant_context
 from apps.orders.command_item_configuration import configured_values
@@ -18,8 +18,13 @@ def launch_item(
     addons=None,
     customer_note="",
     metafields=None,
+    item_id=None,
 ):
     """Anota um consumo na comanda sem criar pedido.
+
+    `item_id` é o UUID que o aparelho deu à anotação (`core/uuid_do_aparelho`):
+    o reenvio devolve a que já existe, e a mesma anotação gravada na loja e na
+    nuvem vira uma só na sincronização.
 
     `metafields` carrega o código de QUEM anotou quando o app mobile o pede. O
     item herda o que a comanda tiver: quem abriu o cartão já se identificou.
@@ -44,27 +49,81 @@ def launch_item(
         base_price=unit_price,
     )
     with tenant_context(command.account), transaction.atomic():
-        item = CommandItem.objects.create(
-            account=command.account,
-            restaurant=command.restaurant,
-            branch=command.branch,
-            command=command,
-            table=command.current_table,
-            product=product,
-            quantity=quantidade,
-            unit_price=preco,
-            total_price=total,
-            variations=variacoes,
-            customer_note=customer_note,
-            production_sector=product.production_sector,
-            launched_by=user,
-            created_by=user,
-            updated_by=user,
-            metafields=extras,
-        )
+        ja_existe = _ja_lancada(command, item_id)
+        if ja_existe is not None:
+            _guardar_reenvio(ja_existe, user, product=product, quantity=quantity,
+                             customer_note=customer_note, variations=variations, addons=addons)
+            return ja_existe
+        try:
+            with transaction.atomic():
+                item = _criar(command, item_id, user, product, quantidade, preco, total,
+                              variacoes, customer_note, extras)
+        except IntegrityError:
+            # O UUID chegou pela sincronização entre a consulta e a inserção (o
+            # reenvio à loja e a anotação que a nuvem gravou, no mesmo
+            # instante). O banco deixou passar uma — a anotação existe, e é
+            # ela a resposta, não um "valor duplicado".
+            existente = CommandItem.all_objects.filter(pk=item_id).first() if item_id else None
+            if existente is None or existente.command_id != command.pk:
+                raise
+            _guardar_reenvio(existente, user, product=product, quantity=quantity,
+                             customer_note=customer_note, variations=variations, addons=addons)
+            return existente
         _create_addons(item, adicionais, quantidade, user)
         _mark_occupied(command, user)
     return item
+
+
+def _criar(command, item_id, user, product, quantidade, preco, total, variacoes,
+           customer_note, extras):
+    return CommandItem.objects.create(
+        **({"id": item_id} if item_id else {}),
+        account=command.account,
+        restaurant=command.restaurant,
+        branch=command.branch,
+        command=command,
+        table=command.current_table,
+        product=product,
+        quantity=quantidade,
+        unit_price=preco,
+        total_price=total,
+        variations=variacoes,
+        customer_note=customer_note,
+        production_sector=product.production_sector,
+        launched_by=user,
+        created_by=user,
+        updated_by=user,
+        metafields=extras,
+    )
+
+
+class AnotacaoEmConflito(Exception):
+    """O UUID da anotação já pertence a OUTRA comanda."""
+
+
+def _ja_lancada(command, item_id):
+    if item_id is None:
+        return None
+    existente = CommandItem.all_objects.filter(pk=item_id, account_id=command.account_id).first()
+    if existente is not None and existente.command_id != command.pk:
+        raise AnotacaoEmConflito(
+            "Esta anotação já foi lançada em outra comanda. Atualize a tela antes de lançar de novo."
+        )
+    return existente
+
+
+def _guardar_reenvio(item, user, **dados):
+    """O reenvio é ignorado (a anotação já existe), mas fica no histórico."""
+    from apps.synchronization.models import SyncDiscard
+    from apps.synchronization.services import descartes
+
+    descartes.registrar(
+        origem=SyncDiscard.ORIGEM_API, motivo=SyncDiscard.MOTIVO_REENVIO,
+        entity_type="command_item", entity_id=item.pk, account_id=item.account_id,
+        dados={**dados, "product": getattr(dados["product"], "pk", dados["product"]),
+               "command": item.command_id},
+        usuario=user,
+    )
 
 
 def _create_addons(item, addons, quantity, user):

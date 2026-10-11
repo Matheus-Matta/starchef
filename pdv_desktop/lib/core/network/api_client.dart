@@ -136,6 +136,17 @@ class ApiClient {
   }) =>
       cache.peek(_cacheScopeFor(accessToken ?? _lastAccessToken), path, query);
 
+  /// A lista guardada ficou velha (escrita, evento, reconexão, disco)?
+  bool cacheVelho(
+    String path, {
+    Map<String, dynamic>? query,
+    String? accessToken,
+  }) => cache.estaVelha(
+    _cacheScopeFor(accessToken ?? _lastAccessToken),
+    path,
+    query,
+  );
+
   /// Idade da lista guardada para esta consulta, ou `null`.
   Duration? cacheAge(
     String path, {
@@ -260,9 +271,10 @@ class ApiClient {
     _realtimeConnected = true;
     _publishStatus(NetworkPhase.online);
     // Reconectar significa que o terminal pode ter perdido eventos enquanto
-    // esteve mudo: tudo que a tela mostra é relido — e nada guardado do
-    // período mudo pode ser servido como atual.
-    cache.clear();
+    // esteve mudo: tudo que a tela mostra é RELIDO. Marcado como velho, não
+    // apagado — apagar fazia o próximo gesto esperar o servidor, com tela de
+    // carregando, a cada oscilação da rede.
+    cache.envelhecer();
     for (final topic in DataSignals.realtimeSnapshotTopics) {
       signals.emit('realtime:$topic');
       signals.emit(topic);
@@ -531,6 +543,8 @@ class ApiClient {
           message,
           statusCode: response.statusCode,
           retryAfter: retryAfter,
+          code: codigoDoErro(decoded),
+          data: dadosDoErro(decoded),
         );
       }
       // Só aqui "resposta inválida" é o diagnóstico certo: o servidor disse

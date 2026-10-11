@@ -88,13 +88,15 @@ void main() {
     await ouvindo.cancel();
   });
 
-  test('depois de uma escrita, a próxima carga vai ao servidor', () async {
+  test('depois de uma escrita, a tela abre na hora e rele por tras', () async {
     final repo = repositorio();
     await repo.loadCatalog('r1');
     await repo.post('/orders/o1/attach-commands/', const {'commands': []});
     final antes = leituras.length;
 
-    await repo.loadCatalog('r1');
+    final mostrado = await repo.loadCatalog('r1');
+    expect(mostrado.products.single['name'], 'X-Burger');
+    await Future<void>.delayed(const Duration(milliseconds: 100));
 
     expect(leituras.length, greaterThan(antes));
   });
@@ -110,6 +112,7 @@ void main() {
       leituras.clear();
 
       final catalogo = await repo.loadCatalog('r1');
+      await Future<void>.delayed(const Duration(milliseconds: 100));
 
       expect(leituras.toSet(), {
         'GET /api/v1/tables/',

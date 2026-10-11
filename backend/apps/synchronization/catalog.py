@@ -88,7 +88,11 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, dependencies
    # `local_fiscal_url` é o endereço do Comunicador NAQUELA máquina, como o IP
    # da impressora: a nuvem não tem como saber e não pode zerar o que o
    # técnico configurou na loja.
-   local_only_fields=("local_fiscal_url",))
+   #
+   # `next_number` é de quem EMITE: com "vence o mais novo", uma edição do
+   # cadastro na nuvem trazia o contador velho de volta e a próxima nota da loja
+   # (ACBrLib) repetia número. Cada nó guarda o seu (docs/FISCAL_ACBRLIB.md).
+   local_only_fields=("local_fiscal_url", "next_number"))
 
 # 4. Funções, permissões e usuários. Sessão autenticada nunca sincroniza.
 # `permission` NÃO sincroniza — ver `decisions.py`. É catálogo global

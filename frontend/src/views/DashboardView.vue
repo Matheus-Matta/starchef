@@ -83,7 +83,7 @@
       </table>
     </Card>
 
-    <Card title="Pedidos recentes" subtitle="Atualizacao em tempo real" padding="none">
+    <Card title="Pedidos recentes" :subtitle="ordersSubtitle" padding="none">
       <template #actions>
         <Tag :severity="loading ? 'warning' : 'success'" :value="loading ? 'Atualizando' : 'Ao vivo'" />
       </template>
@@ -131,6 +131,7 @@ import Tag from "primevue/tag";
 import AppIcon from "../components/AppIcon.vue";
 import Card from "../components/display/Card.vue";
 import StatCard from "../components/data/StatCard.vue";
+import { useAutoRefresh } from "../composables/useAutoRefresh";
 import { api } from "../services/api";
 
 const loading = ref(false);
@@ -207,10 +208,19 @@ const channels = computed(() => {
   return buildChannels(rows);
 });
 
+// O dinheiro que ainda está no salão: a tabela mostrava conta por conta e o
+// gerente somava de cabeça.
+const ordersSubtitle = computed(() => {
+  const cartoes = Number(summary.value.open_commands_count || 0);
+  if (!cartoes) return "Nenhuma comanda aberta · atualiza a cada 30 s";
+  const plural = cartoes === 1 ? "comanda" : "comandas";
+  return `${money(summary.value.open_commands_total)} em comandas abertas (${cartoes} ${plural}) · atualiza a cada 30 s`;
+});
+
 const hasChannelSales = computed(() => channels.value.some((channel) => channel.total > 0));
 
-async function loadDashboard() {
-  loading.value = true;
+async function loadDashboard({ silencioso = false } = {}) {
+  if (!silencioso) loading.value = true;
   error.value = "";
   try {
     const [summaryResponse, ordersResponse, alertsResponse] = await Promise.all([
@@ -439,7 +449,8 @@ function elapsed(value) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-onMounted(loadDashboard);
+onMounted(() => loadDashboard());
+useAutoRefresh(loadDashboard, 30_000);
 </script>
 
 <style scoped>
