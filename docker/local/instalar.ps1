@@ -103,6 +103,10 @@ Segredo-Se-Faltar POSTGRES_PASSWORD 32
 Segredo-Se-Faltar DJANGO_SECRET_KEY 48
 Segredo-Se-Faltar DJANGO_FIRST_ACCESS_TOKEN 24
 Segredo-Se-Faltar SYNC_METRICS_TOKEN 32
+Segredo-Se-Faltar ACBRLIB_TOKEN 32
+# Onde a libacbrnfe64.so do emissor fiscal fica (docs/FISCAL_ACBRLIB.md).
+# Criada aqui para o Docker não a criar como root na primeira subida.
+New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'acbr/libs') | Out-Null
 
 if (-not (Ler-Valor 'STARCHEF_VERSION')) {
     $versao = Read-Host 'Versão da imagem StarChef [latest]'

@@ -47,6 +47,9 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/CODIGO_DO_OPERADOR.md`: `metafields` em comanda, pedido e item, e o
   código de quem lançou num aparelho compartilhado (totem). É ATRIBUIÇÃO, não
   autenticação — leia antes de tratar o código como permissão.
+- `docs/FISCAL_ACBRLIB.md`: o emissor ACBrLib (comunicador `fiscal_acbr/`),
+  o contrato com o backend, a contingência offline da NFC-e, a numeração e a
+  homologação. **Leitura obrigatória antes de mexer em emissão fiscal.**
 
 ## Regra da sincronização
 
@@ -68,8 +71,10 @@ O compose de `docker/local/` já faz isso no boot.
 - Um Pull Request executa validações, mas não publica release.
 - `workflow_dispatch` gera artefatos temporários, mas não publica o
   `latest-desktop.json` nem cria GitHub Release.
-- A tag executa os QUATRO workflows do monorepo — `backend`, `frontend`,
-  `pdv-desktop` e `pdv-mobile` —, cada um independente. No `pdv-desktop` o
+- A tag executa os CINCO workflows do monorepo — `backend`, `frontend`,
+  `fiscal-acbr`, `pdv-desktop` e `pdv-mobile` —, cada um independente. O
+  `fiscal-acbr` publica a imagem do comunicador ACBrLib e segue o mesmo
+  "reconstruir só se mudou" do backend. No `pdv-desktop` o
   fluxo é `test` → `release-metadata` → builds Windows/Linux →
   `publish-release`; no `pdv-mobile`, `test` → `release-metadata` →
   `build-apk` → `publish-mobile`.

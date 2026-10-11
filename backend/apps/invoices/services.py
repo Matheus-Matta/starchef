@@ -31,6 +31,7 @@ from apps.invoices.fiscal import (
     format_access_key,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
+from apps.invoices import contingencia_offline
 from apps.invoices.providers import (
     FiscalAmbiguous,
     provider_class_for,
@@ -434,6 +435,11 @@ def fiscal_emission_skipped_reason(order):
         provider_class = provider_class_for(config.provider)
         if provider_class is None:
             return f"O provedor fiscal '{config.provider}' nao possui integracao de emissao configurada."
+        from apps.invoices.emissao_da_loja import motivo_para_a_nuvem_nao_emitir
+
+        motivo = motivo_para_a_nuvem_nao_emitir(order, config)
+        if motivo:
+            return motivo
         if not provider_class.transmits:
             return provider_class().unavailable_reason(config)
         return None
@@ -545,6 +551,12 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
         if not items:
             raise ValidationError("Pedido sem itens faturaveis.")
 
+        # Trava a configuração e RELÊ o contador depois da trava. A trava do
+        # pedido não serializa nada entre caixas (cada um trava o seu), e dois
+        # caixas no mesmo segundo liam o mesmo `next_number`: 45 números
+        # repetidos em 200 emissões com 4 caixas (test_numeracao_concorrente).
+        # Ordem fixa pedido → configuração em toda emissão: sem deadlock.
+        config = FiscalConfig.objects.select_for_update().get(pk=config.pk)
         number = _proximo_numero_livre(config)
         # O CSC pode não estar gravado aqui: a loja não recebe segredo de
         # emissão pela sincronização. Resolvido UMA vez por emissão — o
@@ -677,8 +689,10 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
             # Pode ter sido emitida do outro lado: consultar antes de reenviar.
             _mark_awaiting(invoice, AWAITING_RECONCILIATION, exc)
         except FiscalUnavailable as exc:
-            # Indisponibilidade momentanea: a retransmissao periodica resolve.
-            _mark_awaiting(invoice, AWAITING_TRANSMISSION, exc)
+            # Sem SEFAZ: contingencia offline, se o emissor sabe assinar e a
+            # empresa permite; senao a retransmissao periodica resolve.
+            if not contingencia_offline.tentar(invoice, config, provider, exc, user=user):
+                _mark_awaiting(invoice, AWAITING_TRANSMISSION, exc)
         except Exception as exc:  # noqa: BLE001 — falha inesperada nao pode virar 500 no caixa.
             logging.getLogger(__name__).exception("Falha inesperada ao emitir a nota do pedido %s", order.id)
             _mark_failed(invoice, FAILURE_REJECTION, exc)
@@ -936,7 +950,8 @@ def resend_fiscal_invoice(invoice, *, user=None):
                 )
                 return locked
 
-            _refresh_emission_for_retry(locked, config)
+            if not contingencia_offline.transmite_como_assinada(locked):
+                _refresh_emission_for_retry(locked, config)
             try:
                 get_provider(config.provider).emit(locked, config)
             except FiscalAmbiguous as exc:
@@ -1009,7 +1024,8 @@ def reprocess_pending_fiscal_invoices(*, account=None):
             retried += 1
             try:
                 if awaiting == AWAITING_TRANSMISSION:
-                    _refresh_emission_for_retry(invoice, config)
+                    if not contingencia_offline.transmite_como_assinada(invoice):
+                        _refresh_emission_for_retry(invoice, config)
                     provider.emit(invoice, config)
                 else:
                     provider.status(invoice)

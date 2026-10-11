@@ -11,6 +11,7 @@
 #   celery_worker tarefas do domínio + retry/reconciliação da sincronização
 #   celery_beat  o relógio dessas tarefas periódicas
 #   sync_worker  a conexão WSS com a nuvem (só faz algo com SYNC_ENABLED=true)
+#   fiscal-acbr  o emissor de NFC-e/NF-e da loja (provedor "ACBrLib"), offline
 #   postgres     o banco da loja (a fonte da verdade local)
 #   redis        cache, canal do Channels e broker do Celery
 #
@@ -77,6 +78,13 @@ x-backend-base: &backend-base
     # nunca uma cópia à mão que envelhece (o exemplo antigo dizia 3.0.14).
     SYNC_APP_VERSION: ${STARCHEF_VERSION}
     SYNC_ENROLL_ENV_PATH: /app/sync/credentials.env
+    # O emissor ACBrLib desta loja, na rede do compose. Fixo como o endereço
+    # do Postgres: antes eram três linhas comentadas no `.env.local` (perfil,
+    # URL e token) e a loja que trocava o provedor para "ACBrLib" sem elas
+    # recebia "ACBRLIB_URL não configurada" no caixa. Só é usado quando o
+    # cadastro fiscal do restaurante escolhe o provedor ACBrLib.
+    ACBRLIB_URL: http://fiscal-acbr:8001
+    ACBRLIB_TOKEN: ${ACBRLIB_TOKEN:-}
   volumes:
     - backend_media:/app/media
     - backend_static:/app/staticfiles
@@ -216,6 +224,39 @@ services:
       retries: 3
       start_period: 90s
 
+  # O emissor fiscal ACBrLib (docs/FISCAL_ACBRLIB.md): assina e transmite a
+  # nota DAQUI, e por isso a loja emite sem internet (contingência offline).
+  # Sobe sempre, junto com o resto: loja na Focus simplesmente não o chama.
+  #
+  # Quem emite é decidido por nota, não por container: o backend manda em cada
+  # chamada o CNPJ, o endereço, o certificado e o CSC do RESTAURANTE da venda
+  # (`acbrlib/provider.py`). O comunicador não guarda configuração nenhuma —
+  # uma loja com dois restaurantes emite cada nota com os dados do dela.
+  #
+  # A libacbrnfe64.so (Projeto ACBr, licença própria) não vem na imagem: fica
+  # em ./acbr/libs. Sem ela o serviço sobe assim mesmo, fica "unhealthy" no
+  # `docker ps` e responde ao caixa "ACBrLib não instalada" com a providência.
+  # Nunca simula: nota de mentira é pior que nota nenhuma.
+  #
+  # Sem porta publicada: só o backend fala com ele, pela rede do compose.
+  fiscal-acbr:
+    image: "${ACBR_IMAGE:-ghcr.io/matheus-matta/starchef-fiscal-acbr:${STARCHEF_VERSION}}"
+    restart: unless-stopped
+    mem_limit: ${ACBR_MEM_LIMIT:-256m}
+    logging: *default-logging
+    environment:
+      ACBRLIB_TOKEN: ${ACBRLIB_TOKEN:-}
+    volumes:
+      - ./acbr/libs:/app/libs:ro
+      - fiscal_acbr_data:/app/data
+    networks:
+      - starchef-local
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   frontend:
     image: "${FRONTEND_IMAGE:-ghcr.io/matheus-matta/starchef-frontend:${STARCHEF_VERSION}}"
     restart: unless-stopped
@@ -261,6 +302,7 @@ volumes:
   backend_static:
   sync_credentials:
   caddy_data:
+  fiscal_acbr_data:
 
 networks:
   starchef-local:

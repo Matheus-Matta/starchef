@@ -72,7 +72,7 @@ if ! docker image inspect starchef-backend:loadtest >/dev/null 2>&1; then
 fi
 
 # 2) A nuvem.
-compose up -d redis-cloud redis-store backend-cloud
+compose up -d redis-cloud redis-store fiscal-acbr-cloud fiscal-acbr-store backend-cloud
 echo -n "aguardando a nuvem em 127.0.0.1:${CLOUD_PORT}"
 for _ in $(seq 1 150); do
   if curl -fsS "http://127.0.0.1:${CLOUD_PORT}/health/" >/dev/null 2>&1; then echo " ok"; break; fi

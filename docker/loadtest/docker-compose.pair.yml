@@ -85,6 +85,8 @@ services:
       CELERY_BROKER_URL: redis://redis-cloud:6379/1
       CELERY_RESULT_BACKEND: redis://redis-cloud:6379/2
       SYNC_NODE_TYPE: cloud
+      ACBRLIB_URL: http://fiscal-acbr-cloud:8001
+      ACBRLIB_TOKEN: par-acbr-token
       GUNICORN_WORKERS: "2"
     ports:
       - "127.0.0.1:${CLOUD_PORT:-8021}:8000"
@@ -120,6 +122,8 @@ services:
       CELERY_BROKER_URL: redis://redis-cloud:6379/1
       CELERY_RESULT_BACKEND: redis://redis-cloud:6379/2
       SYNC_NODE_TYPE: cloud
+      ACBRLIB_URL: http://fiscal-acbr-cloud:8001
+      ACBRLIB_TOKEN: par-acbr-token
     networks: [starchef-syncpair]
     depends_on:
       backend-cloud:
@@ -136,6 +140,8 @@ services:
       CELERY_BROKER_URL: redis://redis-cloud:6379/1
       CELERY_RESULT_BACKEND: redis://redis-cloud:6379/2
       SYNC_NODE_TYPE: cloud
+      ACBRLIB_URL: http://fiscal-acbr-cloud:8001
+      ACBRLIB_TOKEN: par-acbr-token
     networks: [starchef-syncpair]
     depends_on:
       backend-cloud:
@@ -161,6 +167,8 @@ services:
       CELERY_BROKER_URL: redis://redis-store:6379/1
       CELERY_RESULT_BACKEND: redis://redis-store:6379/2
       SYNC_NODE_TYPE: local
+      ACBRLIB_URL: http://fiscal-acbr-store:8001
+      ACBRLIB_TOKEN: par-acbr-token
       GUNICORN_WORKERS: "2"
       # Para onde a loja se matricula e por onde ela fala.
       SYNC_CLOUD_API_URL: http://backend-cloud:8000
@@ -208,6 +216,8 @@ services:
       CELERY_BROKER_URL: redis://redis-store:6379/1
       CELERY_RESULT_BACKEND: redis://redis-store:6379/2
       SYNC_NODE_TYPE: local
+      ACBRLIB_URL: http://fiscal-acbr-store:8001
+      ACBRLIB_TOKEN: par-acbr-token
       SYNC_CLOUD_API_URL: http://backend-cloud:8000
       SYNC_CLOUD_WSS_URL: ws://backend-cloud:8000/ws/sync/v1/
       SYNC_ACCOUNT_ID: ${SYNC_ACCOUNT_ID:-}
@@ -243,6 +253,8 @@ services:
       CELERY_BROKER_URL: redis://redis-store:6379/1
       CELERY_RESULT_BACKEND: redis://redis-store:6379/2
       SYNC_NODE_TYPE: local
+      ACBRLIB_URL: http://fiscal-acbr-store:8001
+      ACBRLIB_TOKEN: par-acbr-token
       SYNC_CLOUD_API_URL: http://backend-cloud:8000
       SYNC_CLOUD_WSS_URL: ws://backend-cloud:8000/ws/sync/v1/
       SYNC_AUTO_ENROLL: "true"
@@ -263,6 +275,21 @@ services:
       # A credencial que a matrícula recebe vive aqui. Sem o volume ela valeria
       # só até o container reiniciar, e cada reinício viraria uma rematrícula.
       - pair_sync_credentials:/app/sync
+
+  # Um comunicador ACBrLib por lado (docs/FISCAL_ACBRLIB.md), com a SEFAZ
+  # SIMULADA: a lib e o certificado só existem na homologação. A porta fica no
+  # loopback para o teste trocar o "estado da SEFAZ" (`/_simulador/modo`).
+  fiscal-acbr-cloud:
+    image: starchef-fiscal-acbr:loadtest
+    environment: {ACBR_SIMULADOR: "1", ACBRLIB_TOKEN: par-acbr-token}
+    ports: ["127.0.0.1:8031:8001"]
+    networks: [starchef-syncpair]
+
+  fiscal-acbr-store:
+    image: starchef-fiscal-acbr:loadtest
+    environment: {ACBR_SIMULADOR: "1", ACBRLIB_TOKEN: par-acbr-token}
+    ports: ["127.0.0.1:8032:8001"]
+    networks: [starchef-syncpair]
 
 volumes:
   pair_sync_credentials:

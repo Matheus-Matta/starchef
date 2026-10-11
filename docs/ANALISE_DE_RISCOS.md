@@ -328,6 +328,22 @@ Testes: `test_excluir_conta_aberta_com_consumo_e_recusado`,
 `test_conta_excluida_nao_prende_a_comanda`,
 `test_nota_com_cupom_passa_na_conferencia_da_focus`.
 
+### 2.5.7 Emissão pela ACBrLib no par loja ⇄ nuvem (09/10/2026)
+
+`loadtest/fiscal_acbr/` (como repetir: `docs/FISCAL_ACBRLIB.md`): 200 vendas
+com NFC-e na loja, 4 caixas em paralelo, metade com a SEFAZ simulada no ar e
+metade fora (contingência), mais duas notas de 200 itens.
+
+| Defeito | Causa e correção |
+| --- | --- |
+| **45 números repetidos** na série 1 | Cada emissão travava o SEU pedido e lia `FiscalConfig.next_number` sem trava: dois caixas no mesmo segundo saíam com o mesmo número, que a SEFAZ recusa por duplicidade. Vale também para a Focus. Agora a emissão trava a configuração e relê o contador depois da trava (`test_numeracao_concorrente`) |
+| Fila do restaurante **travada para sempre** na loja | O `post_save` do Restaurant deriva a filial única. Aplicado o restaurante vindo da nuvem, a loja criava uma filial com UUID próprio, e a verdadeira chegava depois: duas. A edição seguinte do restaurante batia em `unique_branch_name_by_restaurant`. Agora o restaurante que chega pela sincronização não deriva filial (`test_restaurante_chegado_nao_deriva_filial`). Loja já matriculada antes da correção pode ter a filial a mais: sem nada apontando para ela, pode ser apagada, e os eventos presos passam na retentativa |
+
+Depois das correções: 203 notas autorizadas, números 1..203 sem repetição, as
+101 de contingência autorizadas com a MESMA chave do cupom em ~1 min após a
+SEFAZ voltar, nota/item de nota/pedido/pagamento idênticos nos dois bancos,
+nenhum evento morto ou em conflito.
+
 ### 2.6 Frontend
 
 `PdvView.vue` lia `error.response.data.detail` em quatro pontos — **campo que o
