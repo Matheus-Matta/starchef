@@ -17,7 +17,8 @@ release, instalador Windows, pacote Linux ou criação de tag, leia por completo
 - `docs/PDV_UPDATE_RELEASE.md`
 
 Esse é o documento canônico para atualização e publicação do PDV. Mantenha-o
-sincronizado sempre que o contrato do `latest.json`, os nomes dos artefatos, as
+sincronizado sempre que o contrato dos manifestos (`latest-desktop.json`,
+`latest-mobile.json`, `latest.json`), os nomes dos artefatos, as
 variáveis do Actions, os jobs ou o procedimento de release mudarem.
 
 Não coloque instruções de atualização/release no `DOC.md`. Esse assunto deve
@@ -84,9 +85,15 @@ O compose de `docker/local/` já faz isso no boot.
   alterar esse grupo, altere nos DOIS arquivos — grupos diferentes trazem de
   volta a corrida na criação do Release (um dos dois recebe 422).
 - Cada produto publica o manifesto dele: `latest-desktop.json` pelo
-  `pdv_desktop.yml` e `latest-mobile.json` pelo `pdv_mobile.yml`. Nenhum dos
-  dois pode escrever `latest.json`: esse nome é da linhagem 1.8.x do PDV
-  offline, que segue em produção nas outras branches.
+  `pdv_desktop.yml` e `latest-mobile.json` pelo `pdv_mobile.yml`. O
+  `pdv_desktop.yml` escreve TAMBÉM o `latest.json`, com o mesmo conteúdo do
+  `latest-desktop.json`, DE PROPÓSITO: é o nome que o PDV antigo (linhagem
+  1.8.x, offline) consulta, e publicá-lo é o que faz os terminais antigos
+  migrarem para a 3.x. Era proibido enquanto a 1.8.x estava em produção (ela
+  vende sem internet e a 3.x não); a proibição caiu quando ela saiu. Se uma
+  instalação offline voltar a existir, o caminho é PARAR de escrever esse
+  arquivo — não mexer no conteúdo. O motivo está comentado no próprio passo
+  do workflow. O `pdv_mobile.yml` nunca escreve `latest.json`.
 - O pipeline deve falhar se a tag não corresponder à versão pública do
   `pubspec.yaml`.
 - `backend.yml`/`frontend.yml` decidem se reconstroem a imagem comparando o
@@ -127,11 +134,12 @@ O compose de `docker/local/` já faz isso no boot.
 - O EXE é destinado à instalação manual; o atualizador automático do Windows
   escolhe o ZIP para permitir rollback transacional.
 - Linux publica ZIP como pacote recomendado.
-- O Release publica `latest.json` com versão, tag, commit, URLs, tamanhos e
-  SHA-256.
-- A URL padrão do manifesto é
-  `https://github.com/<owner>/<repo>/releases/latest/download/latest.json` e
-  pode ser substituída por `PDV_UPDATE_MANIFEST_URL` no build.
+- O Release publica `latest-desktop.json` (e a cópia `latest.json`, ver
+  acima) com versão, tag, commit, URLs, tamanhos e SHA-256.
+- O PDV desta linhagem consulta
+  `https://github.com/<owner>/<repo>/releases/latest/download/latest-desktop.json`
+  (`pdv_update_service.dart`), que pode ser substituída por
+  `PDV_UPDATE_MANIFEST_URL` no build.
 - O APK do atendimento móvel não faz parte do manifesto do PDV: ele tem o
   `latest-mobile.json`, publicado pelo próprio `pdv_mobile.yml`.
 - O `pdv_mobile.yml` roda sozinho na tag; o `pdv_desktop.yml` não o chama mais.

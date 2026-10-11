@@ -91,9 +91,13 @@ sistema.
 > **Dois manifestos, dois produtos.** `latest-desktop.json` é do PDV
 > Windows/Linux; `latest-mobile.json` é do atendimento móvel. Os dois são
 > publicados no MESMO GitHub Release da tag `vX.Y.Z`, por workflows diferentes.
-> E nenhum dos dois é o `latest.json` — esse nome pertence à linhagem 1.8.x do
-> PDV offline, que segue em produção em outras branches; escrevê-lo aqui faria
-> o PDV antigo enxergar a 3.0.0 como atualização.
+> O `pdv_desktop.yml` publica também o `latest.json`, com o MESMO conteúdo do
+> `latest-desktop.json`: é o nome que o PDV antigo (linhagem 1.8.x, offline)
+> consulta, e é ele que faz esses terminais migrarem sozinhos para a 3.x. Isso
+> foi proibido enquanto a 1.8.x estava em produção — ela vende sem internet e a
+> 3.x não — e passou a ser feito de propósito quando ela saiu. Se uma
+> instalação offline voltar a existir, pare de escrever o `latest.json` (passo
+> comentado no workflow); não mexa no conteúdo dele. O app móvel nunca o usa.
 
 ## Visão do fluxo
 
