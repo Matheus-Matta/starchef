@@ -66,6 +66,58 @@ Tudo isso roda dentro da loja: com a internet fora, o backend da loja chama o
 comunicador da loja, e a nota sai em contingência offline (tpEmis=9) quando a
 SEFAZ não responde.
 
+### A imagem no GitHub (`.github/workflows/fiscal_acbr.yml`)
+
+A Action gera `ghcr.io/matheus-matta/starchef-fiscal-acbr` no nosso GHCR:
+
+| Gatilho | Etiquetas publicadas |
+| --- | --- |
+| tag `vX.Y.Z` | `X.Y.Z`, `X.Y`, `latest` e `sha-<commit>` |
+| **Run workflow** (`workflow_dispatch`) | `manual` e `sha-<commit>` — nunca `latest` nem a versão das lojas |
+
+**A lib dentro da imagem (opcional).** Com o Secret `ACBRLIB_SO_URL` (um link
+direto para a `libacbrnfe64.so`, por exemplo um asset de release privado) e a
+Variable `ACBRLIB_SO_SHA256`, a Action baixa o arquivo, confere o SHA-256 e o
+cabeçalho ELF (uma página de erro baixada no lugar reprova o build) e o embute
+em `/opt/acbr`. Aí a loja e a nuvem não copiam nada à mão. Sem o Secret, a
+imagem sai sem a lib, como antes. Confira a licença do Projeto ACBr antes de
+publicar uma imagem com a lib num registro público.
+
+Ordem de busca no container: a montada em `/app/libs` (vale primeiro: é como
+uma loja testa uma lib nova sem esperar imagem) → a embutida em `/opt/acbr` →
+nenhuma. Lib presente que não carrega (arquivo corrompido, outra arquitetura)
+não derruba o container: ele sobe "unhealthy" e diz o motivo.
+
+### Na nuvem (`docker-compose.yml`)
+
+O `fiscal-acbr` também sobe sempre na nuvem, sem perfil. Os quatro serviços
+da imagem do backend recebem `ACBRLIB_URL=${ACBRLIB_URL:-http://fiscal-acbr:8001}`:
+o valor do `.env` vale; vazio, vale o emissor da própria nuvem. A lib fica em
+`./acbr/libs` (fora do git). A nuvem emite só para conta sem servidor de loja
+(`emissao_da_loja.py`): venda de loja é emitida pela loja.
+
+### Homologação e produção
+
+O ambiente é o do **cadastro fiscal do restaurante** (`FiscalConfig.environment`)
+e viaja em cada nota (`tpAmb` no INI e `ambiente` no contexto, que a ACBrLib
+grava como `NFe.Ambiente`: 0 = produção, 1 = homologação). Os endereços da
+SEFAZ de cada UF e ambiente são da própria ACBrLib — nada a configurar.
+
+Em homologação a SEFAZ exige textos fixos, e o INI os aplica sozinho
+(`acbrlib/ini.py`): primeiro item da NFC-e = "NOTA FISCAL EMITIDA EM AMBIENTE DE
+HOMOLOGACAO - SEM VALOR FISCAL" (rejeição 373) e destinatário = "NF-E EMITIDA EM
+AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL" (598). Em produção, os dados reais.
+
+Ao passar de homologação para produção, no cadastro fiscal, junto com o
+ambiente:
+
+* **CSC**: é um só no cadastro (como na Focus) — troque pelo de produção;
+* **próximo número**: o contador é um só. Uma nota de produção nunca repete
+  o número de uma de teste (`_proximo_numero_livre` confere por ambiente), mas
+  150 notas de teste fariam a produção começar no 151, e o buraco 1–150 exige
+  inutilização na SEFAZ. Volte o "próximo número" para o primeiro livre da
+  produção.
+
 ### De quem são os dados da nota
 
 O comunicador não guarda configuração: **em cada chamada** o backend manda

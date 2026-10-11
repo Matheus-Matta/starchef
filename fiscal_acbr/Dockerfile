@@ -1,12 +1,12 @@
 # Comunicador ACBrLib do StarChef (docs/FISCAL_ACBRLIB.md).
 #
 # Debian, e não Alpine: a libacbrnfe64.so é compilada contra a glibc. A lib NÃO
-# vem na imagem — é distribuída pelo Projeto ACBr e montada em /app/libs.
+# vem no repositório: é montada em /app/libs ou embutida pela Action em /opt/acbr.
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    LD_LIBRARY_PATH=/app/libs \
+    LD_LIBRARY_PATH=/app/libs:/opt/acbr \
     ACBR_LIB_PATH=/app/libs/libacbrnfe64.so \
     ACBR_CONFIG=/app/config/ACBrLib.ini \
     TZ=America/Sao_Paulo
@@ -23,6 +23,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 COPY config/ ./config/
+
+# A lib EMBUTIDA, quando a Action a baixou (Secret ACBRLIB_SO_URL): sem ela a
+# pasta só tem o LEIAME e a loja monta a sua em /app/libs, como antes.
+COPY embutida/ /opt/acbr/
 
 EXPOSE 8001
 

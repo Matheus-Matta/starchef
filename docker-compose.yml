@@ -51,6 +51,8 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+      # O emissor ACBrLib: o do `.env` (ACBRLIB_URL), ou o desta nuvem.
+      ACBRLIB_URL: ${ACBRLIB_URL:-http://fiscal-acbr:8001}
 
     volumes:
       - backend_media:/app/media
@@ -102,6 +104,8 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+      # O emissor ACBrLib: o do `.env` (ACBRLIB_URL), ou o desta nuvem.
+      ACBRLIB_URL: ${ACBRLIB_URL:-http://fiscal-acbr:8001}
 
     depends_on:
       backend:
@@ -125,6 +129,8 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+      # O emissor ACBrLib: o do `.env` (ACBRLIB_URL), ou o desta nuvem.
+      ACBRLIB_URL: ${ACBRLIB_URL:-http://fiscal-acbr:8001}
 
     depends_on:
       backend:
@@ -164,6 +170,8 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+      # O emissor ACBrLib: o do `.env` (ACBRLIB_URL), ou o desta nuvem.
+      ACBRLIB_URL: ${ACBRLIB_URL:-http://fiscal-acbr:8001}
 
     depends_on:
       backend:
@@ -172,14 +180,16 @@ services:
     networks:
       - apps_net
 
-  # O emissor fiscal ACBrLib DA NUVEM (docs/FISCAL_ACBRLIB.md). Liga com
-  # COMPOSE_PROFILES=acbrlib no .env, e o backend o acha em
-  # ACBRLIB_URL=http://fiscal-acbr:8001. A libacbrnfe64.so (Projeto ACBr) fica
-  # em ./acbr/libs; sem ela o comunicador não sobe — de propósito. Sem porta
-  # publicada: só o backend e o Celery falam com ele, pela rede interna.
+  # O emissor fiscal ACBrLib DA NUVEM (docs/FISCAL_ACBRLIB.md). Sobe sempre,
+  # como na loja: conta sem servidor local (delivery, site) emite por aqui, em
+  # homologação ou produção — o ambiente vem de cada nota, do cadastro fiscal
+  # do restaurante. O backend o acha em ACBRLIB_URL (`.env`; vazio = este).
+  #
+  # A libacbrnfe64.so (Projeto ACBr) fica em ./acbr/libs. Sem ela o serviço
+  # sobe "unhealthy" e responde "ACBrLib não instalada" — nunca simula. Sem
+  # porta publicada: só o backend e o Celery falam com ele, pela rede interna.
   fiscal-acbr:
     image: ghcr.io/matheus-matta/starchef-fiscal-acbr:latest
-    profiles: ["acbrlib"]
     restart: unless-stopped
     mem_limit: ${ACBR_MEM_LIMIT:-256m}
     logging: *default-logging

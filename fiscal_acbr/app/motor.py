@@ -18,12 +18,21 @@ from app.simulador import Simulador
 def criar_motor():
     if os.environ.get("ACBR_SIMULADOR") == "1":
         return Simulador()
-    caminho = os.environ.get("ACBR_LIB_PATH", "/app/libs/libacbrnfe64.so")
-    if not os.path.exists(caminho):
-        return SemLib(caminho)
-    from app.acbrlib import AcbrLib
+    # A montada pela loja (/app/libs) vale primeiro; sem ela, a que a Action
+    # embutiu na imagem (/opt/acbr, Secret ACBRLIB_SO_URL do fiscal_acbr.yml).
+    montada = os.environ.get("ACBR_LIB_PATH", "/app/libs/libacbrnfe64.so")
+    embutida = os.environ.get("ACBR_LIB_EMBUTIDA", "/opt/acbr/libacbrnfe64.so")
+    caminho = next((c for c in (montada, embutida) if os.path.exists(c)), None)
+    if caminho is None:
+        return SemLib(montada)
+    from app import acbrlib
 
-    return AcbrLib(caminho, os.environ.get("ACBR_CONFIG", "/app/config/ACBrLib.ini"))
+    try:
+        return acbrlib.AcbrLib(caminho, os.environ.get("ACBR_CONFIG", "/app/config/ACBrLib.ini"))
+    except (OSError, sefaz.FalhaFiscal) as erro:
+        # Arquivo corrompido, de outra arquitetura, ou que não inicializa: sem
+        # isto o container caía no boot e reiniciava em laço, calado.
+        return SemLib(caminho, motivo=f"a lib não carregou ({erro})")
 
 
 class SemLib:
@@ -31,9 +40,9 @@ class SemLib:
 
     nome = "ausente"
 
-    def __init__(self, caminho):
+    def __init__(self, caminho, motivo=None):
         self.mensagem = (
-            f"ACBrLib não instalada: {caminho} não existe. Copie a libacbrnfe64.so "
+            f"ACBrLib não instalada: {motivo or f'{caminho} não existe'}. Copie a libacbrnfe64.so "
             "(Projeto ACBr) para docker/local/acbr/libs no servidor da loja e reinicie "
             "o serviço fiscal-acbr (docs/FISCAL_ACBRLIB.md)."
         )
