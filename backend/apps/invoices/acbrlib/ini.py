@@ -16,6 +16,11 @@ from apps.invoices.models import FiscalConfig
 
 SEM_GTIN = "SEM GTIN"
 
+#: O que a SEFAZ de HOMOLOGAÇÃO exige no lugar dos dados reais (rejeições 373
+#: e 598). A Focus aplica isso do lado dela; aqui o XML nasce no backend.
+TEXTO_HOMOLOGACAO_ITEM = "NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
+TEXTO_HOMOLOGACAO_DESTINATARIO = "NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
+
 
 def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
     """INI da nota. `contingencia` = {"dhCont": iso, "xJust": texto} no tpEmis=9."""
@@ -31,12 +36,18 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
     secao("infNFe", {"versao": "4.00"})
     secao("Identificacao", _identificacao(documento, invoice, tp_emis, contingencia))
     secao("Emitente", _emitente(Emitente(config)))
+    homologacao = str(invoice.environment) == FiscalConfig.ENV_HOMOLOGATION
     destinatario = _destinatario(documento)
     if destinatario:
+        if homologacao:
+            destinatario["xNome"] = TEXTO_HOMOLOGACAO_DESTINATARIO
         secao("Destinatario", destinatario)
     simples = str(config.crt) in {FiscalConfig.CRT_SIMPLES, FiscalConfig.CRT_SIMPLES_EXCESSO}
     for n, item in enumerate(documento["items"], start=1):
-        secao(f"Produto{n:03d}", _produto(item))
+        produto = _produto(item)
+        if homologacao and n == 1 and str(invoice.document_model) == FiscalConfig.MODEL_NFCE:
+            produto["xProd"] = TEXTO_HOMOLOGACAO_ITEM  # NFC-e: só o primeiro item (373)
+        secao(f"Produto{n:03d}", produto)
         secao(f"ICMS{n:03d}", _icms(item, simples))
         secao(f"PIS{n:03d}", _tributo(item, "pis", "pPIS", "vPIS"))
         secao(f"COFINS{n:03d}", _tributo(item, "cofins", "pCOFINS", "vCOFINS"))

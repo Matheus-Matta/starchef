@@ -9,6 +9,7 @@ docker/local/.env.cloud
 # A libacbrnfe64.so do emissor fiscal: distribuída pelo Projeto ACBr com
 # licença própria, copiada em cada loja (docs/FISCAL_ACBRLIB.md).
 docker/local/acbr/
+acbr/
 .venv/
 venv/
 __pycache__/
