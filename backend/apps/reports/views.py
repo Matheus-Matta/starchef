@@ -14,6 +14,7 @@ from apps.core.access import is_tenant_admin
 from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment
 from apps.stock.models import StockMovement
+from apps.reports.comandas_abertas import resumo as comandas_abertas
 from apps.reports.waiter_sales import sales_by_waiter
 
 
@@ -117,6 +118,7 @@ class DashboardReportView(TenantReportMixin, APIView):
             ),
             "top_products": list(top_products),
             "low_stock": low_stock[:10],
+            **comandas_abertas(filters),
         }
         return Response(data)
 

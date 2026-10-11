@@ -30,4 +30,13 @@ describe("StatCard", () => {
 
     expect(card.find(".sc-stat-card__value").classes()).not.toContain("sc-stat-card__value--rise");
   });
+
+  it("valor comprido corta com reticencias e mostra o inteiro no mouse", () => {
+    const card = mount(StatCard, {
+      props: { label: "Itens vendidos", value: "1.234.567,891", caption: "Total de unidades" },
+    });
+
+    expect(card.find(".sc-stat-card__value").attributes("title")).toBe("1.234.567,891");
+    expect(card.find(".sc-stat-card__caption").attributes("title")).toBe("Total de unidades");
+  });
 });

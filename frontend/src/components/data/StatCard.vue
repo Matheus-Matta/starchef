@@ -1,18 +1,18 @@
 <template>
   <div class="sc-stat-card" :style="style">
     <div class="sc-stat-card__header">
-      <span class="sc-stat-card__label">{{ label }}</span>
+      <span class="sc-stat-card__label" :title="label">{{ label }}</span>
       <span v-if="$slots.icon" class="sc-stat-card__icon" :style="iconStyle">
         <slot name="icon" />
       </span>
     </div>
     <div class="sc-stat-card__value-row">
-      <span :key="riseKey" class="num sc-stat-card__value" :class="{ 'sc-stat-card__value--rise': rising }">{{ value }}</span>
+      <span :key="riseKey" class="num sc-stat-card__value" :title="String(value)" :class="{ 'sc-stat-card__value--rise': rising }">{{ value }}</span>
       <span v-if="delta != null" class="sc-stat-card__delta" :style="deltaStyle">
         <span class="sc-stat-card__delta-arrow">{{ deltaDir === "up" ? "▲" : "▼" }}</span>{{ delta }}
       </span>
     </div>
-    <span v-if="caption" class="sc-stat-card__caption">{{ caption }}</span>
+    <span v-if="caption" class="sc-stat-card__caption" :title="caption">{{ caption }}</span>
   </div>
 </template>
 
@@ -67,6 +67,8 @@ const deltaStyle = computed(() => {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   padding: var(--space-5);
+  /* Sem isto o cartão, item de grade, cresce com o valor e empurra os vizinhos. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -106,7 +108,19 @@ const deltaStyle = computed(() => {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Valor, rótulo e legenda NUNCA pulam linha: cortam com reticências e o
+   texto inteiro fica no `title`. Um número quebrado em duas linhas lê como
+   dois números. */
+.sc-stat-card__label,
+.sc-stat-card__value,
+.sc-stat-card__caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sc-stat-card__value {
@@ -155,7 +169,7 @@ const deltaStyle = computed(() => {
   .sc-stat-card:hover { transform: none; }
   .sc-stat-card__icon { width: 32px; height: 32px; font-size: 16px; }
   .sc-stat-card__label { font-size: 11px; line-height: 1.25; }
-  .sc-stat-card__value { font-size: clamp(20px, 7vw, 27px); overflow-wrap: anywhere; }
+  .sc-stat-card__value { font-size: clamp(20px, 7vw, 27px); }
   .sc-stat-card__caption { font-size: 11px; line-height: 1.3; }
 }
 </style>

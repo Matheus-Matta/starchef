@@ -21,7 +21,9 @@
       :header-style="{ textAlign: column.align || 'left' }"
     >
       <template #body="{ data }">
-        {{ formatValue(data[column.key], column) }}
+        <span class="report-data-table__cell" :title="String(formatValue(data[column.key], column))">
+          {{ formatValue(data[column.key], column) }}
+        </span>
       </template>
     </Column>
     <template #empty>
@@ -66,6 +68,16 @@ function formatValue(value, column) {
 .report-data-table :deep(.p-datatable-thead > tr > th),
 .report-data-table :deep(.p-datatable-tbody > tr > td) {
   padding: 12px 16px;
+}
+
+/* Célula não pula linha: nome comprido corta com reticências (inteiro no
+   `title`) em vez de esticar a linha e desalinhar os números ao lado. */
+.report-data-table :deep(.p-datatable-tbody > tr > td) { white-space: nowrap; }
+.report-data-table__cell {
+  display: block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .report-data-table :deep(.report-data-table__clickable) { cursor: pointer; }
