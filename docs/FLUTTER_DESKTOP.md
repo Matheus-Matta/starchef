@@ -93,16 +93,21 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`OfflineStore`** (`core/network/offline_store.dart`, `sqlite_async`): cache de respostas GET (até 300 entradas, sem TTL — offline sempre entrega a última resposta conhecida) + uma **outbox transacional** de mutações pendentes, com retry, lease e mapeamento de ID temporário→real. Escopado por `origem-da-API | conta | usuário` (com fallback se claims do JWT faltarem).
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
-- **Taxa, CPF/CNPJ e desconto na tela de pagamento** (sem modal antes dela):
-  chave da taxa de serviço, um campo só para CPF ou CNPJ (reconhecido pelo
-  tamanho e validado no PDV) e o desconto em R$, logo abaixo do cupom
-  (`payment_adjustments.dart` + `home_page_payment_ajustes.dart`). Cada
+- **Tela de pagamento, sem modal antes dela.** À esquerda, o **cupom** (um
+  seletor com busca no servidor, `coupon_select.dart`: "Nenhum" sempre em
+  primeiro, os vigentes mais usados, Enter aplica um código fora da lista e o
+  X remove) e o resumo, que mostra o que foi aplicado: taxa de serviço (ou
+  "não cobrada"), desconto, cupom e "CPF/CNPJ na nota". À direita, abaixo do
+  teclado (que se ajusta à altura que sobra), a **chave da taxa de serviço**,
+  o **CPF ou CNPJ** (um campo só, reconhecido pelo tamanho) e o **desconto**
+  em R$ (`payment_adjustments.dart` + `home_page_payment_ajustes.dart`). Cada
   mudança vai ao servidor na hora e o total se redesenha: na venda nova o
   servidor recalcula a prévia (`simular`), no pedido existente o `/close/`
   roda de novo. Desconto que pede aprovação abre a senha de ações do caixa,
   que segue com a conclusão da venda (`cash_password`). Com pagamento já
-  lançado os três ficam travados: mudar o total deixaria o recebido diferente
-  da conta.
+  lançado, taxa, documento e desconto travam. Todos os campos da tela têm a
+  mesma altura (`payment_input_style.dart`, `alturaDoCampo`): com a fonte
+  real o campo com ícone ficava mais alto que o sem ícone.
 - **Fotos do catálogo**: cards de produto e opções de variante resolvem
   `logo_p`, com fallback para o campo legado `image`. O PDV não percorre
   `photo_list`. Sem URL, sem rede ou com

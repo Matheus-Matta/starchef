@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'payment_input_style.dart';
+
 /// Um campo que só vale quando o operador APLICA: Enter ou o botão de check.
 ///
 /// Mandar ao servidor a cada tecla recalcularia o pedido com um CPF pela
@@ -39,14 +41,13 @@ class CampoComAplicar extends StatelessWidget {
     keyboardType: TextInputType.number,
     textInputAction: TextInputAction.done,
     inputFormatters: [?formatador],
-    decoration: InputDecoration(
-      isDense: true,
-      labelText: rotulo,
+    decoration: campoDoPagamento(
+      rotulo,
       prefixIcon: icone,
       prefixText: prefixo,
-      suffixIcon: IconButton(
+      suffixIcon: botaoDoCampo(
+        icon: Icons.check_rounded,
         tooltip: 'Aplicar',
-        icon: const Icon(Icons.check_rounded, size: 18),
         onPressed: ativo ? aplicar : null,
       ),
     ),

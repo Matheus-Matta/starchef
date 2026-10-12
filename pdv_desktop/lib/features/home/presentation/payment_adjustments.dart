@@ -12,7 +12,7 @@ import 'campo_com_aplicar.dart';
 /// fechamento na frente do cliente. Aqui cada mudança vai ao servidor na hora
 /// (o mixin `_PaymentAdjustSection` decide como) e o total se redesenha.
 ///
-/// Widget próprio pelo mesmo motivo do `PaymentCouponInput`: é a parte que
+/// Widget próprio pelo mesmo motivo do `CouponSelect`: é a parte que
 /// responde à mão do operador, e a única que dá para verificar sem o PDV.
 class PaymentAdjustments extends StatefulWidget {
   const PaymentAdjustments({
@@ -126,68 +126,56 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
     final cores = Theme.of(context).colorScheme;
     final erro = _erroLocal.isNotEmpty ? _erroLocal : widget.erro;
     final dica = TextStyle(color: cores.onSurfaceVariant, fontSize: 12);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        spacing: 8,
-        children: [
-          Row(
-            children: [
-              Switch(
-                key: const Key('payment-service-fee'),
-                value: widget.cobrarTaxa,
-                onChanged: ativo ? widget.onTaxa : null,
+    // EMPILHADOS, abaixo do teclado: taxa, documento e desconto mexem no
+    // valor que o teclado está cobrando, e é ali que o caixa está olhando.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 6,
+      children: [
+        Row(
+          children: [
+            const Text('Taxa de serviço'),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.rotuloTaxa,
+                overflow: TextOverflow.ellipsis,
+                style: dica,
               ),
-              const SizedBox(width: 8),
-              const Text('Taxa de serviço'),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  widget.rotuloTaxa,
-                  overflow: TextOverflow.ellipsis,
-                  style: dica,
-                ),
-              ),
-            ],
-          ),
-          Row(
-            spacing: 10,
-            children: [
-              Expanded(
-                child: CampoComAplicar(
-                  chave: 'payment-document',
-                  controle: _documento,
-                  ativo: ativo,
-                  rotulo: 'CPF ou CNPJ na nota',
-                  icone: const Icon(Icons.badge_outlined, size: 18),
-                  aplicar: _aplicarDocumento,
-                ),
-              ),
-              SizedBox(
-                width: 170,
-                child: CampoComAplicar(
-                  chave: 'payment-discount',
-                  controle: _desconto,
-                  ativo: ativo,
-                  rotulo: 'Desconto',
-                  prefixo: '- R\$ ',
-                  formatador: CentavosFormatter(),
-                  aplicar: _aplicarDesconto,
-                ),
-              ),
-            ],
-          ),
-          if (widget.bloqueado)
-            Text(
-              'Remova os pagamentos lançados para mudar taxa, desconto ou '
-              'documento.',
-              style: dica,
-            )
-          else if (erro.isNotEmpty)
-            Text(erro, style: TextStyle(color: cores.error, fontSize: 12)),
-        ],
-      ),
+            ),
+            Switch(
+              key: const Key('payment-service-fee'),
+              value: widget.cobrarTaxa,
+              onChanged: ativo ? widget.onTaxa : null,
+            ),
+          ],
+        ),
+        CampoComAplicar(
+          chave: 'payment-document',
+          controle: _documento,
+          ativo: ativo,
+          rotulo: 'CPF ou CNPJ na nota',
+          icone: const Icon(Icons.badge_outlined, size: 18),
+          aplicar: _aplicarDocumento,
+        ),
+        CampoComAplicar(
+          chave: 'payment-discount',
+          controle: _desconto,
+          ativo: ativo,
+          rotulo: 'Desconto',
+          prefixo: '- R\$ ',
+          formatador: CentavosFormatter(),
+          aplicar: _aplicarDesconto,
+        ),
+        if (widget.bloqueado)
+          Text(
+            'Remova os pagamentos lançados para mudar taxa, desconto ou '
+            'documento.',
+            style: dica,
+          )
+        else if (erro.isNotEmpty)
+          Text(erro, style: TextStyle(color: cores.error, fontSize: 12)),
+      ],
     );
   }
 }

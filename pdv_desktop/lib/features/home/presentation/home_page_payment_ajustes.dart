@@ -34,6 +34,7 @@ mixin _PaymentAdjustSection on _HomePageShared {
   set discountPassword(String? value);
   Future<String?> _autorizarDesconto(String motivo);
   void _refreshSuggestedPaymentAmount();
+  Widget _paymentSummaryRow(String label, String value, {bool strong});
 
   /// As escolhas que o pedido carrega AGORA — a base de toda mudança.
   Map<String, dynamic> _fechamentoAtual() {
@@ -119,7 +120,20 @@ mixin _PaymentAdjustSection on _HomePageShared {
     'fiscal_customer_cnpj': digitos.length == 14 ? digitos : '',
   });
 
-  /// O bloco da tela de pagamento, logo abaixo do cupom.
+  /// "CPF na nota  529.982.247-25" entre as linhas do resumo: confirma o
+  /// documento digitado à direita, abaixo do teclado.
+  Widget _documentoSummaryRow() {
+    final pedido = activeOrder ?? const {};
+    final cpf = cpfDigits(pedido['fiscal_customer_cpf']);
+    final cnpj = cnpjDigits(pedido['fiscal_customer_cnpj']);
+    if (cpf.isEmpty && cnpj.isEmpty) return const SizedBox.shrink();
+    return _paymentSummaryRow(
+      cpf.isNotEmpty ? 'CPF na nota' : 'CNPJ na nota',
+      cpf.isNotEmpty ? formatCpf(cpf) : formatCnpj(cnpj),
+    );
+  }
+
+  /// O bloco abaixo do teclado: taxa, CPF/CNPJ e desconto.
   Widget _ajustesControl(BuildContext context) {
     final pedido = activeOrder ?? const {};
     final percentual = defaultServiceFeePercent;
