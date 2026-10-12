@@ -130,7 +130,9 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
     // valor que o teclado está cobrando, e é ali que o caixa está olhando.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      spacing: 6,
+      // O rótulo do campo flutua ACIMA da borda: com 6 px ele encostava
+      // na linha de cima.
+      spacing: 12,
       children: [
         Row(
           children: [
@@ -143,10 +145,18 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
                 style: dica,
               ),
             ),
-            Switch(
-              key: const Key('payment-service-fee'),
-              value: widget.cobrarTaxa,
-              onChanged: ativo ? widget.onTaxa : null,
+            // PEQUENA: no tamanho padrão a chave era maior que os campos e
+            // as teclas ao redor, e puxava o olho para o que menos muda.
+            SizedBox(
+              height: 24,
+              child: FittedBox(
+                child: Switch(
+                  key: const Key('payment-service-fee'),
+                  value: widget.cobrarTaxa,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onChanged: ativo ? widget.onTaxa : null,
+                ),
+              ),
             ),
           ],
         ),
