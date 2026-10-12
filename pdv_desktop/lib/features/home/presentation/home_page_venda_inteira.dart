@@ -17,6 +17,11 @@ mixin _VendaInteiraSection on _HomePageShared {
   set orderItems(List<Map<String, dynamic>> value);
   set registeredPayments(List<Map<String, dynamic>> value);
 
+  /// A senha que aprovou o desconto na tela de pagamento: a conclusão a leva
+  /// de novo, porque a simulação aprovou e desfez (`_PaymentAdjustSection`).
+  String? get discountPassword;
+  set discountPassword(String? value);
+
   /// O total OFICIAL da venda, sem criá-la: a tela de pagamento abre sobre o
   /// pedido que o servidor CALCULOU (taxa, promoção, cupom), e ele só nasce na
   /// conclusão, com os recebimentos, num envio só.
@@ -56,6 +61,7 @@ mixin _VendaInteiraSection on _HomePageShared {
     draft.simulada = false;
     draft.fechamento = null;
     draft.anotacoesVistas = null;
+    discountPassword = null;
     activeOrder = null;
     orderItems = [];
   }
@@ -78,6 +84,7 @@ mixin _VendaInteiraSection on _HomePageShared {
         totalMostrado: activeOrder?['total'] == null
             ? null
             : '${activeOrder!['total']}',
+        senhaDoCaixa: discountPassword,
       ),
       // O total mudou, a comanda já foi paga: `_ConflitosSection` recalcula
       // ou abre o pedido certo, em vez de só mostrar o erro.
@@ -92,6 +99,7 @@ mixin _VendaInteiraSection on _HomePageShared {
         Map<String, dynamic>.from(pagamento as Map),
     ];
     draft.clear();
+    discountPassword = null;
     return true;
   }
 

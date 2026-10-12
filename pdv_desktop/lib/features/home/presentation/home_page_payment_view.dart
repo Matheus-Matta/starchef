@@ -36,7 +36,9 @@ mixin _PaymentView on _HomePageShared {
   set flowStep(String value);
   Map<String, dynamic>? get selectedMethod;
   Widget _couponControl(BuildContext context);
+  Widget _ajustesControl(BuildContext context);
   Widget _couponSummaryRow();
+  Widget _documentoSummaryRow();
   void _goBack();
   void _pressPaymentKey(String key);
   void _typePaymentAmount(String raw);
@@ -51,20 +53,6 @@ mixin _PaymentView on _HomePageShared {
             (item) => '${item['id']}' == selectedPaymentMethod,
           );
     final needsReference = selected?['requires_reference'] == true;
-    const keys = [
-      '1',
-      '2',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      '8',
-      '9',
-      'clear',
-      '0',
-      'back',
-    ];
     return LayoutBuilder(
       builder: (context, constraints) {
         // A janela do PDV pode chegar a 960 px. Com a navegação lateral
@@ -72,7 +60,9 @@ mixin _PaymentView on _HomePageShared {
         // pouco mais de 200 px. O teclado continua confortável, mas agora
         // cede espaço ao resumo nas larguras menores suportadas.
         final compact = constraints.maxWidth < 980;
-        final horizontalPadding = compact ? 10.0 : 14.0;
+        // Recuos curtos: na tela de 1080 px o espaço que sobrava em volta dos
+        // dois cartões era o que faltava para o teclado e os ajustes.
+        final horizontalPadding = compact ? 6.0 : 8.0;
         final keypadWidth = (constraints.maxWidth * .42)
             .clamp(340.0, 430.0)
             .toDouble();
@@ -91,19 +81,21 @@ mixin _PaymentView on _HomePageShared {
                     // com rotulo ocupavam a primeira faixa do resumo dizendo o
                     // que a barra do aplicativo, logo acima, ja diz — e a
                     // barra tem uma seta de voltar desde sempre.
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(8),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Abre o cupom antes do resumo; o abatimento fica nele.
                         _couponControl(context),
+                        const SizedBox(height: 8),
                         // QUEM LANCOU, com o codigo quando houver: "Maria - 4821".
                         //
                         // O caixa confere a conta de um atendimento que nao foi
                         // dele. Num aparelho compartilhado no salao o login e
                         // sempre o mesmo, e o codigo e a unica coisa aqui que
                         // diz quem de fato atendeu aquela mesa.
-                        if ('${activeOrder!['operator_label'] ?? ''}'.isNotEmpty)
+                        if ('${activeOrder!['operator_label'] ?? ''}'
+                            .isNotEmpty)
                           _paymentSummaryRow(
                             'Operador',
                             '${activeOrder!['operator_label']}',
@@ -112,11 +104,16 @@ mixin _PaymentView on _HomePageShared {
                           'Subtotal',
                           _money(activeOrder!['subtotal']),
                         ),
+                        // Taxa, desconto e documento aparecem AQUI quando
+                        // aplicados — é o que confirma o gesto feito nos
+                        // campos da direita, abaixo do teclado.
                         if (_number(activeOrder!['service_fee']) > .009)
                           _paymentSummaryRow(
                             'Taxa de serviço',
                             _money(activeOrder!['service_fee']),
-                          ),
+                          )
+                        else if (activeOrder!['service_fee_enabled'] == false)
+                          _paymentSummaryRow('Taxa de serviço', 'não cobrada'),
                         if (_number(activeOrder!['delivery_fee']) > .009)
                           _paymentSummaryRow(
                             'Entrega',
@@ -131,6 +128,7 @@ mixin _PaymentView on _HomePageShared {
                         // outras linhas que o compoem: depois dele pareceria
                         // um extra, quando e justamente uma parcela.
                         _couponSummaryRow(),
+                        _documentoSummaryRow(),
                         _paymentSummaryRow(
                           'Total do pedido',
                           _money(activeOrder!['total']),
@@ -311,15 +309,21 @@ mixin _PaymentView on _HomePageShared {
                   radius: AppTheme.radius,
                   shadows: const [],
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(8),
                     child: Column(
                       children: [
                         DropdownButtonFormField<String>(
+                          // A chave muda com a seleção: o campo guarda o valor
+                          // inicial, e sem isso ↑/↓ trocavam a forma sem a
+                          // tela mostrar.
+                          key: ValueKey('forma-$selectedPaymentMethod'),
                           initialValue: selectedPaymentMethod,
                           isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Forma de pagamento',
-                          ),
+                          isDense: true,
+                          // O texto do campo, e não o `titleMedium` padrão do
+                          // dropdown: mais pesado, destoava do cupom e da referência.
+                          style: Theme.of(context).textTheme.bodyLarge,
+                          decoration: campoDoPagamento('Forma de pagamento'),
                           items: paymentMethods
                               .map(
                                 (item) => DropdownMenuItem(
@@ -335,8 +339,8 @@ mixin _PaymentView on _HomePageShared {
                           const SizedBox(height: 8),
                           TextField(
                             controller: paymentReference,
-                            decoration: const InputDecoration(
-                              labelText: 'Referência da transação',
+                            decoration: campoDoPagamento(
+                              'Referência da transação',
                             ),
                           ),
                         ],
@@ -399,36 +403,12 @@ mixin _PaymentView on _HomePageShared {
                           ),
                         ],
                         const SizedBox(height: 8),
-                        Expanded(
-                          child: GridView.builder(
-                            physics: const NeverScrollableScrollPhysics(),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 3,
-                                  childAspectRatio: 1.9,
-                                  crossAxisSpacing: 6,
-                                  mainAxisSpacing: 6,
-                                ),
-                            itemCount: keys.length,
-                            itemBuilder: (_, index) {
-                              final key = keys[index];
-                              return OutlinedButton(
-                                onPressed: () => _pressPaymentKey(key),
-                                child: key == 'back'
-                                    ? const Icon(Icons.backspace_outlined)
-                                    : key == 'clear'
-                                    ? const Text('C')
-                                    : Text(
-                                        key,
-                                        style: const TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                              );
-                            },
-                          ),
-                        ),
+                        Expanded(child: PaymentKeypad(onKey: _pressPaymentKey)),
+                        const SizedBox(height: 8),
+                        // Taxa, CPF/CNPJ e desconto: eram um modal ANTES desta
+                        // tela, decididos sem ver o total.
+                        _ajustesControl(context),
+                        const SizedBox(height: 8),
                         SizedBox(
                           width: double.infinity,
                           height: 40,

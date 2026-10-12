@@ -94,45 +94,18 @@ mixin _PaymentCouponSection on _HomePageShared {
     }
   }
 
-  /// O campo de cupom, no ALTO do resumo do pagamento.
+  /// O cupom no ALTO do resumo: um seletor com busca (`CouponSelect`).
   ///
-  /// Separado da linha de desconto (`_couponSummaryRow`) porque os dois
-  /// respondem a perguntas diferentes: aqui é "onde eu digito", e lá embaixo
-  /// é "quanto abateu". Juntos, o campo descia junto com as parcelas do total
-  /// e sumia no meio do cartão num pedido com taxa, entrega e desconto.
-  ///
-  /// O campo em si é `PaymentCouponInput`, que vive fora desta biblioteca
-  /// porque é a parte que dá para verificar sozinha.
-  Widget _couponControl(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PaymentCouponInput(
-          controller: couponCode,
-          applied: _appliedCoupon,
-          busy: couponBusy,
-          error: couponError,
-          onSubmit: _aplicarCupom,
-          onRemove: () {
-            couponCode.clear();
-            _aplicarCupom('');
-          },
-        ),
-        // Os mais usados como botões, e a busca enquanto digita. Com cupom
-        // aplicado somem: aí o gesto é trocar ou retirar, logo acima.
-        if (_appliedCoupon.isEmpty && !couponBusy)
-          CouponSuggestions(
-            api: api,
-            accessToken: token,
-            controller: couponCode,
-            onPick: (codigo) {
-              couponCode.text = codigo;
-              _aplicarCupom(codigo);
-            },
-          ),
-      ],
-    ),
+  /// Eram campo, botão e uma fileira de botões com os cupons soltos — três
+  /// controles para uma escolha, e a fileira empurrava o resumo da conta.
+  Widget _couponControl(BuildContext context) => CouponSelect(
+    api: api,
+    accessToken: token,
+    aplicado: _appliedCoupon,
+    busy: couponBusy,
+    erro: couponError,
+    onAplicar: _aplicarCupom,
+    onRemover: () => _aplicarCupom(''),
   );
 
   /// "Cupom NATAL10  - R$ 6,00" entre as parcelas do total.

@@ -1,3 +1,4 @@
+import 'login_pela_nuvem.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/storage/durable_secure_store.dart';
@@ -24,8 +25,13 @@ class AuthRepository {
     required this.apiClient,
     required this.sessionStore,
     this.cashAuth,
+    this.loginPelaNuvem,
     SecureValueStore? credentials,
   }) : credentials = credentials ?? DurableSecureStore();
+
+  /// Login que pega na nuvem o IP server local do restaurante. Sem ele (os
+  /// testes), o login vai direto ao servidor configurado.
+  final LoginPelaNuvem? loginPelaNuvem;
 
   final ApiClient apiClient;
   final SessionStore sessionStore;
@@ -63,15 +69,17 @@ class AuthRepository {
   }) async {
     late final AuthSession session;
     try {
-      final json = await apiClient.post(
-        '/auth/login/',
-        // App nativo usa token Bearer, não cookies HttpOnly do navegador.
-        body: {
-          'username': username.trim(),
-          'password': password,
-          'no_cookie': true,
-        },
-      );
+      final json =
+          await loginPelaNuvem?.entrar(usuario: username, senha: password) ??
+          await apiClient.post(
+            '/auth/login/',
+            // App nativo usa token Bearer, não cookies HttpOnly do navegador.
+            body: {
+              'username': username.trim(),
+              'password': password,
+              'no_cookie': true,
+            },
+          );
       session = AuthSession.fromJson(json);
     } on ApiException catch (error) {
       if (!error.isConnectivity) rethrow;

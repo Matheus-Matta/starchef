@@ -23,6 +23,12 @@ def responder(viewset, request):
         return Response({"detail": "Usuário sem restaurante vinculado."},
                         status=status.HTTP_400_BAD_REQUEST)
     simular = bool(request.data.get("simular"))
+    from functools import partial
+
+    from apps.orders.views import DISCOUNT_PERMISSION, _can_authorize_cancellation
+
+    autorizar_desconto = partial(_can_authorize_cancellation, request, restaurante,
+                                 restaurante.account_id, permission=DISCOUNT_PERMISSION)
 
     def montar(pedido, recebimentos, nova):
         return {
@@ -36,6 +42,7 @@ def responder(viewset, request):
             restaurant=restaurante, user=request.user, dados=request.data, responder=montar,
             simular=simular, terminal=terminal_from_request(request, restaurant=restaurante),
             installation_id=installation_id_from_request(request),
+            autorizar_desconto=autorizar_desconto,
         )
     except (CashSessionConflict, CashSessionForbidden) as exc:
         return cash_session_error_response(exc)

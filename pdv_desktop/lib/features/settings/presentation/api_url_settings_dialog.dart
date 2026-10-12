@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/config/app_config.dart';
 import '../../../core/widgets/app_dialog.dart';
 
 import '../../../core/storage/local_preferences.dart';
@@ -41,7 +42,9 @@ class ApiUrlSettingsDialog extends StatefulWidget {
 
 class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
   late final _urlController = TextEditingController(
-    text: widget.preferences.apiBaseUrlOverride ?? widget.currentApiBaseUrl,
+    // O IP server local guardado (vindo da nuvem no login, ou digitado).
+    // Vazio quando o terminal usa só a nuvem — nunca o endereço da nuvem.
+    text: widget.preferences.apiBaseUrlOverride ?? '',
   );
   final _formKey = GlobalKey<FormState>();
   bool _saving = false;
@@ -53,7 +56,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
   }
 
   String? _validateUrl(String? value) {
-    final text = value?.trim() ?? '';
+    final text = _comEsquema(value?.trim() ?? '');
     if (text.isEmpty) return null; // vazio = remove o override, é válido.
     final uri = Uri.tryParse(text);
     final valid =
@@ -62,14 +65,21 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
         uri.host.isNotEmpty;
     return valid
         ? null
-        : 'Informe uma URL completa (ex.: https://api.seu-dominio.com/api/v1).';
+        : 'Informe o IP do servidor da loja (ex.: 192.168.0.10:8000).';
   }
+
+  /// "192.168.0.10:8000" vira "http://192.168.0.10:8000": na rede da loja o
+  /// servidor fala HTTP, e ninguém digita o esquema de um IP.
+  static String _comEsquema(String texto) =>
+      texto.isEmpty || texto.contains('://') ? texto : 'http://$texto';
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
-    final text = _urlController.text.trim();
-    await widget.preferences.setApiBaseUrlOverride(text.isEmpty ? null : text);
+    final text = _comEsquema(_urlController.text.trim());
+    await widget.preferences.setApiBaseUrlOverride(
+      text.isEmpty ? null : AppConfig.normalizeApiBaseUrl(text),
+    );
     if (!mounted) return;
     Navigator.pop(context, true);
   }
@@ -84,7 +94,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
         children: [
           const Icon(Icons.settings_outlined),
           const SizedBox(width: 10),
-          const Expanded(child: Text('URL da API')),
+          const Expanded(child: Text('Servidores')),
         ],
       ),
       content: SizedBox(
@@ -95,22 +105,33 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // A NUVEM É FIXA: só aparece, não se digita. É por ela que o
+              // login pega o IP server local do restaurante.
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'IP server nuvem (fixo)',
+                  border: OutlineInputBorder(),
+                ),
+                child: SelectableText(AppConfig.ipServerNuvem),
+              ),
+              const SizedBox(height: 16),
               Text(
-                'Ao salvar, o PDV aplica o endereço e volta para o login. Se '
-                'você informar apenas o domínio, o app acrescenta /api/v1.',
+                'O IP server local vem sozinho no login, do cadastro do '
+                'restaurante na nuvem (Restaurantes > IP server local). Digite '
+                'aqui só para forçar outro neste terminal.',
                 style: TextStyle(
                   fontSize: 12.5,
                   color: scheme.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _urlController,
                 autofocus: true,
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(
-                  labelText: 'URL da API',
-                  hintText: 'https://api.starchef.com.br/api/v1',
+                  labelText: 'IP server local',
+                  hintText: 'http://192.168.0.10:8000',
                   border: OutlineInputBorder(),
                 ),
                 validator: _validateUrl,
@@ -118,7 +139,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Deixe em branco e salve para voltar à API oficial do StarChef.',
+                'Em branco: o terminal usa só a nuvem até o próximo login.',
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ],

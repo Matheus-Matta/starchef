@@ -104,7 +104,13 @@ extension CatalogoDoPdv on PdvRepository {
       ('/commands/', {...query, 'is_active': true}, true),
       (
         '/payments/methods/',
-        {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
+        {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+          // A mais usada primeiro (90 dias): o PDV abre o pagamento nela.
+          'ordering': '-uso,name',
+        },
         false,
       ),
     ];
@@ -169,6 +175,7 @@ extension CatalogoDoPdv on PdvRepository {
           'restaurant': restaurantId,
           'is_active': true,
           'page_size': 100,
+          'ordering': '-uso,name',
         },
       ),
     ]);

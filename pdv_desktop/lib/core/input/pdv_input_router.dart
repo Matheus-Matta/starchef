@@ -47,6 +47,7 @@ class PdvInputContext {
     this.hasModal = false,
     this.modalAcceptsScanner = false,
     this.hasOrder = false,
+    this.textFieldOwnsArrows = false,
   });
 
   final PdvScreen screen;
@@ -62,6 +63,10 @@ class PdvInputContext {
 
   /// Existe um pedido em edição (habilita F9, F10, F12, +, -, Delete).
   final bool hasOrder;
+
+  /// O campo focado USA as setas (a lista de opções do cupom): os atalhos de
+  /// seta ficam com ele, mesmo os que valem dentro de campo.
+  final bool textFieldOwnsArrows;
 
   /// A captura do leitor pode acontecer agora?
   ///
@@ -91,6 +96,7 @@ class PdvInputContext {
     if (hasModal) return false;
     if (shortcut.requiresOrder && !hasOrder) return false;
     if (!hasTextFocus) return true;
+    if (shortcut.insideTextField && !textFieldOwnsArrows) return true;
     return _isFunctionKey(shortcut.trigger.key) ||
         shortcut.trigger.control ||
         shortcut.trigger.alt;

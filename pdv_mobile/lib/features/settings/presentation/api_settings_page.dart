@@ -23,7 +23,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
   @override
   void initState() {
     super.initState();
-    _url = TextEditingController(text: widget.settings.baseUrl);
+    // O IP server local guardado (vindo da nuvem no login, ou digitado).
+    // Vazio quando o app usa só a nuvem — nunca o endereço da nuvem.
+    _url = TextEditingController(text: widget.settings.ipServerLocal ?? '');
   }
 
   @override
@@ -39,7 +41,7 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
       _error = null;
     });
     try {
-      await widget.settings.save(_url.text);
+      await widget.settings.setIpServerLocal(_url.text);
       if (mounted) Navigator.of(context).pop(true);
     } on FormatException catch (error) {
       setState(() => _error = error.message);
@@ -52,28 +54,40 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
 
   @override
   Widget build(BuildContext context) => AppPageScaffold(
-    title: 'Servidor da API',
+    title: 'Servidores',
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Text(
-          'O celular se comunica diretamente com o backend. Informe o endereço '
-          'completo; sem caminho, o app acrescenta /api/v1.',
+        // A NUVEM É FIXA: só aparece, não se digita. É por ela que o login
+        // pega o IP server local do restaurante.
+        InputDecorator(
+          decoration: const InputDecoration(
+            labelText: 'IP server nuvem (fixo)',
+            prefixIcon: Icon(Icons.cloud_outlined),
+          ),
+          child: SelectableText(ApiSettings.ipServerNuvem),
         ),
         const SizedBox(height: 20),
+        const Text(
+          'O IP server local vem sozinho no login, do cadastro do restaurante '
+          'na nuvem. Digite aqui só para forçar outro neste celular.',
+        ),
+        const SizedBox(height: 12),
         Form(
           key: _formKey,
           child: LabeledField(
             controller: _url,
-            label: 'URL da API',
-            hint: ApiSettings.defaultBaseUrl,
+            label: 'IP server local',
+            hint: '192.168.0.10:8000',
             icon: Icons.dns_outlined,
             keyboardType: TextInputType.url,
             validator: (value) {
+              // Vazio = usar só a nuvem.
+              if ((value ?? '').trim().isEmpty) return null;
               final normalized = ApiSettings.normalize(value ?? '');
               return ApiSettings.isValid(normalized)
                   ? null
-                  : 'Informe uma URL HTTP ou HTTPS válida.';
+                  : 'Informe o IP do servidor da loja (ex.: 192.168.0.10:8000).';
             },
           ),
         ),
@@ -93,14 +107,12 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.save_outlined),
-          label: const Text('Salvar endereço'),
+          label: const Text('Salvar'),
         ),
         const SizedBox(height: 12),
         OutlinedButton(
-          onPressed: _saving
-              ? null
-              : () => setState(() => _url.text = ApiSettings.defaultBaseUrl),
-          child: const Text('Usar servidor padrão'),
+          onPressed: _saving ? null : () => setState(() => _url.text = ''),
+          child: const Text('Usar só a nuvem'),
         ),
         const SizedBox(height: 24),
         const Divider(),

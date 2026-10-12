@@ -602,3 +602,11 @@ já que ele não tem item cadastrado para olhar.
 Uma venda **não** invalida o cache do payload de propósito: durante o serviço,
 cada item de pedido derrubaria o cardápio inteiro. Um "mais vendidos" com até o
 TTL do cache de atraso não incomoda ninguém.
+
+## Config do PDV vinda da nuvem (`/pdv/config/`)
+
+`GET /api/v1/pdv/config/` (autenticado) devolve o IP do server local do
+restaurante do usuário (`Restaurant.ip_server_local`, já como endereço da API:
+`192.168.0.10:8000` → `http://192.168.0.10:8000/api/v1`). O PDV desktop e o
+app do garçom o leem no login, na nuvem, e passam a usar a loja
+(`apps/restaurants/pdv_config.py`; ver FLUTTER_DESKTOP.md).

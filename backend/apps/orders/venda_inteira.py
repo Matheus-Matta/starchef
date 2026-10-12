@@ -38,7 +38,7 @@ class VendaEmConflito(Exception):
 
 
 def executar(*, restaurant, user, dados, responder, simular=False, terminal=None,
-             installation_id=""):
+             installation_id="", autorizar_desconto=None):
     """Grava (ou simula) a venda e devolve `responder(pedido, recebimentos, nova)`.
 
     `responder` roda DENTRO da transação: na simulação é a única chance de ler
@@ -52,7 +52,7 @@ def executar(*, restaurant, user, dados, responder, simular=False, terminal=None
         _itens(pedido, user, dados.get("items") or [])
         _comandas(pedido, user, dados.get("commands") or [], nova, dados.get("command_items"))
         _cozinha(pedido, user, dados.get("kitchen"))
-        _fechar(pedido, user, dados.get("close"))
+        _fechar(pedido, user, dados.get("close"), autorizar_desconto)
         if not simular:
             conferir_total(pedido, dados)
         recebimentos = [] if simular else receber(
@@ -144,7 +144,7 @@ def _cozinha(pedido, user, envio):
                           offline_printed=bool(envio.get("offline_printed")))
 
 
-def _fechar(pedido, user, fechamento):
+def _fechar(pedido, user, fechamento, autorizar_desconto=None):
     """Taxa, desconto, CPF/CNPJ e cupom — o `/close/`, no mesmo envio.
 
     Ia à parte antes de pagar: mais uma chamada que podia cair do outro lado
@@ -166,6 +166,10 @@ def _fechar(pedido, user, fechamento):
         fiscal_customer_cnpj=fechamento.get("fiscal_customer_cnpj"),
         expected_total=fechamento.get("expected_total"),
         coupon_code=fechamento.get("coupon_code"),
+        # A senha de ações do caixa (ou o login de quem libera) vem no corpo
+        # da venda, como no `/close/`: sem repassá-la, o caixa que não é
+        # gerente nunca conseguia dar desconto numa venda nova.
+        authorize_discount=autorizar_desconto,
     )
 
 

@@ -6,13 +6,21 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/storage/session_store.dart';
 import '../data/auth_repository.dart';
+import '../data/login_pela_nuvem.dart';
 import '../domain/waiter_session.dart';
 
 enum SessionStage { restoring, loggedOut, ready }
 
 class SessionController extends ChangeNotifier {
-  SessionController({required this.api, required this.store})
-    : _repository = AuthRepository(api: api, store: store);
+  SessionController({
+    required this.api,
+    required this.store,
+    LoginPelaNuvem? loginPelaNuvem,
+  }) : _repository = AuthRepository(
+         api: api,
+         store: store,
+         loginPelaNuvem: loginPelaNuvem,
+       );
 
   final ApiClient api;
   final SessionStorage store;

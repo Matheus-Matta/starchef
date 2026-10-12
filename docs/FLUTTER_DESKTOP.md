@@ -80,8 +80,36 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore`. Windows usa o cofre do SO. No Linux, o Secret Service continua sendo a primeira opção, mas os valores também são espelhados em arquivos acessíveis somente ao usuário do PDV dentro de `~/.local/share/StarChef/secure`; isso evita perder a sessão quando GNOME Keyring/KWallet não está disponível no autostart.
 - **Restauração no boot**: tenta `GET /auth/me/` com o token salvo; em 401, tenta `POST /auth/refresh/`; se o refresh for explicitamente recusado, limpa o cofre e volta ao login. Se **não houver resposta nenhuma** (sem rede), devolve a sessão salva como está — decisão deliberada para o terminal continuar operando offline em vez de deslogar por falta de conexão.
-- **Venda nova zerada** (`_resetToNewSale` em `home_page.dart`): a mesma rotina depois de concluir o pagamento e em "Nova venda" limpa pedido, mesa, comanda, cliente, rascunho, recebimentos, valor e forma digitados, cupom, desconto digitado, categoria e busca do catálogo (o campo é recriado vazio por `searchGeneration`) e devolve o foco à busca.
-- **Desconto digitado no resumo do pedido** (`orders/presentation/order_discount_field.dart`): qualquer operador que cobra digita; cada dígito entra pelos centavos, o total da tela acompanha na hora e o valor sobe no `/close/` como `discount` — sem diálogo e sem chamada por tecla. Gerente aprova pelo próprio cargo; para os demais o servidor responde 403 e o PDV pede a senha de ações do caixa (`_autorizarDesconto`, o mesmo diálogo do cancelamento) e reenvia o fechamento com `cash_password`. Fica preso ao pedido em que foi digitado (`TypedDiscount`); acima do subtotal é recusado no campo e no fechamento.
+- **Venda nova zerada** (`_resetToNewSale` em `home_page.dart`): a mesma rotina depois de concluir o pagamento e em "Nova venda" limpa pedido, mesa, comanda, cliente, rascunho, recebimentos, valor e forma digitados, cupom, categoria e busca do catálogo (o campo é recriado vazio por `searchGeneration`) e devolve o foco à busca.
+- **IP server local vindo da nuvem, no login** (PDV desktop e app do garçom,
+  `features/auth/data/login_pela_nuvem.dart` nos dois). O IP do servidor da
+  loja mora no cadastro do RESTAURANTE (`Restaurant.ip_server_local`, editado
+  no painel). O login entra primeiro no **IP server nuvem** — fixo no build,
+  `api.starchef.com.br` —, lê `GET /pdv/config/` e entra no **IP server local**
+  com o mesmo usuário e senha (que só existem na memória durante o login),
+  guardando o IP para o app reabrir direto na loja. Nuvem fora → entra no IP
+  guardado; loja fora ou recusando → fica na nuvem; restaurante sem IP → fica
+  na nuvem. As idas do login usam clientes SEM o desvio automático para a
+  nuvem: com ele, um "login na loja" fora do ar entrava na nuvem de produção e
+  parecia ter entrado na loja. A tela "Servidores" (engrenagem) mostra o IP
+  server nuvem (só leitura) e o IP server local (editável só para forçar
+  outro neste aparelho).
+- **Formas de pagamento da mais usada para a menos usada.** O PDV pede
+  `/payments/methods/?ordering=-uso,name`: `uso` é a contagem de recebimentos
+  APROVADOS dos últimos 90 dias (`backend/apps/payments/formas_por_uso.py`), e
+  a primeira da lista é a que a tela de pagamento já abre selecionada. As
+  duas consultas (catálogo e tela de pagamento) são idênticas, para dividir a
+  mesma entrada de cache.
+- **↑ e ↓ trocam a forma de pagamento** na tela de pagamento, dando a volta
+  nas pontas (`forma_vizinha.dart`). Valem com o cursor no campo do valor,
+  que não usa as setas (`PdvShortcut.insideTextField`); no campo do cupom as
+  setas continuam andando na lista de cupons (`textFieldOwnsArrows`).
+- **Carrinho só com o total.** Subtotal, taxa de serviço e desconto saíram do
+  rodapé do carrinho: eles se decidem (e se mostram) na tela de pagamento, e
+  ali roubavam espaço da lista de itens. O desconto é digitado na tela de
+  pagamento (`payment_adjustments.dart`); quem não é gerente libera com a senha
+  de ações do caixa. `order_discount_field.dart` guarda só a conversão de
+  centavos usada por esse campo.
 - **Autorização de caixa é separada da autenticação de usuário**: `features/cash/data/cash_auth_repository.dart` sincroniza (quando online) um hash PBKDF2 (formato Django) via `GET /restaurants/<id>/cash-auth/`, guardado localmente. `core/security/cash_password.dart` verifica a senha **offline**, sem round-trip ao servidor — é o que autoriza ações de caixa (cancelamento, desconto) mesmo sem internet.
 - O hash é buscado uma vez depois da autenticação. Depois disso, o WebSocket
   envia somente uma invalidação segura quando a senha muda; o PDV relê o
@@ -93,11 +121,21 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`OfflineStore`** (`core/network/offline_store.dart`, `sqlite_async`): cache de respostas GET (até 300 entradas, sem TTL — offline sempre entrega a última resposta conhecida) + uma **outbox transacional** de mutações pendentes, com retry, lease e mapeamento de ID temporário→real. Escopado por `origem-da-API | conta | usuário` (com fallback se claims do JWT faltarem).
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
-- **CPF na NFC-e**: no diálogo que antecede o pagamento, ao lado da escolha da
-  taxa de serviço, o operador pode informar um CPF. O PDV valida os dígitos,
-  envia `fiscal_customer_cpf` ou `fiscal_customer_cnpj` no fechamento e
-  preserva o documento no pedido local
-  para que a emissão fiscal continue correta quando a venda começou offline.
+- **Tela de pagamento, sem modal antes dela.** À esquerda, o **cupom** (um
+  seletor com busca no servidor, `coupon_select.dart`: "Nenhum" sempre em
+  primeiro, os vigentes mais usados, Enter aplica um código fora da lista e o
+  X remove) e o resumo, que mostra o que foi aplicado: taxa de serviço (ou
+  "não cobrada"), desconto, cupom e "CPF/CNPJ na nota". À direita, abaixo do
+  teclado (que se ajusta à altura que sobra), a **chave da taxa de serviço**,
+  o **CPF ou CNPJ** (um campo só, reconhecido pelo tamanho) e o **desconto**
+  em R$ (`payment_adjustments.dart` + `home_page_payment_ajustes.dart`). Cada
+  mudança vai ao servidor na hora e o total se redesenha: na venda nova o
+  servidor recalcula a prévia (`simular`), no pedido existente o `/close/`
+  roda de novo. Desconto que pede aprovação abre a senha de ações do caixa,
+  que segue com a conclusão da venda (`cash_password`). Com pagamento já
+  lançado, taxa, documento e desconto travam. Todos os campos da tela têm a
+  mesma altura (`payment_input_style.dart`, `alturaDoCampo`): com a fonte
+  real o campo com ícone ficava mais alto que o sem ícone.
 - **Fotos do catálogo**: cards de produto e opções de variante resolvem
   `logo_p`, com fallback para o campo legado `image`. O PDV não percorre
   `photo_list`. Sem URL, sem rede ou com
@@ -154,9 +192,11 @@ entra. Tudo leva o UUID do PDV (`draft.orderId`, o id de cada linha, o de cada
 recebimento), então o reenvio é a MESMA venda.
 
 - **F9 / cozinha** (o "pagar depois"): pedido + itens + comandas + produção.
-- **Ir para o pagamento**: NÃO cria nada. `simular` devolve o total oficial
-  (taxa, promoção, cupom) e a tela abre sobre ele (`draft.simulada`). Sair sem
-  pagar não deixa nada no servidor.
+- **Ir para o pagamento**: NÃO cria nada e não pergunta nada. `simular`
+  devolve o total oficial (taxa, promoção, cupom) e a tela abre sobre ele
+  (`draft.simulada`); taxa, documento e desconto se ajustam nela. Sair sem
+  pagar não deixa nada no servidor. Enquanto a prévia está na tela, o tempo
+  real não a relê (`pedido_na_tela.dart`): ela não existe no servidor.
 - **Concluir**: pedido + itens + comandas + produção + fechamento (taxa, CPF,
   cupom) + recebimentos, num envio (`home_page_venda_inteira.dart`). Leva só
   as anotações que a simulação trouxe (`draft.anotacoesVistas` →

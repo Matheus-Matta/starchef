@@ -5,6 +5,21 @@ class ApiSettings extends ChangeNotifier {
   ApiSettings._(this._storage, this._baseUrl, [this._askTable = true]);
 
   static const defaultBaseUrl = 'https://api.starchef.com.br/api/v1';
+
+  /// O IP SERVER NUVEM: fixo no build, nunca digitado. É por ele que o login
+  /// pega o IP server local do restaurante (`LoginPelaNuvem`). O
+  /// `--dart-define=API_BASE_URL` só existe para builds de teste.
+  static String get ipServerNuvem {
+    const definido = String.fromEnvironment('API_BASE_URL');
+    return definido.isEmpty ? defaultBaseUrl : normalize(definido);
+  }
+
+  /// O IP SERVER LOCAL guardado: o endereço em uso, quando não é a nuvem.
+  String? get ipServerLocal => _baseUrl == ipServerNuvem ? null : _baseUrl;
+
+  /// Vazio = o app usa só a nuvem.
+  Future<void> setIpServerLocal(String? ip) =>
+      save((ip == null || ip.trim().isEmpty) ? ipServerNuvem : ip);
   static const _storageKey = 'starchef_mobile_api_url';
   static const _askTableKey = 'starchef_mobile_ask_table';
 
@@ -62,6 +77,9 @@ class ApiSettings extends ChangeNotifier {
   static String normalize(String value) {
     var normalized = value.trim().replaceFirst(RegExp(r'/+$'), '');
     if (normalized.isEmpty) return defaultBaseUrl;
+    // "192.168.0.10:8000": na rede da loja o servidor fala HTTP, e ninguém
+    // digita o esquema de um IP.
+    if (!normalized.contains('://')) normalized = 'http://$normalized';
     final uri = Uri.tryParse(normalized);
     if (uri != null && (uri.path.isEmpty || uri.path == '/')) {
       normalized = '$normalized/api/v1';

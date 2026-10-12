@@ -48,6 +48,13 @@ class Restaurant(TenantBaseModel):
     # Armazenada como PBKDF2-SHA256 — nunca em texto puro nem exposta na API.
     # O app Flutter sincroniza essa hash para autorização offline.
     cash_action_password = models.CharField(max_length=255, blank=True, default="")
+    # O IP DO SERVER LOCAL deste restaurante. O PDV e o app do garçom o pegam
+    # na nuvem ao logar (`GET /pdv/config/`): antes era digitado em cada
+    # terminal, e mudar o IP do servidor era refazer aparelho por aparelho.
+    ip_server_local = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="IP ou endereço do servidor local da loja, ex.: 192.168.0.10:8000",
+    )
     stock_deduction_timing = models.CharField(
         max_length=20, choices=STOCK_DEDUCTION_CHOICES, default=STOCK_DEDUCTION_PAYMENT
     )

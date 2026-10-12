@@ -63,6 +63,7 @@ import '../../../core/input/pdv_input_router.dart';
 import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
+import '../data/forma_vizinha.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_cloud_banner.dart';
 import 'pdv_navigation_shell.dart';
@@ -78,13 +79,16 @@ import 'fiscal_refusal_visibility.dart';
 import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';
-import 'payment_coupon_input.dart';
-import 'coupon_suggestions.dart';
+import 'coupon_select.dart';
+import 'payment_adjustments.dart';
+import 'payment_input_style.dart';
+import 'payment_keypad.dart';
 import 'table_details_panel.dart';
 import 'table_occupancy.dart';
 import '../../orders/data/order_draft.dart';
 import '../../orders/data/order_exit.dart';
 import '../../orders/data/order_draft_cart.dart';
+import '../../orders/data/pedido_na_tela.dart';
 import '../../orders/data/order_draft_commands.dart';
 import '../../orders/data/conflito_da_venda.dart';
 import '../../orders/data/order_draft_materializer.dart';
@@ -104,7 +108,6 @@ part 'home_page_draft.dart';
 part 'home_page_draft_flow.dart';
 part 'home_page_draft_items.dart';
 part 'home_page_order.dart';
-part 'home_page_finish_order.dart';
 part 'home_page_product.dart';
 part 'home_page_orders.dart';
 part 'home_page_orders_view.dart';
@@ -112,6 +115,7 @@ part 'home_page_payment.dart';
 part 'home_page_paid_receipt.dart';
 part 'home_page_payment_view.dart';
 part 'home_page_payment_coupon.dart';
+part 'home_page_payment_ajustes.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
 part 'home_page_shared.dart';
@@ -181,6 +185,7 @@ class _HomePageState extends State<HomePage>
         _PaymentSection,
         _PaidReceiptSection,
         _PaymentCouponSection,
+        _PaymentAdjustSection,
         _PaymentView,
         _ReceiptSection,
         _ShellSection,
@@ -231,9 +236,6 @@ class _HomePageState extends State<HomePage>
   @override
   int catalogSearchGeneration = 0;
 
-  /// O desconto digitado no resumo, preso ao pedido em que foi digitado.
-  @override
-  final typedDiscount = TypedDiscount();
   @override
   String? category;
   @override
@@ -339,6 +341,13 @@ class _HomePageState extends State<HomePage>
   var couponError = '';
   @override
   var couponBusy = false;
+  // Taxa, CPF/CNPJ e desconto na tela de pagamento (`_PaymentAdjustSection`).
+  @override
+  var adjustBusy = false;
+  @override
+  var adjustError = '';
+  @override
+  String? discountPassword;
   @override
   String? selectedRestaurantId;
   @override
@@ -1350,7 +1359,8 @@ class _HomePageState extends State<HomePage>
   @override
   void _resetToNewSale() {
     draft.clear();
-    typedDiscount.limpar();
+    discountPassword = null;
+    adjustError = '';
     paymentReference.clear();
     paymentAmount.clear();
     couponCode.clear();

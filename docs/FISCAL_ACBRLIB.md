@@ -66,6 +66,49 @@ Tudo isso roda dentro da loja: com a internet fora, o backend da loja chama o
 comunicador da loja, e a nota sai em contingência offline (tpEmis=9) quando a
 SEFAZ não responde.
 
+### O que vai em `acbr/libs` (loja, nuvem e nuvem de teste)
+
+Tudo da distribuição da ACBrLib NFe para Linux 64 bits:
+
+```text
+acbr/libs/
+├── libacbrnfe64.so      a biblioteca
+└── Schemas/             o conteúdo de Schemas/NFe da distribuição
+```
+
+Sem a `.so`, ou sem a pasta `Schemas`, o comunicador sobe "unhealthy" e toda
+nota fica em erro dizendo o que falta (`app/motor.py`). A configuração que a
+lib lê está em `fiscal_acbr/config/ACBrLib.ini`, conferida contra a fonte da
+ACBr (`ACBrDFeConfiguracoes.pas`): `[DFe]` com `UF`, `SSLCryptLib`,
+`SSLHttpLib`, `SSLXmlSignLib`, `DadosPFX` e `Senha`; `[NFe]` com `Ambiente`
+(0 = produção, 1 = homologação), `FormaEmissao`, `ModeloDF`, `IdCSC`, `CSC`,
+`VersaoQRCode`, `PathSchemas`. TLS 1.2 é o padrão da lib, e os endereços da
+SEFAZ de cada UF vêm embutidos nela (`IniServicos` vazio).
+
+**Dois modos, os dois de verdade**, escolhidos no cadastro fiscal do
+restaurante: **homologação** emite na SEFAZ de homologação, sem valor fiscal,
+para testar o cadastro e o sistema; **produção** emite a nota de verdade. Erro
+de cadastro, certificado ou SEFAZ fica gravado na nota, para corrigir e
+reenviar. O simulador (`ACBR_SIMULADOR=1`) é só dos testes automáticos e do
+par de teste de sincronização (`docker/loadtest`).
+
+### O simulador não se passa pela SEFAZ
+
+Com `ACBR_SIMULADOR=1` NENHUMA nota vai à SEFAZ: chave, protocolo e QR Code são
+inventados. Para ninguém tomar isso por emissão real:
+
+* a "autorização" vem com o motivo **"SIMULADO — sem valor fiscal (nenhuma
+  SEFAZ foi consultada)"**, e não com a frase da SEFAZ ("Autorizado o uso da
+  NF-e"), que ele imitava;
+* em **produção** (ambiente 1) ele **recusa**: a nota fica em erro dizendo que
+  a SEFAZ simulada não emite em produção. Antes autorizava, e na nuvem de teste
+  toda nota de "produção" saía emitida com um QR Code que não levava a lugar
+  nenhum.
+
+Emissão de verdade exige a `libacbrnfe64.so`, o certificado A1 da empresa, o
+CSC do ambiente e o emitente cadastrado na SEFAZ — com dados de demonstração a
+SEFAZ real recusa.
+
 ### A imagem no GitHub (`.github/workflows/fiscal_acbr.yml`)
 
 A Action gera `ghcr.io/matheus-matta/starchef-fiscal-acbr` no nosso GHCR:
@@ -214,6 +257,26 @@ Os pontos que impedem documento em dobro:
 Prazo: a NFC-e em contingência tem de ser transmitida em até 24 h. A
 retransmissão roda a cada 2 minutos; uma nota pendente há mais de 12 h aparece
 como alerta no painel fiscal.
+
+## Toda falha deixa a nota gravada
+
+Qualquer falha da emissão grava a nota em `error`, com o motivo em
+`error_message`, para corrigir e **reenviar** (botão Reenviar, ou emitir de novo
+pelo PDV). Isso vale para o que falha na SEFAZ, no comunicador e no cadastro do
+emitente, e também para o que falha ANTES de a nota ser montada
+(`invoices/nota_com_erro.py`):
+
+| Falha | O que fica gravado |
+| --- | --- |
+| pedido sem item faturável (todos cancelados ou cortesia) | nota em erro, "Pedido sem itens faturaveis" |
+| CPF/CNPJ do cliente inválido, ou os dois juntos | nota em erro com o motivo; emitir de novo com o documento certo reaproveita a mesma nota |
+| exceção no meio da montagem | a montagem é desfeita inteira e a nota fica em erro com a exceção |
+
+A nota que falhou antes de ser montada fica **sem número e sem chave**: o
+número só é gasto quando a montagem dá certo (um buraco na série exigiria
+inutilização). O reenvio dela passa pela emissão inteira, que a reaproveita.
+Continuam recusando sem gravar só o que não é nota: pedido cancelado,
+restaurante sem configuração fiscal e documento enviado com tipo errado pela API.
 
 ## Numeração e sincronização
 

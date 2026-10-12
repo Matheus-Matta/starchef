@@ -18,6 +18,7 @@ class PdvShortcut {
     this.requiresOrder = false,
     this.guardsRepeat = false,
     this.documentedOnly = false,
+    this.insideTextField = false,
     this.group = 'Geral',
   });
 
@@ -55,6 +56,13 @@ class PdvShortcut {
   /// a ignora de propósito: se o roteador a consumisse, o handler da janela
   /// nunca a receberia e a tecla pararia de funcionar.
   final bool documentedOnly;
+
+  /// Vale mesmo com o cursor num campo — quando a tecla não tem uso nele.
+  ///
+  /// As setas da tela de pagamento: o campo do valor é de uma linha só, e é
+  /// onde o caixa está. O roteador ainda deixa a tecla com o campo que a usa
+  /// (a lista do cupom; ver `PdvInputContext.textFieldOwnsArrows`).
+  final bool insideTextField;
 
   final String group;
 
@@ -133,6 +141,8 @@ abstract final class PdvAction {
   static const moveSelectionUp = 'move-selection-up';
   static const moveSelectionDown = 'move-selection-down';
   static const confirm = 'confirm';
+  static const nextPaymentMethod = 'next-payment-method';
+  static const previousPaymentMethod = 'previous-payment-method';
 
   /// Tratada pela janela do aplicativo; ver [PdvShortcut.documentedOnly].
   static const toggleFullScreen = 'toggle-full-screen';
@@ -411,6 +421,28 @@ abstract final class PdvShortcuts {
       requiresOrder: true,
       guardsRepeat: true,
       group: 'Itens do pedido',
+    ),
+    PdvShortcut(
+      id: PdvAction.nextPaymentMethod,
+      label: 'Próxima forma de pagamento',
+      description:
+          'Seleciona a forma de pagamento seguinte da lista, mesmo com o '
+          'cursor no valor. No campo do cupom a seta anda na lista de cupons.',
+      trigger: ShortcutTrigger(LogicalKeyboardKey.arrowDown, label: 'Seta ↓'),
+      screens: {PdvScreen.payment},
+      insideTextField: true,
+      group: 'Pagamento',
+    ),
+    PdvShortcut(
+      id: PdvAction.previousPaymentMethod,
+      label: 'Forma de pagamento anterior',
+      description:
+          'Seleciona a forma de pagamento anterior da lista, mesmo com o '
+          'cursor no valor.',
+      trigger: ShortcutTrigger(LogicalKeyboardKey.arrowUp, label: 'Seta ↑'),
+      screens: {PdvScreen.payment},
+      insideTextField: true,
+      group: 'Pagamento',
     ),
   ];
 

@@ -10,6 +10,7 @@ import 'core/storage/offline_queue_store.dart';
 import 'core/storage/session_store.dart';
 import 'core/sync/backend_gateway.dart';
 import 'core/theme/app_theme.dart';
+import 'features/auth/data/login_pela_nuvem.dart';
 import 'features/auth/presentation/login_page.dart';
 import 'features/auth/presentation/session_controller.dart';
 import 'features/orders/data/order_drafts.dart';
@@ -48,7 +49,17 @@ class _PdvMobileAppState extends State<PdvMobileApp>
     _api = ApiClient(baseUrlProvider: () => widget.settings.baseUrl);
     _gateway = BackendGateway(api: _api, store: OfflineQueueStore());
     _drafts = OrderDrafts();
-    _controller = SessionController(api: _api, store: SecureSessionStore());
+    _controller = SessionController(
+      api: _api,
+      store: SecureSessionStore(),
+      // O login passa pela nuvem (fixa) e pega o IP server local do
+      // restaurante, que fica guardado: o app reabre direto na loja.
+      loginPelaNuvem: LoginPelaNuvem(
+        ipServerNuvem: ApiSettings.ipServerNuvem,
+        lerIpServerLocal: () => widget.settings.ipServerLocal,
+        usarServidor: widget.settings.save,
+      ),
+    );
     _printAgent = MobilePrintAgent(api: _api);
     _controller.addListener(_syncSessionServices);
     WidgetsBinding.instance.addObserver(this);

@@ -74,6 +74,16 @@ class PaymentMethodViewSet(BaseTenantViewSet):
     queryset = PaymentMethod.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["method_type", "is_active"]
     search_fields = ["name"]
+    # `uso` = recebimentos aprovados dos últimos 90 dias (`formas_por_uso`):
+    # o PDV pede `-uso,name` para abrir na forma do dia a dia.
+    ordering_fields = ["name", "uso", "created_at"]
+
+    def get_queryset(self):
+        # Depois do mixin de tenant: ele remonta o queryset a partir do model
+        # e descartaria uma anotação feita antes.
+        from apps.payments.formas_por_uso import anotar_uso
+
+        return anotar_uso(super().get_queryset())
 
 
 class PaymentViewSet(ReadOnlyTenantViewSet):

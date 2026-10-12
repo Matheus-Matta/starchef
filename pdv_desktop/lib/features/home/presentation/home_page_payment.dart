@@ -135,10 +135,13 @@ mixin _PaymentSection on _HomePageShared {
                 .catchError((Object _) => null),
       _list(
         '/payments/methods/',
+        // A MESMA consulta do catálogo (`pdv_catalog.dart`): uma entrada de
+        // cache serve às duas, e a mais usada vem primeiro e já selecionada.
         query: {
           'restaurant': restaurantId,
           'is_active': true,
           'page_size': 100,
+          'ordering': '-uso,name',
         },
       ),
       // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem

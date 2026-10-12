@@ -25,6 +25,16 @@ def criar_motor():
     caminho = next((c for c in (montada, embutida) if os.path.exists(c)), None)
     if caminho is None:
         return SemLib(montada)
+    # A ACBrLib valida o XML contra os Schemas da NF-e ANTES de enviar
+    # (`PathSchemas` no ACBrLib.ini). Sem a pasta, toda nota falhava nessa
+    # validação com uma mensagem técnica — melhor dizer o que falta.
+    schemas = os.environ.get("ACBR_SCHEMAS", "/app/libs/Schemas")
+    if not os.path.isdir(schemas):
+        return SemLib(
+            caminho,
+            motivo=f"faltam os Schemas da NF-e em {schemas} (a pasta Schemas/NFe "
+            "da distribuição da ACBr)",
+        )
     from app import acbrlib
 
     try:
@@ -42,9 +52,9 @@ class SemLib:
 
     def __init__(self, caminho, motivo=None):
         self.mensagem = (
-            f"ACBrLib não instalada: {motivo or f'{caminho} não existe'}. Copie a libacbrnfe64.so "
-            "(Projeto ACBr) para docker/local/acbr/libs no servidor da loja e reinicie "
-            "o serviço fiscal-acbr (docs/FISCAL_ACBRLIB.md)."
+            f"ACBrLib não instalada: {motivo or f'{caminho} não existe'}. Copie a "
+            "libacbrnfe64.so e a pasta Schemas (Projeto ACBr) para acbr/libs no "
+            "servidor e reinicie o serviço fiscal-acbr (docs/FISCAL_ACBRLIB.md)."
         )
 
     def _recusar(self, _pedido):

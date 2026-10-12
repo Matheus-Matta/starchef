@@ -547,38 +547,11 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
         if existing and existing.status in (Invoice.STATUS_PENDING, Invoice.STATUS_ISSUED):
             raise ValidationError("Pedido ja possui nota fiscal emitida.")
 
+        from apps.invoices import nota_com_erro
+
         items = billable_order_items(order)
         if not items:
-            raise ValidationError("Pedido sem itens faturaveis.")
-
-        # Trava a configuração e RELÊ o contador depois da trava. A trava do
-        # pedido não serializa nada entre caixas (cada um trava o seu), e dois
-        # caixas no mesmo segundo liam o mesmo `next_number`: 45 números
-        # repetidos em 200 emissões com 4 caixas (test_numeracao_concorrente).
-        # Ordem fixa pedido → configuração em toda emissão: sem deadlock.
-        config = FiscalConfig.objects.select_for_update().get(pk=config.pk)
-        number = _proximo_numero_livre(config)
-        # O CSC pode não estar gravado aqui: a loja não recebe segredo de
-        # emissão pela sincronização. Resolvido UMA vez por emissão — o
-        # empréstimo tem cache em memória, mas duas chamadas seriam duas
-        # respostas diferentes se a nuvem rotacionasse no meio.
-        _segredos = segredos_de(config)
-        emission_dt = timezone.now()
-        access_key, numeric_code = build_access_key(
-            uf=config.uf,
-            emission_date=emission_dt,
-            cnpj=config.cnpj,
-            model=config.document_model,
-            series=config.series,
-            number=number,
-        )
-        qr_data = build_nfce_qrcode(
-            access_key=access_key,
-            environment=config.environment,
-            csc_id=_segredos.csc_id,
-            csc_token=_segredos.csc_token,
-            base_url=config.qr_base_url,
-        )
+            return nota_com_erro.registrar(order, config, "Pedido sem itens faturaveis.", user=user)
 
         # Lista ou objeto no lugar do documento é erro do cliente, não um CPF
         # a ser "limpo" até sobrar dígito (ver `close_order`).
@@ -587,79 +560,124 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
                 raise ValidationError(f"Envie o {campo} da NFC-e como texto.")
         recipient_cpf = strip_cpf(cpf) if cpf not in (None, "") else order.fiscal_customer_cpf
         recipient_cnpj = strip_cnpj(cnpj) if cnpj not in (None, "") else order.fiscal_customer_cnpj
+        # Documento inválido é DADO a corrigir: a nota fica gravada com o
+        # motivo, e emitir de novo com o documento certo a aproveita.
+        motivo = None
         if recipient_cpf and not is_valid_cpf(recipient_cpf):
-            raise ValidationError("Informe um CPF valido para incluir na NFC-e.")
-        if recipient_cnpj and not is_valid_cnpj(recipient_cnpj):
-            raise ValidationError("Informe um CNPJ valido para incluir na NFC-e.")
-        if recipient_cpf and recipient_cnpj:
-            raise ValidationError("Informe CPF ou CNPJ, não os dois, para a NFC-e.")
-        recipient_name = cpf_name or ""
-        if recipient_cpf and not recipient_name and order.customer_id:
-            customer_cpf = strip_cpf(order.customer.document)
-            if customer_cpf == recipient_cpf:
-                recipient_name = order.customer.name
-        if recipient_cnpj and not cnpj_name and order.customer_id:
-            if strip_cnpj(order.customer.document) == recipient_cnpj:
-                cnpj_name = order.customer.name
+            motivo = "Informe um CPF valido para incluir na NFC-e."
+        elif recipient_cnpj and not is_valid_cnpj(recipient_cnpj):
+            motivo = "Informe um CNPJ valido para incluir na NFC-e."
+        elif recipient_cpf and recipient_cnpj:
+            motivo = "Informe CPF ou CNPJ, não os dois, para a NFC-e."
+        if motivo:
+            return nota_com_erro.registrar(order, config, motivo, user=user)
 
-        invoice = existing or Invoice(order=order)
-        invoice.account = order.account
-        invoice.restaurant = order.restaurant
-        invoice.branch = config.branch  # a filial cuja FiscalConfig realmente emitiu a nota.
-        invoice.phase = Invoice.PHASE_FISCAL
-        invoice.document_model = config.document_model
-        invoice.series = config.series
-        invoice.number = str(number)
-        invoice.environment = config.environment
-        invoice.crt = config.crt
-        invoice.access_key = access_key
-        invoice.emitter_cnpj = config.cnpj
-        invoice.emitter_name = config.corporate_name or config.trade_name
-        invoice.recipient_cpf = recipient_cpf
-        invoice.recipient_cnpj = recipient_cnpj
-        invoice.recipient_name = recipient_name or cnpj_name
-        invoice.qr_code_data = qr_data
-        invoice.consult_url = config.portal_url
-        invoice.created_by = getattr(invoice, "created_by", None) or user
-        invoice.updated_by = user
-        # O VALOR ENTRA ANTES DO PRIMEIRO SAVE.
-        #
-        # Esta gravação existe só para dar `pk` aos itens, e `rebuild_invoice_items`
-        # calcula os totais depois — então a linha nascia com R$ 0,00 e só
-        # ganhava valor no save do fim. Uma nota que ficasse pelo caminho (o
-        # processo morre, o worker é reciclado) aparecia na tela como documento
-        # zerado e em rascunho, sem nada dizendo que estava pela metade.
-        #
-        # `total_amount` é o do pedido, que é a mesma fonte que o fim usa;
-        # `products_total` é recalculado linha a linha logo abaixo, com o
-        # detalhamento tributário. Aqui é só o piso de honestidade da linha.
-        invoice.total_amount = order.total
-        invoice.products_total = sum(
-            (item.total_price for item in items), Decimal("0")
-        )
-        invoice.discount_total = order.discount + order.coupon_discount
-        invoice.save()  # precisa de pk para os itens
+        # A MONTAGEM é desfeita inteira se algo quebrar no meio — número,
+        # chave e itens —, e a nota fica gravada com o motivo, sem gastar o
+        # número. Antes a exceção virava 500 e nada era gravado.
+        try:
+            with transaction.atomic():
+                # Trava a configuração e RELÊ o contador depois da trava. A trava do
+                # pedido não serializa nada entre caixas (cada um trava o seu), e dois
+                # caixas no mesmo segundo liam o mesmo `next_number`: 45 números
+                # repetidos em 200 emissões com 4 caixas (test_numeracao_concorrente).
+                # Ordem fixa pedido → configuração em toda emissão: sem deadlock.
+                config = FiscalConfig.objects.select_for_update().get(pk=config.pk)
+                number = _proximo_numero_livre(config)
+                # O CSC pode não estar gravado aqui: a loja não recebe segredo de
+                # emissão pela sincronização. Resolvido UMA vez por emissão — o
+                # empréstimo tem cache em memória, mas duas chamadas seriam duas
+                # respostas diferentes se a nuvem rotacionasse no meio.
+                _segredos = segredos_de(config)
+                emission_dt = timezone.now()
+                access_key, numeric_code = build_access_key(
+                    uf=config.uf,
+                    emission_date=emission_dt,
+                    cnpj=config.cnpj,
+                    model=config.document_model,
+                    series=config.series,
+                    number=number,
+                )
+                qr_data = build_nfce_qrcode(
+                    access_key=access_key,
+                    environment=config.environment,
+                    csc_id=_segredos.csc_id,
+                    csc_token=_segredos.csc_token,
+                    base_url=config.qr_base_url,
+                )
 
-        # (Re)monta os itens fiscais com o detalhamento tributario.
-        rebuild_invoice_items(invoice, order, config, items=items, user=user)
-        invoice.fiscal_payload = {"cNF": numeric_code, "emission": emission_dt.isoformat()}
+                recipient_name = cpf_name or ""
+                if recipient_cpf and not recipient_name and order.customer_id:
+                    customer_cpf = strip_cpf(order.customer.document)
+                    if customer_cpf == recipient_cpf:
+                        recipient_name = order.customer.name
+                if recipient_cnpj and not cnpj_name and order.customer_id:
+                    if strip_cnpj(order.customer.document) == recipient_cnpj:
+                        cnpj_name = order.customer.name
 
-        # Parte externa (autorizacao SEFAZ). A venda ja esta paga, entao nenhuma
-        # falha aqui pode travar o fechamento — mas o motivo da falha decide o
-        # que acontece depois, e por isso cada familia e tratada em separado.
-        #
-        # O que NAO se faz mais: transformar qualquer excecao em tpEmis=9. Isso
-        # marcava como "contingencia" ate uma rejeicao tributaria definitiva, e
-        # produzia uma chave de contingencia que nunca era transmitida como tal
-        # (o payload da Focus nao leva `forma_emissao`/`numero`/`serie`). O
-        # cupom saia com uma chave que a SEFAZ jamais reconheceria. Contingencia
-        # de verdade so volta com o agente fiscal local.
-        # Cadastro fiscal incompleto deixa de ser invisivel. Com
-        # `strict_fiscal_profile` ligado a nota nem e transmitida; com ele
-        # desligado a emissao segue com os valores padrao do provider, mas o
-        # que foi suprido fica REGISTRADO na nota e na auditoria — e e isso que
-        # permite descobrir quem ainda depende deles antes de virar a chave.
-        profile_issues, blocked = apply_fiscal_profile_issues(invoice, config)
+                invoice = existing or Invoice(order=order)
+                invoice.account = order.account
+                invoice.restaurant = order.restaurant
+                invoice.branch = config.branch  # a filial cuja FiscalConfig realmente emitiu a nota.
+                invoice.phase = Invoice.PHASE_FISCAL
+                invoice.document_model = config.document_model
+                invoice.series = config.series
+                invoice.number = str(number)
+                invoice.environment = config.environment
+                invoice.crt = config.crt
+                invoice.access_key = access_key
+                invoice.emitter_cnpj = config.cnpj
+                invoice.emitter_name = config.corporate_name or config.trade_name
+                invoice.recipient_cpf = recipient_cpf
+                invoice.recipient_cnpj = recipient_cnpj
+                invoice.recipient_name = recipient_name or cnpj_name
+                invoice.qr_code_data = qr_data
+                invoice.consult_url = config.portal_url
+                invoice.created_by = getattr(invoice, "created_by", None) or user
+                invoice.updated_by = user
+                # O VALOR ENTRA ANTES DO PRIMEIRO SAVE.
+                #
+                # Esta gravação existe só para dar `pk` aos itens, e `rebuild_invoice_items`
+                # calcula os totais depois — então a linha nascia com R$ 0,00 e só
+                # ganhava valor no save do fim. Uma nota que ficasse pelo caminho (o
+                # processo morre, o worker é reciclado) aparecia na tela como documento
+                # zerado e em rascunho, sem nada dizendo que estava pela metade.
+                #
+                # `total_amount` é o do pedido, que é a mesma fonte que o fim usa;
+                # `products_total` é recalculado linha a linha logo abaixo, com o
+                # detalhamento tributário. Aqui é só o piso de honestidade da linha.
+                invoice.total_amount = order.total
+                invoice.products_total = sum(
+                    (item.total_price for item in items), Decimal("0")
+                )
+                invoice.discount_total = order.discount + order.coupon_discount
+                invoice.save()  # precisa de pk para os itens
+
+                # (Re)monta os itens fiscais com o detalhamento tributario.
+                rebuild_invoice_items(invoice, order, config, items=items, user=user)
+                invoice.fiscal_payload = {"cNF": numeric_code, "emission": emission_dt.isoformat()}
+
+                # Parte externa (autorizacao SEFAZ). A venda ja esta paga, entao nenhuma
+                # falha aqui pode travar o fechamento — mas o motivo da falha decide o
+                # que acontece depois, e por isso cada familia e tratada em separado.
+                #
+                # O que NAO se faz mais: transformar qualquer excecao em tpEmis=9. Isso
+                # marcava como "contingencia" ate uma rejeicao tributaria definitiva, e
+                # produzia uma chave de contingencia que nunca era transmitida como tal
+                # (o payload da Focus nao leva `forma_emissao`/`numero`/`serie`). O
+                # cupom saia com uma chave que a SEFAZ jamais reconheceria. Contingencia
+                # de verdade so volta com o agente fiscal local.
+                # Cadastro fiscal incompleto deixa de ser invisivel. Com
+                # `strict_fiscal_profile` ligado a nota nem e transmitida; com ele
+                # desligado a emissao segue com os valores padrao do provider, mas o
+                # que foi suprido fica REGISTRADO na nota e na auditoria — e e isso que
+                # permite descobrir quem ainda depende deles antes de virar a chave.
+                profile_issues, blocked = apply_fiscal_profile_issues(invoice, config)
+        except ValidationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a venda já está paga: registrar, não quebrar.
+            logging.getLogger(__name__).exception("Falha ao montar a nota do pedido %s", order.id)
+            return nota_com_erro.registrar(order, config, f"Falha ao montar a nota: {exc}", user=user)
 
         provider = get_provider(config.provider)
         if blocked:
@@ -926,6 +944,12 @@ def resend_fiscal_invoice(invoice, *, user=None):
                     "Somente notas nao transmitidas, em contingencia ou com erro podem ser reenviadas. "
                     "Para uma nota em processamento normal, atualize o status."
                 )
+            from apps.invoices import nota_com_erro
+
+            if nota_com_erro.nunca_montada(locked):
+                # Falhou antes de ter número: não há retrato a refazer, e sim a
+                # emissão inteira — que reaproveita esta nota.
+                return nota_com_erro.emitir_de_novo(locked, user=user)
 
             # A nota nunca foi transmitida, entao o retrato dela pode (e deve)
             # ser refeito com o cadastro de agora: e o que faz "corrigi o perfil

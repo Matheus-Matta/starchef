@@ -82,32 +82,37 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('URL da API cabe na menor largura suportada', (tester) async {
-      final directory = Directory.systemTemp.createTempSync(
-        'starchef-layout-api-',
-      );
-      addTearDown(() {
-        if (directory.existsSync()) directory.deleteSync(recursive: true);
-      });
-      final preferences = LocalPreferences(
-        file: File(
-          '${directory.path}${Platform.pathSeparator}preferences.json',
-        ),
-      );
-      await _openDialog(
-        tester,
-        size: const Size(320, 480),
-        textScaleFactor: 1.15,
-        open: (context) => ApiUrlSettingsDialog.show(
-          context,
-          preferences,
-          'https://api.starchef.com.br/api/v1',
-        ),
-      );
+    testWidgets(
+      'Servidores (IP local e nuvem) cabe na menor largura suportada',
+      (tester) async {
+        final directory = Directory.systemTemp.createTempSync(
+          'starchef-layout-api-',
+        );
+        addTearDown(() {
+          if (directory.existsSync()) directory.deleteSync(recursive: true);
+        });
+        final preferences = LocalPreferences(
+          file: File(
+            '${directory.path}${Platform.pathSeparator}preferences.json',
+          ),
+        );
+        await _openDialog(
+          tester,
+          size: const Size(320, 480),
+          textScaleFactor: 1.15,
+          open: (context) => ApiUrlSettingsDialog.show(
+            context,
+            preferences,
+            'https://api.starchef.com.br/api/v1',
+          ),
+        );
 
-      expect(find.text('URL da API'), findsWidgets);
-      expect(tester.takeException(), isNull);
-    });
+        expect(find.text('Servidores'), findsWidgets);
+        expect(find.text('IP server local'), findsWidgets);
+        expect(find.text('IP server nuvem (fixo)'), findsWidgets);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('seleção de impressora aceita textos longos', (tester) async {
       await _openDialog(
