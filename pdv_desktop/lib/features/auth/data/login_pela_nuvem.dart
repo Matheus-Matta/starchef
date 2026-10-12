@@ -4,19 +4,19 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/cloud_fallback.dart';
 
-/// O login que pega na NUVEM o IP do server local do restaurante.
+/// O login do PDV: são DOIS logins.
 ///
-/// O IP da loja era digitado em cada terminal, e mudar o servidor era refazer
-/// isso caixa por caixa. Agora o login passa primeiro pela nuvem — fixa, o
-/// "IP server nuvem" —, pergunta `/pdv/config/` onde fica a loja do
-/// restaurante do usuário e entra nela com o MESMO usuário e senha, que só
-/// existem na memória durante este login (nada é gravado além do IP).
+/// 1. Na NUVEM (fixa, o "IP server nuvem"), só para ler `/pdv/config/`: o IP
+///    server local do restaurante e a nuvem informada (o `API_URL` dela). O
+///    token desse login é descartado ali mesmo, e usuário e senha só existem
+///    na memória durante o login — nada é gravado além da config.
+/// 2. No IP SERVER LOCAL, o que vale: é a sessão dele que o PDV usa, e é o
+///    erro dele que o caixa vê. Sem IP local, o padrão é a própria nuvem.
 ///
-/// Ninguém fica sem entrar por causa disso:
-///
-/// * nuvem fora (loja sem internet) → entra direto no IP guardado;
-/// * loja fora, ou recusando → fica na nuvem, como o desvio de sempre;
-/// * restaurante sem server local → fica na nuvem e esquece o IP antigo.
+/// A config é um extra, nunca a porta de entrada: nuvem fora, recusando o
+/// usuário (uma nuvem que não o conhece) ou com erro → fica o que já estava
+/// guardado. Antes era o contrário, e um usuário que a nuvem não conhecia não
+/// entrava nem com a loja respondendo. Loja fora do ar → entra na nuvem.
 class LoginPelaNuvem {
   LoginPelaNuvem({
     required this.principal,
@@ -41,38 +41,26 @@ class LoginPelaNuvem {
     required String usuario,
     required String senha,
   }) async {
-    final Map<String, dynamic> naNuvem;
-    final String ipLocal;
-    final String nuvemInformada;
-    try {
-      naNuvem = await _login(ipServerNuvem, usuario, senha);
-      (ipLocal, nuvemInformada) = await _config(naNuvem);
-    } on ApiException catch (erro) {
-      if (!erro.isConnectivity) rethrow;
-      // Nuvem fora: a loja guardada da última vez continua atendendo.
-      final guardado = lerIpServerLocal() ?? '';
-      if (guardado.isEmpty) rethrow;
-      final naLoja = await _login(guardado, usuario, senha);
-      await principal.updateBaseUrl(guardado);
-      return naLoja;
+    final config = await _config(usuario, senha);
+    if (config != null) {
+      await salvarIpServerLocal(config.ipLocal.isEmpty ? null : config.ipLocal);
     }
+    final ipLocal = config?.ipLocal ?? (lerIpServerLocal() ?? '');
+    final nuvem = (config?.nuvem ?? '').isEmpty ? ipServerNuvem : config!.nuvem;
 
-    await salvarIpServerLocal(ipLocal.isEmpty ? null : ipLocal);
     if (ipLocal.isNotEmpty) {
       try {
         final naLoja = await _login(ipLocal, usuario, senha);
         await principal.updateBaseUrl(ipLocal);
         return naLoja;
-      } on ApiException {
-        // Loja fora, ou o usuário ainda não chegou nela pela sincronização:
-        // a sessão da nuvem atende enquanto isso.
+      } on ApiException catch (erro) {
+        // Senha recusada é a resposta do login: aparece. Só a loja FORA do
+        // ar cai para a nuvem.
+        if (!erro.isConnectivity) rethrow;
       }
     }
-    // Sem loja: direto para a nuvem — a que ela mesma informou (o `API_URL`
-    // do .env dela), ou a fixa deste build.
-    await principal.updateBaseUrl(
-      nuvemInformada.isEmpty ? ipServerNuvem : nuvemInformada,
-    );
+    final naNuvem = await _login(nuvem, usuario, senha);
+    await principal.updateBaseUrl(nuvem);
     return naNuvem;
   }
 
@@ -115,22 +103,25 @@ class LoginPelaNuvem {
     ),
   );
 
-  /// (IP server local, IP server nuvem) que a nuvem informa; sem a config,
-  /// segue só a nuvem fixa.
-  Future<(String, String)> _config(Map<String, dynamic> sessao) async {
+  /// O primeiro login: (IP server local, nuvem informada) da `/pdv/config/`,
+  /// ou null quando a nuvem não deu a config — e aí fica o padrão guardado.
+  Future<({String ipLocal, String nuvem})?> _config(
+    String usuario,
+    String senha,
+  ) async {
     try {
+      final sessao = await _login(ipServerNuvem, usuario, senha);
       final config = await _com(
         ipServerNuvem,
         (api) =>
             api.get('/pdv/config/', accessToken: '${sessao['access'] ?? ''}'),
       );
       return (
-        '${config['ip_server_local'] ?? ''}'.trim(),
-        '${config['ip_server_nuvem'] ?? ''}'.trim(),
+        ipLocal: '${config['ip_server_local'] ?? ''}'.trim(),
+        nuvem: '${config['ip_server_nuvem'] ?? ''}'.trim(),
       );
-    } on ApiException catch (erro) {
-      if (erro.isConnectivity) rethrow;
-      return ('', '');
+    } on Exception {
+      return null;
     }
   }
 }

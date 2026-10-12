@@ -4,19 +4,17 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/cloud_fallback.dart';
 
-/// O login que pega na NUVEM o IP do server local do restaurante.
+/// O login do app do garçom: são DOIS logins.
 ///
-/// O IP da loja era digitado em cada celular, e mudar o servidor era refazer
-/// isso aparelho por aparelho. Agora o login passa primeiro pela nuvem — fixa,
-/// o "IP server nuvem" —, pergunta `/pdv/config/` onde fica a loja do
-/// restaurante do garçom e entra nela com o MESMO usuário e senha, que só
-/// existem na memória durante este login (nada é gravado além do IP).
+/// 1. Na NUVEM (fixa, o "IP server nuvem"), só para ler `/pdv/config/`: o IP
+///    server local do restaurante e a nuvem informada (o `API_URL` dela). O
+///    token desse login é descartado ali mesmo, e usuário e senha só existem
+///    na memória durante o login.
+/// 2. No IP SERVER LOCAL, o que vale: é a sessão dele que o app usa, e é o
+///    erro dele que o garçom vê. Sem IP local, o padrão é a própria nuvem.
 ///
-/// Ninguém fica sem entrar por causa disso:
-///
-/// * nuvem fora (loja sem internet) → entra direto no IP guardado;
-/// * loja fora, ou recusando → fica na nuvem;
-/// * restaurante sem server local → fica na nuvem.
+/// A config é um extra, nunca a porta de entrada: nuvem fora, recusando o
+/// garçom ou com erro → fica o servidor guardado. Loja fora do ar → nuvem.
 ///
 /// Mesma regra do PDV desktop (`pdv_desktop/.../login_pela_nuvem.dart`).
 class LoginPelaNuvem {
@@ -66,50 +64,42 @@ class LoginPelaNuvem {
           ),
         );
 
-    final Map<String, dynamic> naNuvem;
-    final String ipLocal;
-    final String nuvemInformada;
-    try {
-      naNuvem = await login(ipServerNuvem);
-      (ipLocal, nuvemInformada) = await _config(naNuvem);
-    } on ApiException catch (erro) {
-      if (!erro.isConnectivity) rethrow;
-      // Nuvem fora: a loja guardada da última vez continua atendendo.
-      final guardado = lerIpServerLocal() ?? '';
-      if (guardado.isEmpty) rethrow;
-      await usarServidor(guardado);
-      return login(guardado);
-    }
+    final config = await _config(login);
+    final ipLocal = config?.ipLocal ?? (lerIpServerLocal() ?? '');
+    final nuvem = (config?.nuvem ?? '').isEmpty ? ipServerNuvem : config!.nuvem;
 
     if (ipLocal.isNotEmpty) {
       try {
         final naLoja = await login(ipLocal);
         await usarServidor(ipLocal);
         return naLoja;
-      } on ApiException {
-        // Loja fora, ou o garçom ainda não chegou nela pela sincronização:
-        // a sessão da nuvem atende, e o próximo login tenta a loja de novo.
+      } on ApiException catch (erro) {
+        // Senha recusada é a resposta do login: aparece. Só a loja FORA do
+        // ar cai para a nuvem.
+        if (!erro.isConnectivity) rethrow;
       }
     }
-    // Sem loja: direto para a nuvem — a que ela mesma informou (o `API_URL`
-    // do .env dela), ou a fixa deste build.
-    await usarServidor(nuvemInformada.isEmpty ? ipServerNuvem : nuvemInformada);
+    final naNuvem = await login(nuvem);
+    await usarServidor(nuvem);
     return naNuvem;
   }
 
-  /// (IP server local, IP server nuvem) que a nuvem informa.
-  Future<(String, String)> _config(Map<String, dynamic> sessao) async {
+  /// O primeiro login: (IP server local, nuvem informada) da `/pdv/config/`,
+  /// ou null quando a nuvem não deu a config — e aí fica o padrão guardado.
+  Future<({String ipLocal, String nuvem})?> _config(
+    Future<Map<String, dynamic>> Function(String base) login,
+  ) async {
     try {
+      final sessao = await login(ipServerNuvem);
       final config = await cliente(
         ipServerNuvem,
       ).get('/pdv/config/', accessToken: '${sessao['access'] ?? ''}');
       return (
-        '${config['ip_server_local'] ?? ''}'.trim(),
-        '${config['ip_server_nuvem'] ?? ''}'.trim(),
+        ipLocal: '${config['ip_server_local'] ?? ''}'.trim(),
+        nuvem: '${config['ip_server_nuvem'] ?? ''}'.trim(),
       );
-    } on ApiException catch (erro) {
-      if (erro.isConnectivity) rethrow;
-      return ('', '');
+    } on Exception {
+      return null;
     }
   }
 }

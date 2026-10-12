@@ -84,14 +84,18 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **IP server local vindo da nuvem, no login** (PDV desktop e app do garçom,
   `features/auth/data/login_pela_nuvem.dart` nos dois). O IP do servidor da
   loja mora no cadastro do RESTAURANTE (`Restaurant.ip_server_local`, editado
-  no painel). O login entra primeiro no **IP server nuvem** — fixo no build,
-  `api.starchef.com.br` —, lê `GET /pdv/config/` e entra no **IP server local**
-  com o mesmo usuário e senha (que só existem na memória durante o login),
-  guardando o IP para o app reabrir direto na loja. Nuvem fora → entra no IP
-  guardado; loja fora ou recusando → fica na nuvem; restaurante sem IP → fica
-  na nuvem, e manda tudo direto para ela: a que a nuvem informa em
-  `ip_server_nuvem` (o `API_URL` do .env dela) ou, sem isso, a fixa do build. As idas do login usam clientes SEM o desvio automático para a
-  nuvem: com ele, um "login na loja" fora do ar entrava na nuvem de produção e
+  no painel). São **dois logins**: o primeiro, no **IP server nuvem** — fixo
+  no build, `api.starchef.com.br` —, só lê `GET /pdv/config/` (IP server local
+  e `ip_server_nuvem`, o `API_URL` do .env da nuvem) e tem o token descartado;
+  usuário e senha só existem na memória durante o login. O segundo, no **IP
+  server local**, é o que vale: a sessão e o erro mostrados são os dele. Sem
+  IP local, o padrão é a nuvem (a informada ou a fixa). A config é um extra,
+  nunca a porta de entrada: nuvem fora, recusando o usuário ou com erro → fica
+  o IP guardado (antes, um usuário que a nuvem não conhecia não entrava nem
+  com a loja respondendo). Loja FORA do ar → entra na nuvem; loja recusando a
+  senha → o erro aparece. As idas do login usam clientes SEM o desvio
+  automático para a nuvem: com ele, um "login na loja" fora do ar entrava na
+  nuvem de produção e
   parecia ter entrado na loja. A tela "Servidores" (engrenagem) mostra o IP
   server nuvem (só leitura) e o IP server local (editável só para forçar
   outro neste aparelho).

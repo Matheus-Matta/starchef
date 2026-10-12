@@ -4,13 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
+import 'package:starchef_pdv_desktop/core/network/api_exception.dart';
 import 'package:starchef_pdv_desktop/features/auth/data/login_pela_nuvem.dart';
 
 /// No login, o PDV pega na NUVEM o IP do server local do restaurante.
 ///
-/// O IP era digitado em cada terminal, e mudar o servidor da loja era refazer
-/// isso caixa por caixa. Agora o login passa pela nuvem (fixa), lê
-/// `/pdv/config/` e entra na loja com o mesmo usuário e senha.
+/// São dois logins: o da nuvem só busca a config (`/pdv/config/`) e é
+/// descartado; o que vale é o do server local. Antes a nuvem era a porta de
+/// entrada: um usuário que ela não conhecia (a nuvem de produção, num PDV de
+/// teste) não entrava nem com a loja respondendo.
 void main() {
   const nuvem = 'https://nuvem.test/api/v1';
   const loja = 'http://192.168.0.10/api/v1';
@@ -20,6 +22,8 @@ void main() {
   late Set<String> foraDoAr;
   late String ipDaConfig;
   late String nuvemDaConfig;
+  late Set<String> recusamLogin;
+  late bool configQuebrada;
 
   http.Client servidores() => MockClient((request) async {
     final base = '${request.url.scheme}://${request.url.authority}';
@@ -27,7 +31,15 @@ void main() {
     if (foraDoAr.contains(base)) {
       throw http.ClientException('Connection refused', request.url);
     }
+    if (request.url.path.endsWith('/auth/login/') &&
+        recusamLogin.contains(base)) {
+      return http.Response(
+        jsonEncode({'detail': 'No active account found'}),
+        401,
+      );
+    }
     if (request.url.path.endsWith('/pdv/config/')) {
+      if (configQuebrada) return http.Response('{}', 500);
       return http.Response(
         jsonEncode({
           'restaurant': 'r1',
@@ -69,6 +81,36 @@ void main() {
     foraDoAr = {};
     ipDaConfig = loja;
     nuvemDaConfig = '';
+    recusamLogin = {};
+    configQuebrada = false;
+  });
+
+  test('nuvem recusando o login: entra no server local guardado', () async {
+    recusamLogin = {'https://nuvem.test'};
+    ipGuardado = loja;
+
+    final (sessao, principal) = await entrar(baseInicial: loja);
+
+    expect(sessao['access'], 'token-loja');
+    expect(principal.baseUrl, loja);
+    expect(ipGuardado, loja, reason: 'sem config, o padrao fica');
+  });
+
+  test('config da nuvem com erro: mantem o IP guardado', () async {
+    configQuebrada = true;
+    ipGuardado = 'http://10.0.0.1/api/v1';
+
+    final (sessao, principal) = await entrar(baseInicial: ipGuardado!);
+
+    expect(sessao['access'], 'token-loja');
+    expect(principal.baseUrl, 'http://10.0.0.1/api/v1');
+    expect(ipGuardado, 'http://10.0.0.1/api/v1');
+  });
+
+  test('server local recusando a senha: o erro aparece', () async {
+    recusamLogin = {'http://192.168.0.10'};
+
+    expect(entrar(), throwsA(isA<ApiException>()));
   });
 
   // Sem IP local, tudo vai direto para a nuvem — a do `API_URL` do .env da
