@@ -89,7 +89,8 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
   com o mesmo usuário e senha (que só existem na memória durante o login),
   guardando o IP para o app reabrir direto na loja. Nuvem fora → entra no IP
   guardado; loja fora ou recusando → fica na nuvem; restaurante sem IP → fica
-  na nuvem. As idas do login usam clientes SEM o desvio automático para a
+  na nuvem, e manda tudo direto para ela: a que a nuvem informa em
+  `ip_server_nuvem` (o `API_URL` do .env dela) ou, sem isso, a fixa do build. As idas do login usam clientes SEM o desvio automático para a
   nuvem: com ele, um "login na loja" fora do ar entrava na nuvem de produção e
   parecia ter entrado na loja. A tela "Servidores" (engrenagem) mostra o IP
   server nuvem (só leitura) e o IP server local (editável só para forçar

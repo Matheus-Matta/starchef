@@ -609,4 +609,7 @@ TTL do cache de atraso não incomoda ninguém.
 restaurante do usuário (`Restaurant.ip_server_local`, já como endereço da API:
 `192.168.0.10:8000` → `http://192.168.0.10:8000/api/v1`). O PDV desktop e o
 app do garçom o leem no login, na nuvem, e passam a usar a loja
-(`apps/restaurants/pdv_config.py`; ver FLUTTER_DESKTOP.md).
+(`apps/restaurants/pdv_config.py`; ver FLUTTER_DESKTOP.md). Devolve também o
+`ip_server_nuvem`: o `API_URL` desta instalação, quando absoluto — sem IP local,
+o app manda tudo direto para ele, e mudar o domínio da nuvem não exige gerar o
+app de novo. Relativo (`/api/v1`, o modo "mesma origem" do painel) volta vazio.

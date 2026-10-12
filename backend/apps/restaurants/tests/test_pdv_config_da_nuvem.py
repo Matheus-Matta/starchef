@@ -60,3 +60,21 @@ def test_o_painel_edita_o_ip_no_cadastro_do_restaurante(api_client, restaurant):
 
     assert resposta.status_code == 200, resposta.content
     assert api_client.get(URL).json()["ip_server_local"] == "http://192.168.0.25/api/v1"
+
+
+# O IP SERVER NUVEM vem do `API_URL` do .env da nuvem: sem IP local, o app manda
+# tudo direto para ela. Mudar o domínio da nuvem não exige gerar o app de novo.
+@pytest.mark.parametrize(
+    ("api_url", "esperado"),
+    [
+        ("https://api.starchef.com.br/api/v1", "https://api.starchef.com.br/api/v1"),
+        ("https://api.starchef.com.br", "https://api.starchef.com.br/api/v1"),
+        # Relativa é o modo "mesma origem" do painel: não serve a um app.
+        ("/api/v1", ""),
+        ("", ""),
+    ],
+)
+def test_devolve_o_ip_server_nuvem_do_api_url(api_client, restaurant, settings, api_url, esperado):
+    settings.API_URL = api_url
+
+    assert api_client.get(URL).json()["ip_server_nuvem"] == esperado

@@ -5,6 +5,7 @@ api.starchef.com.br), pergunta aqui onde fica a loja e passa a usá-la. Antes o
 endereço era digitado em cada terminal e em cada celular, e mudar o IP do
 servidor era refazer isso aparelho por aparelho.
 """
+from django.conf import settings
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,7 +22,7 @@ def url_da_api(valor):
         return ""
     if "://" not in texto:
         texto = f"http://{texto}"
-    esquema, resto = texto.split("://", 1)
+    _esquema, resto = texto.split("://", 1)
     if "/" not in resto:
         texto = f"{texto}/api/v1"
     return texto
@@ -35,4 +36,15 @@ class PdvConfigView(APIView):
         return Response({
             "restaurant": str(restaurante.pk) if restaurante else None,
             "ip_server_local": url_da_api(getattr(restaurante, "ip_server_local", "")),
+            "ip_server_nuvem": ip_server_nuvem(),
         })
+
+
+def ip_server_nuvem():
+    """O `API_URL` desta instalação, quando é um endereço absoluto.
+
+    Relativo ("/api/v1") é o modo "mesma origem" do painel e não serve a um
+    app: aí o app fica com o endereço fixo dele (api.starchef.com.br).
+    """
+    valor = (getattr(settings, "API_URL", "") or "").strip()
+    return url_da_api(valor) if valor.startswith(("http://", "https://")) else ""

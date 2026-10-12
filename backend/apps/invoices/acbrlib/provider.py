@@ -90,12 +90,23 @@ class AcbrLibProvider(DocumentoFiscal, FiscalProvider):
             raise FiscalRejection(f"ACBrLib: SEFAZ recusou a nota — {motivo}")
         if situacao == "nao_encontrada":
             raise FiscalNotFound(f"ACBrLib: a SEFAZ não conhece a chave — {motivo}")
+        if situacao == "cancelada":
+            # O protocolo que volta é o do EVENTO de cancelamento. Gravado por
+            # cima do de autorização, a nota perdia o número que prova que foi
+            # autorizada (test_acbrlib_cancelamento): fica à parte.
+            payload = dict(invoice.fiscal_payload or {})
+            payload["cancelamento"] = {
+                "protocolo": resultado.get("protocolo"), "cstat": resultado.get("cstat"),
+                "motivo": resultado.get("motivo"), "em": resultado.get("recebido_em"),
+            }
+            invoice.fiscal_payload = payload
+            invoice.status = Invoice.STATUS_CANCELLED
+            invoice.error_message = ""
+            return invoice
         self._copiar(invoice, resultado)
         if situacao == "autorizada":
             invoice.status = Invoice.STATUS_ISSUED
             invoice.authorized_at = parse_datetime(resultado.get("recebido_em") or "") or timezone.now()
-        elif situacao == "cancelada":
-            invoice.status = Invoice.STATUS_CANCELLED
         else:  # contingencia (assinada, não transmitida) ou processando
             invoice.status = Invoice.STATUS_PENDING
         invoice.error_message = ""

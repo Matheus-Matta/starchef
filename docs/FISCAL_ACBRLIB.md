@@ -258,6 +258,17 @@ Prazo: a NFC-e em contingência tem de ser transmitida em até 24 h. A
 retransmissão roda a cada 2 minutos; uma nota pendente há mais de 12 h aparece
 como alerta no painel fiscal.
 
+## Cancelamento
+
+Cancelar o pedido cancela a nota (`cancel_order` → `cancel_invoice_for_order`
+→ `cancel_fiscal_invoice`): nota AUTORIZADA vira o evento de cancelamento na
+SEFAZ (`NFE_Cancelar`, justificativa de 15 a 255 caracteres); nota que nunca
+foi autorizada só é cancelada no sistema. Tudo numa transação: se a SEFAZ
+recusa (fora do prazo — 30 min para NFC-e na maioria das UFs), o pedido também
+NÃO é cancelado e o caixa vê o motivo. O protocolo do EVENTO fica em
+`fiscal_payload["cancelamento"]`; o de autorização continua no campo dele
+(antes era sobrescrito, e a nota perdia o número que prova a autorização).
+
 ## Toda falha deixa a nota gravada
 
 Qualquer falha da emissão grava a nota em `error`, com o motivo em

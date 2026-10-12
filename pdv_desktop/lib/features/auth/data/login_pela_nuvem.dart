@@ -42,10 +42,11 @@ class LoginPelaNuvem {
     required String senha,
   }) async {
     final Map<String, dynamic> naNuvem;
-    String ipLocal;
+    final String ipLocal;
+    final String nuvemInformada;
     try {
       naNuvem = await _login(ipServerNuvem, usuario, senha);
-      ipLocal = await _ipDaLoja(naNuvem);
+      (ipLocal, nuvemInformada) = await _config(naNuvem);
     } on ApiException catch (erro) {
       if (!erro.isConnectivity) rethrow;
       // Nuvem fora: a loja guardada da última vez continua atendendo.
@@ -67,7 +68,11 @@ class LoginPelaNuvem {
         // a sessão da nuvem atende enquanto isso.
       }
     }
-    await principal.updateBaseUrl(ipServerNuvem);
+    // Sem loja: direto para a nuvem — a que ela mesma informou (o `API_URL`
+    // do .env dela), ou a fixa deste build.
+    await principal.updateBaseUrl(
+      nuvemInformada.isEmpty ? ipServerNuvem : nuvemInformada,
+    );
     return naNuvem;
   }
 
@@ -110,18 +115,22 @@ class LoginPelaNuvem {
     ),
   );
 
-  /// O IP do server local na nuvem; sem a config, segue só a nuvem.
-  Future<String> _ipDaLoja(Map<String, dynamic> sessao) async {
+  /// (IP server local, IP server nuvem) que a nuvem informa; sem a config,
+  /// segue só a nuvem fixa.
+  Future<(String, String)> _config(Map<String, dynamic> sessao) async {
     try {
       final config = await _com(
         ipServerNuvem,
         (api) =>
             api.get('/pdv/config/', accessToken: '${sessao['access'] ?? ''}'),
       );
-      return '${config['ip_server_local'] ?? ''}'.trim();
+      return (
+        '${config['ip_server_local'] ?? ''}'.trim(),
+        '${config['ip_server_nuvem'] ?? ''}'.trim(),
+      );
     } on ApiException catch (erro) {
       if (erro.isConnectivity) rethrow;
-      return '';
+      return ('', '');
     }
   }
 }

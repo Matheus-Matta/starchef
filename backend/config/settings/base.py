@@ -104,6 +104,10 @@ LOGIN_REDIRECT_URL = "/admin/"
 LOGIN_URL = "/admin/login/"
 FIRST_ACCESS_TOKEN = config("DJANGO_FIRST_ACCESS_TOKEN", default="")
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173").rstrip("/")
+# O endereço público da API nesta instalação (o mesmo API_URL do build do
+# painel). A nuvem o devolve em `/pdv/config/` como IP server nuvem: sem IP
+# local, o PDV e o app do garçom mandam tudo direto para ele.
+API_URL = config("API_URL", default="")
 
 EMAIL_BACKEND = config("DJANGO_EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = config("DJANGO_EMAIL_HOST", default="localhost")

@@ -19,6 +19,7 @@ void main() {
   late String? ipGuardado;
   late Set<String> foraDoAr;
   late String ipDaConfig;
+  late String nuvemDaConfig;
 
   http.Client servidores() => MockClient((request) async {
     final base = '${request.url.scheme}://${request.url.authority}';
@@ -28,7 +29,11 @@ void main() {
     }
     if (request.url.path.endsWith('/pdv/config/')) {
       return http.Response(
-        jsonEncode({'restaurant': 'r1', 'ip_server_local': ipDaConfig}),
+        jsonEncode({
+          'restaurant': 'r1',
+          'ip_server_local': ipDaConfig,
+          'ip_server_nuvem': nuvemDaConfig,
+        }),
         200,
       );
     }
@@ -63,6 +68,19 @@ void main() {
     ipGuardado = null;
     foraDoAr = {};
     ipDaConfig = loja;
+    nuvemDaConfig = '';
+  });
+
+  // Sem IP local, tudo vai direto para a nuvem — a do `API_URL` do .env da
+  // nuvem (`ip_server_nuvem` em /pdv/config/), quando ela informa uma.
+  test('sem IP local usa o IP server nuvem informado pela nuvem', () async {
+    ipDaConfig = '';
+    nuvemDaConfig = 'https://outra.nuvem.test/api/v1';
+
+    final (sessao, principal) = await entrar();
+
+    expect(sessao['access'], 'token-nuvem');
+    expect(principal.baseUrl, 'https://outra.nuvem.test/api/v1');
   });
 
   test(
