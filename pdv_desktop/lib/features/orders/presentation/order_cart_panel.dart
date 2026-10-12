@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/data/order_item_status.dart';
-import 'order_discount_field.dart';
 import 'draft_destination_bar.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cart_item_card.dart';
@@ -42,8 +41,6 @@ class OrderCartPanel extends StatelessWidget {
     this.onChooseCustomer,
     this.draftCommands = const [],
     this.draftCommandTotals = const {},
-    this.discountCents,
-    this.onDiscountChanged,
   });
 
   final Map<String, dynamic>? order;
@@ -72,11 +69,6 @@ class OrderCartPanel extends StatelessWidget {
   /// Os cartões anexados ao rascunho e o que cada um já tem lançado.
   final List<Map<String, dynamic>> draftCommands;
   final Map<String, double> draftCommandTotals;
-
-  /// Desconto digitado no resumo (nulo = o que o servidor já tem). Sem
-  /// `onDiscountChanged` o campo não aparece: só gerente dá desconto.
-  final int? discountCents;
-  final ValueChanged<int>? onDiscountChanged;
 
   /// Leva ao pagamento. Nulo para quem não tem a permissão de caixa — e aí o
   /// botão aparece desligado, em vez de sumir ou de não fazer nada ao clique.
@@ -325,39 +317,12 @@ class OrderCartPanel extends StatelessWidget {
 
   Widget _footer(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final subtotal = order?['subtotal'];
-    final serviceFee = _number(order?['service_fee']);
-    final deliveryFee = _number(order?['delivery_fee']);
-    final discount = _number(order?['discount']);
+    // SÓ O TOTAL: subtotal, taxa e desconto se decidem — e se mostram — na
+    // tela de pagamento. Aqui roubavam do carrinho o espaço dos itens.
     return Padding(
       padding: const EdgeInsets.fromLTRB(17, 13, 17, 16),
       child: Column(
         children: [
-          _summaryRow(
-            context,
-            'Subtotal',
-            money(subtotal ?? order?['total'] ?? draftTotal),
-          ),
-          if (serviceFee.abs() > .009)
-            _summaryRow(context, 'Taxa de serviço', money(serviceFee)),
-          if (deliveryFee.abs() > .009)
-            _summaryRow(context, 'Taxa de entrega', money(deliveryFee)),
-          if (onDiscountChanged != null)
-            OrderDiscountField(
-              cents: descontoNaTela(order, discountCents),
-              maxCents: centavosDe(subtotal ?? draftTotal),
-              onChanged: onDiscountChanged!,
-            )
-          else if (discount.abs() > .009)
-            _summaryRow(
-              context,
-              'Desconto',
-              '- ${money(discount.abs())}',
-              valueColor: scheme.primary,
-            ),
-          const SizedBox(height: 7),
-          Divider(height: 1, color: scheme.outlineVariant),
-          const SizedBox(height: 11),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -366,7 +331,7 @@ class OrderCartPanel extends StatelessWidget {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
               ),
               Text(
-                money(totalComDesconto(order, draftTotal, discountCents)),
+                money(order?['total'] ?? draftTotal),
                 style: TextStyle(
                   color: scheme.primary,
                   fontSize: 25,
@@ -505,39 +470,6 @@ class OrderCartPanel extends StatelessWidget {
                 size: 19,
               ),
         label: Text(label),
-      ),
-    );
-  }
-
-  Widget _summaryRow(
-    BuildContext context,
-    String label,
-    String value, {
-    Color? valueColor,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: scheme.onSurfaceVariant,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -684,11 +616,6 @@ class OrderCartPanel extends StatelessWidget {
     'counter' => 'Balcão',
     _ => 'Balcão',
   };
-
-  static double _number(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse('${value ?? ''}'.replaceAll(',', '.')) ?? 0;
-  }
 }
 
 /// Linha do pedido, no mesmo formato do frontend web.

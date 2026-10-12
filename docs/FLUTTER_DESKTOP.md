@@ -80,8 +80,13 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore`. Windows usa o cofre do SO. No Linux, o Secret Service continua sendo a primeira opção, mas os valores também são espelhados em arquivos acessíveis somente ao usuário do PDV dentro de `~/.local/share/StarChef/secure`; isso evita perder a sessão quando GNOME Keyring/KWallet não está disponível no autostart.
 - **Restauração no boot**: tenta `GET /auth/me/` com o token salvo; em 401, tenta `POST /auth/refresh/`; se o refresh for explicitamente recusado, limpa o cofre e volta ao login. Se **não houver resposta nenhuma** (sem rede), devolve a sessão salva como está — decisão deliberada para o terminal continuar operando offline em vez de deslogar por falta de conexão.
-- **Venda nova zerada** (`_resetToNewSale` em `home_page.dart`): a mesma rotina depois de concluir o pagamento e em "Nova venda" limpa pedido, mesa, comanda, cliente, rascunho, recebimentos, valor e forma digitados, cupom, desconto digitado, categoria e busca do catálogo (o campo é recriado vazio por `searchGeneration`) e devolve o foco à busca.
-- **Desconto digitado no resumo do pedido** (`orders/presentation/order_discount_field.dart`): qualquer operador que cobra digita; cada dígito entra pelos centavos, o total da tela acompanha na hora e o valor sobe no `/close/` como `discount` — sem diálogo e sem chamada por tecla. Gerente aprova pelo próprio cargo; para os demais o servidor responde 403 e o PDV pede a senha de ações do caixa (`_autorizarDesconto`, o mesmo diálogo do cancelamento) e reenvia o fechamento com `cash_password`. Fica preso ao pedido em que foi digitado (`TypedDiscount`); acima do subtotal é recusado no campo e no fechamento.
+- **Venda nova zerada** (`_resetToNewSale` em `home_page.dart`): a mesma rotina depois de concluir o pagamento e em "Nova venda" limpa pedido, mesa, comanda, cliente, rascunho, recebimentos, valor e forma digitados, cupom, categoria e busca do catálogo (o campo é recriado vazio por `searchGeneration`) e devolve o foco à busca.
+- **Carrinho só com o total.** Subtotal, taxa de serviço e desconto saíram do
+  rodapé do carrinho: eles se decidem (e se mostram) na tela de pagamento, e
+  ali roubavam espaço da lista de itens. O desconto é digitado na tela de
+  pagamento (`payment_adjustments.dart`); quem não é gerente libera com a senha
+  de ações do caixa. `order_discount_field.dart` guarda só a conversão de
+  centavos usada por esse campo.
 - **Autorização de caixa é separada da autenticação de usuário**: `features/cash/data/cash_auth_repository.dart` sincroniza (quando online) um hash PBKDF2 (formato Django) via `GET /restaurants/<id>/cash-auth/`, guardado localmente. `core/security/cash_password.dart` verifica a senha **offline**, sem round-trip ao servidor — é o que autoriza ações de caixa (cancelamento, desconto) mesmo sem internet.
 - O hash é buscado uma vez depois da autenticação. Depois disso, o WebSocket
   envia somente uma invalidação segura quando a senha muda; o PDV relê o

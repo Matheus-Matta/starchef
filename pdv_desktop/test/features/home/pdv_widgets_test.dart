@@ -447,8 +447,11 @@ void main() {
       );
       expect(find.text('Prato executivo'), findsOneWidget);
       expect(find.text('Sem cebola'), findsOneWidget);
-      expect(find.text('Taxa de serviço'), findsOneWidget);
-      expect(find.text('Desconto'), findsOneWidget);
+      // SÓ O TOTAL no carrinho: subtotal, taxa e desconto ficam na tela de
+      // pagamento, onde se decidem — aqui roubavam espaço da lista de itens.
+      expect(find.text('Subtotal'), findsNothing);
+      expect(find.text('Taxa de serviço'), findsNothing);
+      expect(find.text('Desconto'), findsNothing);
       expect(find.text('R\$ 21,00'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Cancelar item'));

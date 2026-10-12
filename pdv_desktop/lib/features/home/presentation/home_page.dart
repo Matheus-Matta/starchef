@@ -235,9 +235,6 @@ class _HomePageState extends State<HomePage>
   @override
   int catalogSearchGeneration = 0;
 
-  /// O desconto digitado no resumo, preso ao pedido em que foi digitado.
-  @override
-  final typedDiscount = TypedDiscount();
   @override
   String? category;
   @override
@@ -1363,7 +1360,6 @@ class _HomePageState extends State<HomePage>
     draft.clear();
     discountPassword = null;
     adjustError = '';
-    typedDiscount.limpar();
     paymentReference.clear();
     paymentAmount.clear();
     couponCode.clear();
