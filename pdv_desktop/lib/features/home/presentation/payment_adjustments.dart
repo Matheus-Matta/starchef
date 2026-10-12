@@ -1,19 +1,13 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/formatters/cnpj_formatter.dart';
-import '../../../core/formatters/cpf_formatter.dart';
+import '../../../core/formatters/documento_fiscal.dart';
 import '../../orders/presentation/order_discount_field.dart';
 import 'campo_com_aplicar.dart';
 
 /// Taxa de serviço, CPF/CNPJ da nota e desconto DENTRO da tela de pagamento.
 ///
-/// Ficavam num modal antes dela: o caixa decidia a taxa e o documento sem ver
-/// o total, e para mudar qualquer coisa depois tinha de voltar e refazer o
-/// fechamento na frente do cliente. Aqui cada mudança vai ao servidor na hora
-/// (o mixin `_PaymentAdjustSection` decide como) e o total se redesenha.
-///
-/// Widget próprio pelo mesmo motivo do `CouponSelect`: é a parte que
-/// responde à mão do operador, e a única que dá para verificar sem o PDV.
+/// Ficavam num modal antes dela, decididos sem ver o total. Cada mudança vai
+/// ao servidor na hora (`_PaymentAdjustSection`) e o total se redesenha.
 class PaymentAdjustments extends StatefulWidget {
   const PaymentAdjustments({
     super.key,
@@ -61,25 +55,37 @@ class PaymentAdjustments extends StatefulWidget {
 
 class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
   late final _documento = TextEditingController(
-    text: _formatar(widget.documento),
+    text: documentoFormatado(widget.documento),
   );
   late final _desconto = TextEditingController(
     text: formatarCentavos(widget.descontoCentavos),
   );
   String _erroLocal = '';
 
-  static String _formatar(String digitos) => digitos.length == 14
-      ? formatCnpj(digitos)
-      : digitos.length == 11
-      ? formatCpf(digitos)
-      : digitos;
+  @override
+  void initState() {
+    super.initState();
+    // O botão do campo (aplicar ou remover) depende do que está digitado.
+    _documento.addListener(_redesenhar);
+    _desconto.addListener(_redesenhar);
+  }
+
+  void _redesenhar() => setState(() {});
+
+  bool get _documentoAplicado =>
+      widget.documento.isNotEmpty &&
+      documentoDigitos(_documento.text) == widget.documento;
+
+  bool get _descontoAplicado =>
+      widget.descontoCentavos > 0 &&
+      centavosDigitados(_desconto.text) == widget.descontoCentavos;
 
   @override
   void didUpdateWidget(PaymentAdjustments antigo) {
     super.didUpdateWidget(antigo);
     // O servidor respondeu (ou outro pedido abriu): o campo mostra o que vale.
     if (antigo.documento != widget.documento) {
-      _documento.text = _formatar(widget.documento);
+      _documento.text = documentoFormatado(widget.documento);
     }
     if (antigo.descontoCentavos != widget.descontoCentavos) {
       _desconto.text = formatarCentavos(widget.descontoCentavos);
@@ -94,11 +100,8 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
   }
 
   void _aplicarDocumento() {
-    final digitos = _documento.text.replaceAll(RegExp(r'\D'), '');
-    final valido =
-        digitos.isEmpty ||
-        (digitos.length == 11 && isValidCpf(digitos)) ||
-        (digitos.length == 14 && isValidCnpj(digitos));
+    final digitos = documentoDigitos(_documento.text);
+    final valido = documentoValido(digitos);
     setState(
       () => _erroLocal = valido
           ? ''
@@ -167,6 +170,8 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
           rotulo: 'CPF ou CNPJ na nota',
           icone: const Icon(Icons.badge_outlined, size: 18),
           aplicar: _aplicarDocumento,
+          aplicado: _documentoAplicado,
+          remover: () => widget.onDocumento(''),
         ),
         CampoComAplicar(
           chave: 'payment-discount',
@@ -176,6 +181,8 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
           prefixo: '- R\$ ',
           formatador: CentavosFormatter(),
           aplicar: _aplicarDesconto,
+          aplicado: _descontoAplicado,
+          remover: () => widget.onDesconto(0),
         ),
         if (widget.bloqueado)
           Text(

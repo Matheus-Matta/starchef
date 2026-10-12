@@ -123,4 +123,48 @@ void main() {
     expect(chamadas, isEmpty);
     expect(find.textContaining('Remova os pagamentos'), findsOneWidget);
   });
+
+  // Aplicado, o botão do campo vira um X: o gesto que sobra é REMOVER, e
+  // tirar o CPF ou o desconto não exige apagar o texto à mão.
+  testWidgets('CPF aplicado mostra o X, e o X tira o documento', (
+    tester,
+  ) async {
+    await montar(tester, documento: '52998224725');
+
+    expect(campo('payment-document-remove'), findsOneWidget);
+    await tester.tap(campo('payment-document-remove'));
+    await tester.pump();
+
+    expect(chamadas, ['doc:']);
+  });
+
+  testWidgets('desconto aplicado mostra o X, e o X zera o desconto', (
+    tester,
+  ) async {
+    await montar(tester, desconto: 250);
+
+    expect(campo('payment-discount-remove'), findsOneWidget);
+    await tester.tap(campo('payment-discount-remove'));
+    await tester.pump();
+
+    expect(chamadas, ['desconto:0']);
+  });
+
+  testWidgets('sem nada aplicado nao ha X', (tester) async {
+    await montar(tester);
+
+    expect(campo('payment-document-remove'), findsNothing);
+    expect(campo('payment-discount-remove'), findsNothing);
+  });
+
+  testWidgets('editando o valor aplicado, volta o botao de aplicar', (
+    tester,
+  ) async {
+    await montar(tester, desconto: 250);
+
+    await tester.enterText(campo('payment-discount'), '500');
+    await tester.pump();
+
+    expect(campo('payment-discount-remove'), findsNothing);
+  });
 }

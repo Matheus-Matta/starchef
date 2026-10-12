@@ -16,6 +16,8 @@ class CampoComAplicar extends StatelessWidget {
     required this.ativo,
     required this.rotulo,
     required this.aplicar,
+    this.aplicado = false,
+    this.remover,
     this.icone,
     this.prefixo,
     this.formatador,
@@ -26,6 +28,11 @@ class CampoComAplicar extends StatelessWidget {
   final bool ativo;
   final String rotulo;
   final VoidCallback aplicar;
+
+  /// O valor do campo é o que o pedido já leva: o botão vira um X, porque o
+  /// gesto que sobra é REMOVER — sem apagar o texto à mão.
+  final bool aplicado;
+  final VoidCallback? remover;
   final Widget? icone;
   final String? prefixo;
 
@@ -45,11 +52,18 @@ class CampoComAplicar extends StatelessWidget {
       rotulo,
       prefixIcon: icone,
       prefixText: prefixo,
-      suffixIcon: botaoDoCampo(
-        icon: Icons.check_rounded,
-        tooltip: 'Aplicar',
-        onPressed: ativo ? aplicar : null,
-      ),
+      suffixIcon: aplicado && remover != null
+          ? botaoDoCampo(
+              key: Key('$chave-remove'),
+              icon: Icons.close_rounded,
+              tooltip: 'Remover',
+              onPressed: ativo ? remover : null,
+            )
+          : botaoDoCampo(
+              icon: Icons.check_rounded,
+              tooltip: 'Aplicar',
+              onPressed: ativo ? aplicar : null,
+            ),
     ),
     onSubmitted: (_) => aplicar(),
   );
