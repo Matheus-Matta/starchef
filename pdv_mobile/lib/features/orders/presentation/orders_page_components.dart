@@ -157,7 +157,7 @@ class _AccountMenu extends StatelessWidget {
           checked: settings.askTable,
           child: const Text('Perguntar mesa'),
         ),
-        const PopupMenuItem(value: 'api', child: Text('Servidor da API')),
+        const PopupMenuItem(value: 'api', child: Text('Servidores')),
         const PopupMenuItem(
           value: 'updates',
           child: Text('Buscar atualizações'),

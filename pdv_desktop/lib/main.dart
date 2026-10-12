@@ -20,6 +20,7 @@ import 'core/storage/local_preferences.dart';
 import 'core/storage/session_store.dart';
 import 'core/update/pdv_auto_updater.dart';
 import 'features/auth/data/auth_repository.dart';
+import 'features/auth/data/login_pela_nuvem.dart';
 import 'features/cash/data/cash_auth_repository.dart';
 import 'features/cash/data/cash_auth_store.dart';
 import 'features/scale/services/scale_window_launcher.dart';
@@ -138,6 +139,14 @@ Future<void> main(List<String> arguments) async {
       store: CashAuthStore(valueStore: credentials),
     ),
     credentials: credentials,
+    // O login passa pela nuvem (fixa) e pega o IP server local do
+    // restaurante, que fica guardado: o PDV reabre direto na loja.
+    loginPelaNuvem: LoginPelaNuvem(
+      principal: apiClient,
+      ipServerNuvem: AppConfig.ipServerNuvem,
+      lerIpServerLocal: () => preferences.apiBaseUrlOverride,
+      salvarIpServerLocal: preferences.setApiBaseUrlOverride,
+    ),
   );
 
   // O arquivo de credenciais existe, mas ficou com a permissão padrão do

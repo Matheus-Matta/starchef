@@ -81,6 +81,19 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore`. Windows usa o cofre do SO. No Linux, o Secret Service continua sendo a primeira opção, mas os valores também são espelhados em arquivos acessíveis somente ao usuário do PDV dentro de `~/.local/share/StarChef/secure`; isso evita perder a sessão quando GNOME Keyring/KWallet não está disponível no autostart.
 - **Restauração no boot**: tenta `GET /auth/me/` com o token salvo; em 401, tenta `POST /auth/refresh/`; se o refresh for explicitamente recusado, limpa o cofre e volta ao login. Se **não houver resposta nenhuma** (sem rede), devolve a sessão salva como está — decisão deliberada para o terminal continuar operando offline em vez de deslogar por falta de conexão.
 - **Venda nova zerada** (`_resetToNewSale` em `home_page.dart`): a mesma rotina depois de concluir o pagamento e em "Nova venda" limpa pedido, mesa, comanda, cliente, rascunho, recebimentos, valor e forma digitados, cupom, categoria e busca do catálogo (o campo é recriado vazio por `searchGeneration`) e devolve o foco à busca.
+- **IP server local vindo da nuvem, no login** (PDV desktop e app do garçom,
+  `features/auth/data/login_pela_nuvem.dart` nos dois). O IP do servidor da
+  loja mora no cadastro do RESTAURANTE (`Restaurant.ip_server_local`, editado
+  no painel). O login entra primeiro no **IP server nuvem** — fixo no build,
+  `api.starchef.com.br` —, lê `GET /pdv/config/` e entra no **IP server local**
+  com o mesmo usuário e senha (que só existem na memória durante o login),
+  guardando o IP para o app reabrir direto na loja. Nuvem fora → entra no IP
+  guardado; loja fora ou recusando → fica na nuvem; restaurante sem IP → fica
+  na nuvem. As idas do login usam clientes SEM o desvio automático para a
+  nuvem: com ele, um "login na loja" fora do ar entrava na nuvem de produção e
+  parecia ter entrado na loja. A tela "Servidores" (engrenagem) mostra o IP
+  server nuvem (só leitura) e o IP server local (editável só para forçar
+  outro neste aparelho).
 - **Formas de pagamento da mais usada para a menos usada.** O PDV pede
   `/payments/methods/?ordering=-uso,name`: `uso` é a contagem de recebimentos
   APROVADOS dos últimos 90 dias (`backend/apps/payments/formas_por_uso.py`), e

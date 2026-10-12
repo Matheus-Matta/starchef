@@ -16,14 +16,18 @@ part 'api_client_transport.dart';
 typedef TokensChanged = Future<void> Function(String access, String refresh);
 
 class ApiClient {
-  ApiClient({required this.baseUrlProvider, http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
+  ApiClient({
+    required this.baseUrlProvider,
+    http.Client? httpClient,
+    CloudFallback? cloudFallback,
+  }) : _http = httpClient ?? http.Client(),
+       cloudFallback = cloudFallback ?? CloudFallback();
 
   static const _timeout = Duration(seconds: 15);
   final String Function() baseUrlProvider;
 
   /// A nuvem como SEGUNDO servidor, quando o backend da loja não responde.
-  final CloudFallback cloudFallback = CloudFallback();
+  final CloudFallback cloudFallback;
 
   /// Ids que a nuvem criou ou devolveu com a loja fora (`afinidade_com_a_nuvem`).
   final AfinidadeComANuvem afinidade = AfinidadeComANuvem();

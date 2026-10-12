@@ -65,6 +65,7 @@ from apps.imports.views import ImportJobViewSet
 from apps.reports.cash_movements import CashMovementsReportView
 from apps.reports.coupons import CouponsReportView
 from apps.reports.product_costs import ProductCostsReportView
+from apps.restaurants.pdv_config import PdvConfigView
 from apps.reports.views import (
     DashboardReportView,
     OrdersReportView,
@@ -199,6 +200,7 @@ urlpatterns = [
     path("api/v1/auth/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("api/v1/auth/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("api/v1/auth/me/", MeView.as_view(), name="auth_me"),
+    path("api/v1/pdv/config/", PdvConfigView.as_view(), name="pdv_config"),
     path(
         "api/v1/auth/authorize-admin/",
         AdminAuthorizationView.as_view(),

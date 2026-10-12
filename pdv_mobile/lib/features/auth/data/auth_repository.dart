@@ -3,26 +3,37 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/storage/session_store.dart';
 import '../../../core/sync/operation_id.dart';
 import '../domain/waiter_session.dart';
+import 'login_pela_nuvem.dart';
 
 class AuthRepository {
-  AuthRepository({required this.api, required this.store});
+  AuthRepository({required this.api, required this.store, this.loginPelaNuvem});
 
   final ApiClient api;
   final SessionStorage store;
+
+  /// Login que pega na nuvem o IP server local do restaurante. Sem ele (os
+  /// testes), o login vai direto ao servidor configurado.
+  final LoginPelaNuvem? loginPelaNuvem;
 
   Future<WaiterSession> login({
     required String username,
     required String password,
   }) async {
-    final json = await api.post(
-      '/auth/login/',
-      body: {
-        'username': username.trim(),
-        'password': password,
-        'no_cookie': true,
-        'client': 'waiter_app',
-      },
-    );
+    final json =
+        await loginPelaNuvem?.entrar(
+          usuario: username,
+          senha: password,
+          extras: const {'client': 'waiter_app'},
+        ) ??
+        await api.post(
+          '/auth/login/',
+          body: {
+            'username': username.trim(),
+            'password': password,
+            'no_cookie': true,
+            'client': 'waiter_app',
+          },
+        );
     final user = _userFrom(json);
     if (user.restaurantId.isEmpty) {
       throw const ApiException(

@@ -18,6 +18,18 @@ class AppConfig {
   /// `.env`, e só então isto.
   static String get defaultApiBaseUrl => productionApiBaseUrl;
 
+  /// O IP SERVER NUVEM: fixo no build (api.starchef.com.br), nunca digitado.
+  ///
+  /// É por ele que o login pega o IP server local do restaurante
+  /// (`LoginPelaNuvem`). Um `--dart-define=API_BASE_URL` só existe para os
+  /// builds de teste apontarem para uma nuvem de teste.
+  static String get ipServerNuvem {
+    const definido = String.fromEnvironment('API_BASE_URL');
+    return _absoluteHttpUrl(definido)
+        ? normalizeApiBaseUrl(definido)
+        : productionApiBaseUrl;
+  }
+
   final String apiBaseUrl;
   final String? envFilePath;
 
