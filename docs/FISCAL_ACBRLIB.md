@@ -66,6 +66,23 @@ Tudo isso roda dentro da loja: com a internet fora, o backend da loja chama o
 comunicador da loja, e a nota sai em contingência offline (tpEmis=9) quando a
 SEFAZ não responde.
 
+### O simulador não se passa pela SEFAZ
+
+Com `ACBR_SIMULADOR=1` NENHUMA nota vai à SEFAZ: chave, protocolo e QR Code são
+inventados. Para ninguém tomar isso por emissão real:
+
+* a "autorização" vem com o motivo **"SIMULADO — sem valor fiscal (nenhuma
+  SEFAZ foi consultada)"**, e não com a frase da SEFAZ ("Autorizado o uso da
+  NF-e"), que ele imitava;
+* em **produção** (ambiente 1) ele **recusa**: a nota fica em erro dizendo que
+  a SEFAZ simulada não emite em produção. Antes autorizava, e na nuvem de teste
+  toda nota de "produção" saía emitida com um QR Code que não levava a lugar
+  nenhum.
+
+Emissão de verdade exige a `libacbrnfe64.so`, o certificado A1 da empresa, o
+CSC do ambiente e o emitente cadastrado na SEFAZ — com dados de demonstração a
+SEFAZ real recusa.
+
 ### A imagem no GitHub (`.github/workflows/fiscal_acbr.yml`)
 
 A Action gera `ghcr.io/matheus-matta/starchef-fiscal-acbr` no nosso GHCR:

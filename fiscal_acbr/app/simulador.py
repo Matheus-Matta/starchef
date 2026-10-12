@@ -4,6 +4,12 @@
 (sem comunicação), `lenta` (resposta perdida depois do envio) e `recusa`. A
 chave é calculada do INI do mesmo jeito que a SEFAZ faria — e do jeito que o
 backend calculou —, então o resto do sistema não percebe a diferença.
+
+O QUE ELE NUNCA FAZ é se passar pela SEFAZ de verdade. Respondia "Autorizado o
+uso da NF-e" — a frase real — e autorizava até em PRODUÇÃO: na nuvem de teste
+toda nota saía "emitida", com protocolo e QR Code que não levavam a lugar
+nenhum, e quem testava concluía que a emissão funcionava. Agora a resposta diz
+que é simulada, e produção é recusada.
 """
 import os
 from datetime import datetime
@@ -30,6 +36,21 @@ def chave_do_ini(texto, uf, cnpj):
     return f"{chave43}{_dv(chave43)}"
 
 
+#: O motivo da "autorização": diz o que ela é, para ninguém tomá-la por real.
+MOTIVO_SIMULADO = "SIMULADO — sem valor fiscal (nenhuma SEFAZ foi consultada)"
+
+PRODUCAO = "1"
+
+
+def _recusar_producao(pedido):
+    if str(getattr(pedido, "ambiente", "")) == PRODUCAO:
+        raise sefaz.FalhaDeConfiguracao(
+            "SEFAZ SIMULADA não emite em PRODUÇÃO: nenhuma nota foi enviada à SEFAZ. "
+            "Para emitir de verdade, instale a libacbrnfe64.so e tire o "
+            "ACBR_SIMULADOR=1 do serviço fiscal-acbr (docs/FISCAL_ACBRLIB.md)."
+        )
+
+
 class Simulador:
     nome = "simulador"
 
@@ -52,12 +73,13 @@ class Simulador:
         return self._autorizada(chave, xml_assinado)
 
     def _autorizada(self, chave, xml):
-        return {"situacao": "autorizada", "cstat": "100", "motivo": "Autorizado o uso da NF-e",
+        return {"situacao": "autorizada", "cstat": "100", "motivo": MOTIVO_SIMULADO,
                 "chave": chave, "protocolo": f"1{chave[-14:]}",
                 "recebido_em": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "xml": f"<nfeProc>{xml}<protNFe>{chave}</protNFe></nfeProc>"}
 
     def emitir(self, pedido):
+        _recusar_producao(pedido)
         chave = chave_do_ini(pedido.ini, pedido.uf, pedido.cnpj)
         assinado = f"<NFe Id=\"NFe{chave}\" tpEmis=\"{pedido.tp_emis}\"/>"
         if pedido.tp_emis == "9":
@@ -66,6 +88,7 @@ class Simulador:
         return self._transmitir(chave, assinado)
 
     def transmitir(self, pedido):
+        _recusar_producao(pedido)
         chave = pedido.xml.split('Id="NFe')[1][:44]
         return self._transmitir(chave, pedido.xml)
 
