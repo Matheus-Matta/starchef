@@ -63,7 +63,13 @@ class LocalSyncWorker:
             except Exception as erro:  # noqa: BLE001 — cair é esperado; desistir não
                 logger.warning("sync: sessão encerrada (%s). Reconectando…", erro)
             finally:
-                await conexao.close()
+                try:
+                    await conexao.close()
+                except Exception as erro:  # noqa: BLE001 — cair é esperado
+                    # O laço existe para nunca desistir; um erro AO FECHAR
+                    # escapava dele e terminava o processo, parando a
+                    # sincronização até alguém religar o contêiner.
+                    logger.warning("sync: erro ao fechar a conexão (%s)", erro)
 
             if self.once or self.parar.is_set():
                 break

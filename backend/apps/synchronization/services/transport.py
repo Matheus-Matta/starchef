@@ -132,6 +132,12 @@ class CloudConnection:
         if self.socket is not None:
             try:
                 await self.socket.close()
+            except Exception as erro:  # noqa: BLE001 — o socket já morreu
+                # Numa queda de rede o socket pode chegar aqui sem o laço de
+                # eventos, e o `close()` da biblioteca levanta AttributeError.
+                # Fechar o que já caiu não tem o que falhar: deixar o erro
+                # subir matava o sync_worker (test_fechar_conexao_caida).
+                logger.info("sync: conexão já estava fechada (%s)", erro)
             finally:
                 self.socket = None
                 self.authenticated.clear()
