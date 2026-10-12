@@ -22,6 +22,9 @@ def caminhos(monkeypatch, tmp_path):
     montada, embutida = tmp_path / "montada.so", tmp_path / "embutida.so"
     monkeypatch.setenv("ACBR_LIB_PATH", str(montada))
     monkeypatch.setenv("ACBR_LIB_EMBUTIDA", str(embutida))
+    # Instalação completa: a lib e a pasta dos Schemas da NF-e.
+    (tmp_path / "schemas-ok").mkdir()
+    monkeypatch.setenv("ACBR_SCHEMAS", str(tmp_path / "schemas-ok"))
     monkeypatch.setattr("app.acbrlib.AcbrLib", LibFalsa)
     return montada, embutida
 
@@ -60,3 +63,26 @@ def test_lib_que_nao_carrega_nao_derruba_o_comunicador(caminhos, monkeypatch):
 
     assert escolhido.nome == "ausente"
     assert "invalid ELF header" in escolhido.mensagem
+
+
+def test_lib_sem_os_schemas_avisa_antes_de_emitir(caminhos, monkeypatch, tmp_path):
+    """A ACBrLib valida o XML contra os Schemas da NF-e antes de enviar. Sem a
+    pasta, TODA nota falhava na validação com uma mensagem técnica; agora o
+    comunicador diz o que falta e onde pôr, antes de tentar."""
+    montada, _ = caminhos
+    montada.write_bytes(b"so")
+    monkeypatch.setenv("ACBR_SCHEMAS", str(tmp_path / "Schemas"))
+
+    escolhido = motor.criar_motor()
+
+    assert escolhido.nome == "ausente"
+    assert "Schemas" in escolhido.mensagem
+
+
+def test_lib_com_os_schemas_carrega(caminhos, monkeypatch, tmp_path):
+    montada, _ = caminhos
+    montada.write_bytes(b"so")
+    (tmp_path / "Schemas").mkdir()
+    monkeypatch.setenv("ACBR_SCHEMAS", str(tmp_path / "Schemas"))
+
+    assert motor.criar_motor().nome == "acbrlib"

@@ -66,6 +66,32 @@ Tudo isso roda dentro da loja: com a internet fora, o backend da loja chama o
 comunicador da loja, e a nota sai em contingência offline (tpEmis=9) quando a
 SEFAZ não responde.
 
+### O que vai em `acbr/libs` (loja, nuvem e nuvem de teste)
+
+Tudo da distribuição da ACBrLib NFe para Linux 64 bits:
+
+```text
+acbr/libs/
+├── libacbrnfe64.so      a biblioteca
+└── Schemas/             o conteúdo de Schemas/NFe da distribuição
+```
+
+Sem a `.so`, ou sem a pasta `Schemas`, o comunicador sobe "unhealthy" e toda
+nota fica em erro dizendo o que falta (`app/motor.py`). A configuração que a
+lib lê está em `fiscal_acbr/config/ACBrLib.ini`, conferida contra a fonte da
+ACBr (`ACBrDFeConfiguracoes.pas`): `[DFe]` com `UF`, `SSLCryptLib`,
+`SSLHttpLib`, `SSLXmlSignLib`, `DadosPFX` e `Senha`; `[NFe]` com `Ambiente`
+(0 = produção, 1 = homologação), `FormaEmissao`, `ModeloDF`, `IdCSC`, `CSC`,
+`VersaoQRCode`, `PathSchemas`. TLS 1.2 é o padrão da lib, e os endereços da
+SEFAZ de cada UF vêm embutidos nela (`IniServicos` vazio).
+
+**Dois modos, os dois de verdade**, escolhidos no cadastro fiscal do
+restaurante: **homologação** emite na SEFAZ de homologação, sem valor fiscal,
+para testar o cadastro e o sistema; **produção** emite a nota de verdade. Erro
+de cadastro, certificado ou SEFAZ fica gravado na nota, para corrigir e
+reenviar. O simulador (`ACBR_SIMULADOR=1`) é só dos testes automáticos e do
+par de teste de sincronização (`docker/loadtest`).
+
 ### O simulador não se passa pela SEFAZ
 
 Com `ACBR_SIMULADOR=1` NENHUMA nota vai à SEFAZ: chave, protocolo e QR Code são
