@@ -63,6 +63,7 @@ import '../../../core/input/pdv_input_router.dart';
 import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
+import '../data/forma_vizinha.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_cloud_banner.dart';
 import 'pdv_navigation_shell.dart';

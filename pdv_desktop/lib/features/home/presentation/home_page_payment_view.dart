@@ -313,6 +313,10 @@ mixin _PaymentView on _HomePageShared {
                     child: Column(
                       children: [
                         DropdownButtonFormField<String>(
+                          // A chave muda com a seleção: o campo guarda o valor
+                          // inicial, e sem isso ↑/↓ trocavam a forma sem a
+                          // tela mostrar.
+                          key: ValueKey('forma-$selectedPaymentMethod'),
                           initialValue: selectedPaymentMethod,
                           isExpanded: true,
                           isDense: true,

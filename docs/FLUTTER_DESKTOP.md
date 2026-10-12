@@ -81,6 +81,16 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore`. Windows usa o cofre do SO. No Linux, o Secret Service continua sendo a primeira opção, mas os valores também são espelhados em arquivos acessíveis somente ao usuário do PDV dentro de `~/.local/share/StarChef/secure`; isso evita perder a sessão quando GNOME Keyring/KWallet não está disponível no autostart.
 - **Restauração no boot**: tenta `GET /auth/me/` com o token salvo; em 401, tenta `POST /auth/refresh/`; se o refresh for explicitamente recusado, limpa o cofre e volta ao login. Se **não houver resposta nenhuma** (sem rede), devolve a sessão salva como está — decisão deliberada para o terminal continuar operando offline em vez de deslogar por falta de conexão.
 - **Venda nova zerada** (`_resetToNewSale` em `home_page.dart`): a mesma rotina depois de concluir o pagamento e em "Nova venda" limpa pedido, mesa, comanda, cliente, rascunho, recebimentos, valor e forma digitados, cupom, categoria e busca do catálogo (o campo é recriado vazio por `searchGeneration`) e devolve o foco à busca.
+- **Formas de pagamento da mais usada para a menos usada.** O PDV pede
+  `/payments/methods/?ordering=-uso,name`: `uso` é a contagem de recebimentos
+  APROVADOS dos últimos 90 dias (`backend/apps/payments/formas_por_uso.py`), e
+  a primeira da lista é a que a tela de pagamento já abre selecionada. As
+  duas consultas (catálogo e tela de pagamento) são idênticas, para dividir a
+  mesma entrada de cache.
+- **↑ e ↓ trocam a forma de pagamento** na tela de pagamento, dando a volta
+  nas pontas (`forma_vizinha.dart`). Valem com o cursor no campo do valor,
+  que não usa as setas (`PdvShortcut.insideTextField`); no campo do cupom as
+  setas continuam andando na lista de cupons (`textFieldOwnsArrows`).
 - **Carrinho só com o total.** Subtotal, taxa de serviço e desconto saíram do
   rodapé do carrinho: eles se decidem (e se mostram) na tela de pagamento, e
   ali roubavam espaço da lista de itens. O desconto é digitado na tela de
