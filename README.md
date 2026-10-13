@@ -110,7 +110,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Não publica PostgreSQL nem Redis para fora, executa migrations e `collectstatic` no start, roda com usuário não-root, e publica `backend`/`frontend` em HTTP puro só em loopback (127.0.0.1) por padrão. TLS, domínio e o proxy same-origin de `/api`/`/ws` são responsabilidade de um proxy reverso externo ao Compose (nginx do host, Caddy, LB da nuvem etc. — ver [`infra/reverse-proxy.example.conf`](infra/reverse-proxy.example.conf)).
+Não publica PostgreSQL nem Redis para fora, executa migrations e `collectstatic` no start, roda com usuário não-root, e publica `backend`/`frontend` em HTTP puro só em loopback (127.0.0.1). O tráfego público entra pelo `nginx` (portas 80/443), atrás da Cloudflare em SSL Full (strict): `api.starchef.com.br` → backend, `app.starchef.com.br` → frontend — ver [`nginx/README.md`](nginx/README.md).
 
 ## URLs úteis
 

@@ -240,7 +240,7 @@ produção**, 30 terminais com o mesmo usuário):
 | `apps/kitchen/station_views.py` `apply-template-rules` | Também escondido: a ação cria colunas e validava as regras contra a lista de colunas guardada pelo prefetch, de antes delas existirem. Agora carrega a estação sem prefetch |
 | Login (10/min por IP) | Todos os aparelhos da loja saem pelo mesmo IP: na troca de turno a loja inteira dividia dez tentativas. Agora é por IP + conta (10/min), com teto largo por IP (120/min) |
 | Refresh (30/min por IP) | Sem senha a adivinhar (exige refresh token válido): 300/min |
-| `infra/reverse-proxy.example.conf` | 30 r/s e 20 conexões **por IP = por loja**. Subiu para 300 r/s e 300 conexões; `nodelay` documentado como obrigatório — sem ele o nginx segura o excedente na fila e o sintoma é exatamente o pedido demorando um minuto, sem erro |
+| `nginx/nginx.conf` (era `infra/reverse-proxy.example.conf`) | 30 r/s e 20 conexões **por IP = por loja**. Subiu para 300 r/s e 300 conexões; `nodelay` documentado como obrigatório — sem ele o nginx segura o excedente na fila e o sintoma é exatamente o pedido demorando um minuto, sem erro |
 
 **O que a carga mostrou além do limite:** sem 429 nenhum, passar da
 capacidade dá o mesmo sintoma. A requisição espera conexão do pool, desiste

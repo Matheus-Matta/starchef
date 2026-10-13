@@ -377,7 +377,8 @@ redis             — cache + Channels layer + broker/result Celery
 backend           — gunicorn + UvicornWorker (ASGI), roda migrate + collectstatic no start
 celery_worker     — processa tasks (hoje, infraestrutura pronta sem jobs definidos)
 celery_beat       — agendador Celery
-frontend          — SPA (Vue) já embutido na imagem, servido em HTTP puro pelo `serve` (sem nginx)
+frontend          — SPA (Vue) já embutido na imagem, servido em HTTP puro pelo `serve`
+nginx             — portas 80/443 atrás da Cloudflare: api.starchef.com.br → backend, app.starchef.com.br → frontend
 ```
 
 `backend`, `celery_worker`, `celery_beat` e `frontend` usam as imagens publicadas em `ghcr.io/<owner>/starchef-{backend,frontend}` (ver [§12](#12-cicd)), sempre fixas em `:latest` (a última tag de release publicada) — nada é buildado no host. Subir:
@@ -387,22 +388,22 @@ docker compose pull
 docker compose up -d
 ```
 
-Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000). `backend` e `frontend` publicam porta em HTTP puro, só em loopback por padrão (`BACKEND_PORT`/`FRONTEND_PORT`, `BACKEND_BIND`/`FRONTEND_BIND` no `.env.example`) — **este compose não tem nginx nem TLS**.
+Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000). `backend` e `frontend` publicam porta em HTTP puro, só em loopback por padrão (`BACKEND_PORT`/`FRONTEND_PORT`, `BACKEND_BIND`/`FRONTEND_BIND` no `.env.example`) — o tráfego público entra pelo `nginx`.
 
 ### Fluxo de request em produção
 
-TLS, rate limiting por IP e o proxy same-origin ficam a cargo de um proxy reverso **externo** a este compose (nginx do host, Caddy, LB da nuvem etc. — ver [`infra/reverse-proxy.example.conf`](../infra/reverse-proxy.example.conf) como ponto de partida). O fluxo típico:
+TLS e rate limiting por IP ficam no serviço `nginx`, atrás da Cloudflare em SSL "Full (strict)" — configuração e instalação em [`nginx/`](../nginx/README.md), copiada para `/opt/nginx` no servidor. O fluxo:
 
-1. Cliente (browser ou app Flutter) → proxy reverso externo (TLS, rate limiting, mais restrito em `/auth/{login,refresh,password-reset}` e `/admin/login/`).
-2. O proxy repassa `/` pro `frontend` (SPA estático via `serve`), e `/api/`, `/ws/`, `/health/`, `/admin/`, `/static/`, `/media/` pro `backend` (gunicorn) — tudo no mesmo domínio (same-origin, exigido pelos cookies `SameSite=Lax`).
+1. Cliente (browser ou app Flutter) → Cloudflare → `nginx` (Origin Certificate, rate limiting mais restrito em `/auth/{login,refresh,password-reset}` e `/admin/login/`).
+2. `app.starchef.com.br` vai pro `frontend` (SPA via `serve`); `api.starchef.com.br` — `/api/`, `/ws/`, `/health/`, `/admin/`, `/static/`, `/media/` — pro `backend` (gunicorn). São hosts diferentes do mesmo site: os cookies `SameSite=Lax` valem, e o CORS/CSRF liberam `https://app.starchef.com.br`.
 3. `backend` roda Django em ASGI (`config.asgi:application`) via `UvicornWorker` — necessário porque HTTP e WebSocket (Channels) precisam do mesmo processo.
 4. Estáticos do Django (admin/DRF) são servidos pelo próprio app via WhiteNoise; mídia (uploads) é servida por um `re_path` de fallback em `config/urls.py` — nenhum dos dois depende de volume compartilhado com outro serviço.
 
-**Limite de confiança:** o backend confia em `X-Forwarded-Proto`/`X-Forwarded-For`/`Host` de quem se conectar nele (`SECURE_PROXY_SSL_HEADER`, `real_ip` de auditoria/throttle). Por isso a porta do backend não deve ficar acessível de fora do proxy reverso — por padrão ela só é publicada em loopback; se o proxy rodar em outra máquina, a porta liberada por firewall/security group deve ficar restrita ao IP dele.
+**Limite de confiança:** o backend confia em `X-Forwarded-Proto`/`X-Forwarded-For`/`Host` de quem se conectar nele (`SECURE_PROXY_SSL_HEADER`, `real_ip` de auditoria/throttle). Por isso a porta do backend só é publicada em loopback, e o tráfego de fora entra pelo `nginx`.
 
 ### Segurança em produção
 
-HSTS (30 dias + subdomínios + preload), `SECURE_SSL_REDIRECT`, cookies `Secure`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` — estes três últimos headers são adicionados pelo proxy reverso externo, não pelo Django (ver `infra/reverse-proxy.example.conf` e [`FRONTEND.md`](FRONTEND.md)). Rate limiting em duas camadas: IP no proxy externo + DRF throttle por usuário/rota.
+HSTS (30 dias + subdomínios + preload), `SECURE_SSL_REDIRECT`, cookies `Secure`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` — `nosniff` e `X-Frame-Options` vêm do `nginx` (`nginx/nginx.conf`). A CSP ainda NÃO está ligada: o painel chama ViaCEP, Cosmos, Google Fonts e o S3/R2, e uma CSP precisa listar cada um (ver `nginx/README.md`). Rate limiting em duas camadas: IP no `nginx` + DRF throttle por usuário/rota.
 
 ### Backup
 

@@ -105,7 +105,7 @@ Producao:
 
 - PostgreSQL gerenciado com backup PITR;
 - Redis gerenciado ou dedicado;
-- proxy reverso HTTP/WS externo ao Compose (nginx do host, Caddy, LB da nuvem etc. — ver `infra/reverse-proxy.example.conf`);
+- `nginx` no Compose (portas 80/443) atrás da Cloudflare em SSL Full (strict): `api.` → backend, `app.` → frontend (ver `nginx/README.md`);
 - Django rodando em ASGI com Daphne/Uvicorn;
 - Celery worker e beat separados;
 - Sentry ou equivalente para erros;

@@ -1,0 +1,4 @@
+# O certificado de origem e a chave NUNCA entram no Git: ficam só no
+# servidor, em /opt/nginx/certs. Este arquivo só mantém a pasta no repo.
+*
+!.gitignore

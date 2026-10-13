@@ -369,11 +369,11 @@ O `docker-compose.yml`:
 - executa migrations e coleta de estáticos;
 - inicia backend ASGI com Gunicorn/Uvicorn;
 - inicia worker e beat do Celery;
-- serve o SPA compilado via `serve` (sem nginx) e a mídia/estáticos direto pelo Django (WhiteNoise + fallback próprio);
-- publica `backend` e `frontend` em HTTP puro, só em loopback por padrão (`BACKEND_PORT`/`FRONTEND_PORT`);
+- serve o SPA compilado via `serve` e a mídia/estáticos direto pelo Django (WhiteNoise + fallback próprio);
+- sobe o `nginx` nas portas 80/443, atrás da Cloudflare: `api.starchef.com.br` → backend, `app.starchef.com.br` → frontend;
 - usa volumes para banco, Redis, mídia e estáticos.
 
-TLS, domínio e o proxy same-origin de `/api`/`/ws` são responsabilidade de um proxy reverso externo ao Compose (nginx do host, Caddy, LB da nuvem etc. — ver `infra/reverse-proxy.example.conf`), que deve repassar `X-Forwarded-Proto`/`X-Forwarded-For`/`Host` corretamente; a porta do backend não deve ficar acessível de fora dessa borda.
+O TLS é da Cloudflare em SSL "Full (strict)" até o `nginx`, com o Origin Certificate em `/opt/nginx/certs` — instalação em `nginx/README.md`. As portas de `backend`/`frontend` ficam só em loopback: o backend confia em `X-Forwarded-*`, e não deve ser alcançável sem passar pelo `nginx`.
 
 Antes de publicar, execute testes/builds, troque todas as credenciais e valide `/health/`, login, WebSockets e impressão. Backup do PostgreSQL não roda automático por padrão — ver `infra/scripts/backup_postgres.sh`.
 
