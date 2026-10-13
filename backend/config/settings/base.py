@@ -406,6 +406,11 @@ from config.settings import sync as _sync  # noqa: E402
 if _sync.SYNC_ENABLED:
     CELERY_BEAT_SCHEDULE.update(_sync.SYNC_BEAT_SCHEDULE)
 
+# Tique atrasado vence em vez de acumular (ver `agenda.py`).
+from config.settings.agenda import com_prazo  # noqa: E402
+
+com_prazo(CELERY_BEAT_SCHEDULE)
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         # Lê o JWT do header Authorization (compat) OU do cookie httpOnly.
