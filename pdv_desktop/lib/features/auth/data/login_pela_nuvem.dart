@@ -47,12 +47,18 @@ class LoginPelaNuvem {
     }
     final ipLocal = config?.ipLocal ?? (lerIpServerLocal() ?? '');
     final nuvem = (config?.nuvem ?? '').isEmpty ? ipServerNuvem : config!.nuvem;
+    // A sessão da nuvem vai JUNTO com a da loja: é com ela que o desvio fala
+    // com a nuvem (`api_client_nuvem.dart`).
+    final daNuvem = {
+      'cloud_access': config?.sessao['access'] ?? '',
+      'cloud_refresh': config?.sessao['refresh'] ?? '',
+    };
 
     if (ipLocal.isNotEmpty) {
       try {
         final naLoja = await _login(ipLocal, usuario, senha);
         await principal.updateBaseUrl(ipLocal);
-        return naLoja;
+        return {...naLoja, ...daNuvem};
       } on ApiException catch (erro) {
         // Senha recusada é a resposta do login: aparece. Só a loja FORA do
         // ar cai para a nuvem.
@@ -61,7 +67,12 @@ class LoginPelaNuvem {
     }
     final naNuvem = await _login(nuvem, usuario, senha);
     await principal.updateBaseUrl(nuvem);
-    return naNuvem;
+    // Logado NA nuvem: a sessão principal já é a dela.
+    return {
+      ...naNuvem,
+      'cloud_access': naNuvem['access'] ?? '',
+      'cloud_refresh': naNuvem['refresh'] ?? '',
+    };
   }
 
   /// Um cliente para UM servidor, SEM o desvio automático para a nuvem.
@@ -105,10 +116,8 @@ class LoginPelaNuvem {
 
   /// O primeiro login: (IP server local, nuvem informada) da `/pdv/config/`,
   /// ou null quando a nuvem não deu a config — e aí fica o padrão guardado.
-  Future<({String ipLocal, String nuvem})?> _config(
-    String usuario,
-    String senha,
-  ) async {
+  Future<({String ipLocal, String nuvem, Map<String, dynamic> sessao})?>
+  _config(String usuario, String senha) async {
     try {
       final sessao = await _login(ipServerNuvem, usuario, senha);
       final config = await _com(
@@ -119,6 +128,7 @@ class LoginPelaNuvem {
       return (
         ipLocal: '${config['ip_server_local'] ?? ''}'.trim(),
         nuvem: '${config['ip_server_nuvem'] ?? ''}'.trim(),
+        sessao: sessao,
       );
     } on Exception {
       return null;

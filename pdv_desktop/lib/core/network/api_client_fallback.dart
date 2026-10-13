@@ -32,7 +32,7 @@ extension ApiClientFallback on ApiClient {
   }) async {
     // Vencidos os 5 minutos na nuvem, um ping decide se o terminal volta.
     await cloudFallback.conferirSeVenceu(
-      () => ping(timeout: const Duration(seconds: 3)),
+      () => ping(timeout: const Duration(seconds: 5)),
     );
     if (cloudFallback.irDiretoParaANuvem(path)) {
       try {
@@ -87,7 +87,7 @@ extension ApiClientFallback on ApiClient {
       // um reinício de dois segundos do serviço não podem mudar o servidor do
       // terminal inteiro — muito menos para uma ESCRITA.
       final fora = await cloudFallback.confirmarQuedaDoLocal(
-        () => ping(timeout: const Duration(seconds: 3)),
+        () => ping(timeout: const Duration(seconds: 5)),
       );
       if (!fora) rethrow;
       try {
@@ -116,63 +116,4 @@ extension ApiClientFallback on ApiClient {
   /// A nuvem recusou o token: ele é da loja, e só ela o reconhece.
   static bool _sessaoRecusada(ApiException erro) =>
       erro.statusCode == 401 || erro.statusCode == 403;
-
-  /// A requisição repetida contra a nuvem.
-  ///
-  /// **Leva a MESMA chave de idempotência da tentativa na loja.** É a regra
-  /// que impede a duplicação: a loja volta, a fila do terminal reenvia a
-  /// operação, e a loja reconhece a chave — porque o registro de idempotência
-  /// desceu da nuvem pela sincronização. Uma chave nova a cada tentativa
-  /// transformaria cada desvio numa segunda venda.
-  ///
-  /// Requisição CRUA de propósito: sem recuperação de sessão e sem publicar
-  /// estado de rede. O token da loja não vale aqui — ele é assinado com a
-  /// `SECRET_KEY` daquela instalação —, então o que passa é o cabeçalho que
-  /// veio, e a nuvem aceita ou recusa. Uma tentativa de renovar sessão contra
-  /// a nuvem confundiria as duas credenciais.
-  Future<Map<String, dynamic>> _naNuvem(
-    String method,
-    String path, {
-    Map<String, dynamic>? query,
-    Map<String, dynamic>? body,
-    String? accessToken,
-    String? operationId,
-  }) async {
-    final uri = cloudFallback.enderecoPara(path, query);
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (accessToken != null) headers['Authorization'] = 'Bearer $accessToken';
-    if (operationId != null) headers['Idempotency-Key'] = operationId;
-    _addTerminalHeaders(headers);
-    try {
-      final pedido = http.Request(method, uri)..headers.addAll(headers);
-      if (body != null) pedido.body = jsonEncode(body);
-      final transmitida = await _client.send(pedido).timeout(requestTimeout);
-      final resposta = await http.Response.fromStream(transmitida);
-      ultimoServerTiming = resposta.headers['server-timing'];
-      final texto = resposta.bodyBytes.isEmpty
-          ? ''
-          : utf8.decode(resposta.bodyBytes, allowMalformed: true);
-      final decodificado = ApiClient._decodeBody(texto);
-      if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
-        throw ApiException(
-          decodificado == null
-              ? ApiClient._nonJsonErrorMessage(resposta.statusCode, texto)
-              : _messageFor(resposta.statusCode, decodificado),
-          statusCode: resposta.statusCode,
-          code: codigoDoErro(decodificado),
-          data: dadosDoErro(decodificado),
-        );
-      }
-      return decodificado ?? <String, dynamic>{};
-    } on ApiException {
-      rethrow;
-    } catch (error) {
-      // A nuvem não atendeu. Quem chamou volta a mostrar o erro da LOJA, que é
-      // onde o operador pode agir.
-      throw ApiException(
-        'A nuvem também não respondeu: $error',
-        isConnectivity: true,
-      );
-    }
-  }
 }

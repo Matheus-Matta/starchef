@@ -1,4 +1,5 @@
 import 'api_exception.dart';
+import 'sondas_da_loja.dart';
 import 'veredito_da_loja.dart';
 
 export 'server_origin.dart';
@@ -54,6 +55,8 @@ class CloudFallback {
     String? baseUrl,
     this.enabled = true,
     VereditoDaLoja? veredito,
+    this.sondasAntesDeDesviar = 3,
+    this.intervaloEntreSondas = const Duration(seconds: 2),
   }) : baseUrl = baseUrl ?? enderecoDaNuvem,
        veredito = veredito ?? VereditoDaLoja();
 
@@ -159,22 +162,17 @@ class CloudFallback {
   /// Esta rota está na lista do que nunca sai da loja?
   bool nuncaDesvia(String path) => caminhosQueNuncaDesviam.any(path.startsWith);
 
-  /// A loja está REALMENTE fora, ou foi uma falha isolada?
-  ///
-  /// Desviar na primeira falha é o erro clássico: um pacote perdido, um
-  /// reinício de dois segundos do serviço, e o terminal inteiro muda de
-  /// servidor — passando a escrever num banco que a loja não enxerga, por
-  /// causa de um soluço.
-  ///
-  /// `sonda` é o `/health/` do backend local, com prazo CURTO: aqui não se
-  /// espera o `timeout` inteiro, porque a pergunta é "tem alguém aí?", não
-  /// "processe isto".
-  ///
-  /// Confirmado que caiu, o veredito vale por [VereditoDaLoja.janela] — as
-  /// requisições seguintes vão direto, sem sondar de novo.
+  /// A loja está REALMENTE fora, ou foi uma falha isolada? Desviar na
+  /// primeira falha trocava o terminal de servidor por um soluço da rede: são
+  /// várias sondas seguidas ao `/health/` (`sondas_da_loja.dart`). Confirmado,
+  /// o veredito vale por [VereditoDaLoja.janela] e as seguintes vão direto.
   Future<bool> confirmarQuedaDoLocal(Future<bool> Function() sonda) async {
     if (localForaDoAr) return true;
-    final vivo = await sonda();
+    final vivo = await lojaRespondeuAlguma(
+      sonda,
+      vezes: sondasAntesDeDesviar,
+      intervalo: intervaloEntreSondas,
+    );
     if (vivo) {
       localRespondeu();
       return false;
@@ -182,6 +180,10 @@ class CloudFallback {
     veredito.marcarForaDoAr();
     return true;
   }
+
+  /// Sondas SEGUIDAS sem resposta para desviar, e a pausa entre elas.
+  final int sondasAntesDeDesviar;
+  final Duration intervaloEntreSondas;
 
   bool _naoChegouAoBackend(ApiException erro) =>
       erro.isConnectivity || statusSemBackend.contains(erro.statusCode);

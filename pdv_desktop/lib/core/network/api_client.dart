@@ -15,6 +15,7 @@ import 'response_cache.dart';
 import 'realtime_client.dart';
 
 part 'api_client_fallback.dart';
+part 'api_client_nuvem.dart';
 part 'api_client_repeticao.dart';
 
 /// Estado da ligação com o backend.
@@ -114,6 +115,22 @@ class ApiClient {
   /// rodar. Dado de outra origem sem aviso é pior que tela vazia — parece
   /// atual.
   ServerOrigin lastServerOrigin = ServerOrigin.loja;
+
+  /// A sessão da NUVEM, ao lado da da loja (`api_client_nuvem.dart`).
+  String _nuvemAccess = '';
+  String _nuvemRefresh = '';
+  Future<void> Function(String access, String refresh)? _aoRenovarANuvem;
+
+  /// Guarda a sessão da nuvem do segundo login (vazia = sem sessão lá).
+  void usarSessaoDaNuvem(
+    String access,
+    String refresh, {
+    Future<void> Function(String access, String refresh)? aoRenovar,
+  }) {
+    _nuvemAccess = access;
+    _nuvemRefresh = refresh;
+    _aoRenovarANuvem = aoRenovar;
+  }
 
   /// O `Server-Timing` da última resposta: quanto dela foi o SERVIDOR
   /// (banco e aplicação). O que faltar até o tempo medido aqui é caminho —
@@ -650,6 +667,7 @@ class ApiClient {
   }
 
   Future<void> clearSession() async {
+    usarSessaoDaNuvem('', '');
     _lastAccessToken = null;
     _activeScope = null;
     cache.clear();

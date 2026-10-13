@@ -3,30 +3,56 @@ class WaiterSession {
     required this.accessToken,
     required this.refreshToken,
     required this.user,
+    this.cloudAccessToken = '',
+    this.cloudRefreshToken = '',
   });
 
   final String accessToken;
   final String refreshToken;
   final WaiterUser user;
 
-  WaiterSession withTokens(String access, String refresh) =>
-      WaiterSession(accessToken: access, refreshToken: refresh, user: user);
+  /// A sessão da NUVEM, do segundo login: é a que vale quando a requisição
+  /// desvia para lá (o token da loja não é aceito na nuvem).
+  final String cloudAccessToken;
+  final String cloudRefreshToken;
+
+  WaiterSession withTokens(String access, String refresh) => WaiterSession(
+    accessToken: access,
+    refreshToken: refresh,
+    user: user,
+    cloudAccessToken: cloudAccessToken,
+    cloudRefreshToken: cloudRefreshToken,
+  );
+
+  WaiterSession withCloudTokens(String access, String refresh) => WaiterSession(
+    accessToken: accessToken,
+    refreshToken: refreshToken,
+    user: user,
+    cloudAccessToken: access,
+    cloudRefreshToken: refresh,
+  );
 
   WaiterSession withUser(WaiterUser novo) => WaiterSession(
     accessToken: accessToken,
     refreshToken: refreshToken,
     user: novo,
+    cloudAccessToken: cloudAccessToken,
+    cloudRefreshToken: cloudRefreshToken,
   );
 
   Map<String, dynamic> toJson() => {
     'access': accessToken,
     'refresh': refreshToken,
+    'cloud_access': cloudAccessToken,
+    'cloud_refresh': cloudRefreshToken,
     'user': user.toJson(),
   };
 
   static WaiterSession fromJson(Map<String, dynamic> json) => WaiterSession(
     accessToken: '${json['access'] ?? ''}',
     refreshToken: '${json['refresh'] ?? ''}',
+    cloudAccessToken: '${json['cloud_access'] ?? ''}',
+    cloudRefreshToken: '${json['cloud_refresh'] ?? ''}',
     user: WaiterUser.fromJson(
       Map<String, dynamic>.from(json['user'] as Map? ?? const {}),
     ),

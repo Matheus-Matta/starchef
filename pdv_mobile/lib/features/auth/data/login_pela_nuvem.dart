@@ -67,12 +67,18 @@ class LoginPelaNuvem {
     final config = await _config(login);
     final ipLocal = config?.ipLocal ?? (lerIpServerLocal() ?? '');
     final nuvem = (config?.nuvem ?? '').isEmpty ? ipServerNuvem : config!.nuvem;
+    // A sessão da nuvem vai JUNTO com a da loja: é com ela que o desvio fala
+    // com a nuvem (`api_client_nuvem.dart`).
+    final daNuvem = {
+      'cloud_access': config?.sessao['access'] ?? '',
+      'cloud_refresh': config?.sessao['refresh'] ?? '',
+    };
 
     if (ipLocal.isNotEmpty) {
       try {
         final naLoja = await login(ipLocal);
         await usarServidor(ipLocal);
-        return naLoja;
+        return {...naLoja, ...daNuvem};
       } on ApiException catch (erro) {
         // Senha recusada é a resposta do login: aparece. Só a loja FORA do
         // ar cai para a nuvem.
@@ -81,14 +87,18 @@ class LoginPelaNuvem {
     }
     final naNuvem = await login(nuvem);
     await usarServidor(nuvem);
-    return naNuvem;
+    // Logado NA nuvem: a sessão principal já é a dela.
+    return {
+      ...naNuvem,
+      'cloud_access': naNuvem['access'] ?? '',
+      'cloud_refresh': naNuvem['refresh'] ?? '',
+    };
   }
 
   /// O primeiro login: (IP server local, nuvem informada) da `/pdv/config/`,
   /// ou null quando a nuvem não deu a config — e aí fica o padrão guardado.
-  Future<({String ipLocal, String nuvem})?> _config(
-    Future<Map<String, dynamic>> Function(String base) login,
-  ) async {
+  Future<({String ipLocal, String nuvem, Map<String, dynamic> sessao})?>
+  _config(Future<Map<String, dynamic>> Function(String base) login) async {
     try {
       final sessao = await login(ipServerNuvem);
       final config = await cliente(
@@ -97,6 +107,7 @@ class LoginPelaNuvem {
       return (
         ipLocal: '${config['ip_server_local'] ?? ''}'.trim(),
         nuvem: '${config['ip_server_nuvem'] ?? ''}'.trim(),
+        sessao: sessao,
       );
     } on Exception {
       return null;

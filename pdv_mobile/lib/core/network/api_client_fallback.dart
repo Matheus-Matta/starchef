@@ -102,13 +102,14 @@ extension ApiClientFallback on ApiClient {
     }
   }
 
-  /// A loja está de pé? Prazo CURTO: a pergunta é "tem alguém aí?".
+  /// A loja está de pé? 5 s: curto, a pergunta é "tem alguém aí?", mas
+  /// não tanto que uma loja ocupada pareça fora.
   Future<bool> _lojaResponde() async {
     try {
       final uri = Uri.parse(
         '${baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '')}/health/',
       );
-      final resposta = await _http.get(uri).timeout(const Duration(seconds: 3));
+      final resposta = await _http.get(uri).timeout(const Duration(seconds: 5));
       return resposta.statusCode >= 200 && resposta.statusCode < 500;
     } catch (_) {
       return false;
@@ -118,41 +119,4 @@ extension ApiClientFallback on ApiClient {
   /// A nuvem recusou o token: ele é da loja, e só ela o reconhece.
   static bool _sessaoRecusada(ApiException erro) =>
       erro.statusCode == 401 || erro.statusCode == 403;
-
-  /// A requisição repetida contra a nuvem, com a MESMA chave de idempotência.
-  Future<Map<String, dynamic>> _naNuvem(
-    String method,
-    String path, {
-    Map<String, dynamic>? query,
-    Map<String, dynamic>? body,
-    String? accessToken,
-    String? idempotencyKey,
-  }) async {
-    final uri = cloudFallback.enderecoPara(path, query);
-    final pedido = http.Request(method, uri)
-      ..headers['accept'] = 'application/json';
-    if (accessToken?.isNotEmpty ?? false) {
-      pedido.headers['authorization'] = 'Bearer $accessToken';
-    }
-    _addTerminalHeaders(pedido);
-    if (idempotencyKey?.isNotEmpty ?? false) {
-      pedido.headers['Idempotency-Key'] = idempotencyKey!;
-    }
-    if (body != null) {
-      pedido.headers['content-type'] = 'application/json';
-      pedido.body = jsonEncode(body);
-    }
-    try {
-      final transmitida = await _http.send(pedido).timeout(ApiClient._timeout);
-      final resposta = await http.Response.fromStream(transmitida);
-      return decodeApiResponse(resposta.statusCode, resposta.body);
-    } on ApiException {
-      rethrow;
-    } catch (error) {
-      throw ApiException(
-        'A nuvem também não respondeu: $error',
-        isConnectivity: true,
-      );
-    }
-  }
 }

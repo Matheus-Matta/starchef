@@ -160,4 +160,22 @@ void main() {
     expect(sessao['access'], 'token-nuvem');
     expect(atual, nuvem);
   });
+
+  test('guarda as DUAS sessoes: a da loja e a da nuvem', () async {
+    // A da nuvem era descartada, e o desvio mandava o token da loja à
+    // nuvem: "credenciais inválidas" em toda tela com o garçom logado.
+    final sessao = await entrar();
+
+    expect(sessao['access'], 'token-loja');
+    expect(sessao['cloud_access'], 'token-nuvem');
+  });
+
+  test('logado na propria nuvem, a sessao da nuvem e a principal', () async {
+    ipDaConfig = '';
+
+    final sessao = await entrar();
+
+    expect(sessao['access'], 'token-nuvem');
+    expect(sessao['cloud_access'], 'token-nuvem');
+  });
 }

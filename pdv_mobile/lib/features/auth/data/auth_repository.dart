@@ -44,6 +44,8 @@ class AuthRepository {
       accessToken: '${json['access'] ?? ''}',
       refreshToken: '${json['refresh'] ?? ''}',
       user: user,
+      cloudAccessToken: '${json['cloud_access'] ?? ''}',
+      cloudRefreshToken: '${json['cloud_refresh'] ?? ''}',
     );
     await store.saveSession(session);
     return session;

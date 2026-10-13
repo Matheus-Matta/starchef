@@ -81,6 +81,7 @@ class AuthRepository {
             },
           );
       session = AuthSession.fromJson(json);
+      _usarSessaoDaNuvem(session);
     } on ApiException catch (error) {
       if (!error.isConnectivity) rethrow;
       throw ApiException(
@@ -101,6 +102,20 @@ class AuthRepository {
     // Baixa e guarda o hash da senha do caixa.
     await cashAuth?.trySync(session);
     return AuthLoginResult(session: session, offline: false);
+  }
+
+  /// Entrega ao cliente a sessão da NUVEM, para o desvio falar com ela com o
+  /// token dela; renovada lá, a nova vai para o cofre junto com a da loja.
+  void _usarSessaoDaNuvem(AuthSession session) {
+    apiClient.usarSessaoDaNuvem(
+      session.cloudAccessToken,
+      session.cloudRefreshToken,
+      aoRenovar: (access, refresh) async {
+        final atual = await sessionStore.read();
+        if (atual == null) return;
+        await sessionStore.save(atual.comNuvem(access, refresh));
+      },
+    );
   }
 
   /// Troca o refresh token por um novo access token (ver `SessionRefresher`).
@@ -159,12 +174,13 @@ class AuthRepository {
   /// Relê o perfil e devolve a sessão com os dados atualizados.
   Future<AuthSession> _identify(String accessToken, AuthSession base) async {
     final userData = await apiClient.get('/auth/me/', accessToken: accessToken);
-    final session = AuthSession(
-      accessToken: accessToken,
-      refreshToken: base.refreshToken,
-      user: AuthUser.fromJson(userData),
+    final session = base.comTokens(
+      accessToken,
+      base.refreshToken,
+      usuario: AuthUser.fromJson(userData),
     );
     await sessionStore.save(session);
+    _usarSessaoDaNuvem(session);
     await cashAuth?.trySync(session);
     return session;
   }

@@ -180,4 +180,13 @@ void main() {
 
     expect(entrar(), throwsA(isA<Exception>()));
   });
+
+  test('guarda as DUAS sessoes: a da loja e a da nuvem', () async {
+    // A da nuvem era descartada, e o desvio mandava o token da loja à
+    // nuvem: "credenciais inválidas" em toda tela com o caixa logado.
+    final (sessao, _) = await entrar(baseInicial: loja);
+
+    expect(sessao['access'], 'token-loja');
+    expect(sessao['cloud_access'], 'token-nuvem');
+  });
 }

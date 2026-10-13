@@ -11,6 +11,7 @@ import 'cloud_fallback.dart';
 import 'api_response.dart';
 
 part 'api_client_fallback.dart';
+part 'api_client_nuvem.dart';
 part 'api_client_transport.dart';
 
 typedef TokensChanged = Future<void> Function(String access, String refresh);
@@ -43,6 +44,11 @@ class ApiClient {
   String? _refreshToken;
   String? _terminalId;
   TokensChanged? _onTokensChanged;
+
+  /// A sessão da NUVEM, ao lado da da loja (`api_client_nuvem.dart`).
+  String? _nuvemAccess;
+  String? _nuvemRefresh;
+  TokensChanged? _onCloudTokensChanged;
   Future<bool>? _refreshInFlight;
 
   String get baseUrl => baseUrlProvider();
@@ -53,9 +59,15 @@ class ApiClient {
     required String refreshToken,
     required String terminalId,
     TokensChanged? onTokensChanged,
+    String cloudAccessToken = '',
+    String cloudRefreshToken = '',
+    TokensChanged? onCloudTokensChanged,
   }) {
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    _nuvemAccess = cloudAccessToken;
+    _nuvemRefresh = cloudRefreshToken;
+    _onCloudTokensChanged = onCloudTokensChanged;
     _terminalId = terminalId;
     _onTokensChanged = onTokensChanged;
   }
@@ -73,6 +85,9 @@ class ApiClient {
     _accessToken = null;
     _refreshToken = null;
     _onTokensChanged = null;
+    _nuvemAccess = null;
+    _nuvemRefresh = null;
+    _onCloudTokensChanged = null;
   }
 
   Future<Map<String, dynamic>> get(

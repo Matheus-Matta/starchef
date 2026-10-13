@@ -28,6 +28,8 @@ class SecureSessionStore implements SessionStore {
   static const _accessKey = 'starchef_access_token';
   static const _refreshKey = 'starchef_refresh_token';
   static const _userKey = 'starchef_user';
+  static const _cloudAccessKey = 'starchef_cloud_access';
+  static const _cloudRefreshKey = 'starchef_cloud_refresh';
   final SecureValueStore _storage;
   AuthSession? _initialSession;
 
@@ -37,6 +39,8 @@ class SecureSessionStore implements SessionStore {
       _storage.write(_accessKey, session.accessToken),
       _storage.write(_refreshKey, session.refreshToken),
       _storage.write(_userKey, jsonEncode(session.user.toJson())),
+      _storage.write(_cloudAccessKey, session.cloudAccessToken),
+      _storage.write(_cloudRefreshKey, session.cloudRefreshToken),
     ]);
   }
 
@@ -50,12 +54,17 @@ class SecureSessionStore implements SessionStore {
         _storage.read(_accessKey),
         _storage.read(_refreshKey),
         _storage.read(_userKey),
+        _storage.read(_cloudAccessKey),
+        _storage.read(_cloudRefreshKey),
       ]);
-      if (values.any((value) => value == null)) return null;
+      if (values.take(3).any((value) => value == null)) return null;
       return AuthSession(
         accessToken: values[0]!,
         refreshToken: values[1]!,
         user: AuthUser.fromJson(jsonDecode(values[2]!) as Map<String, dynamic>),
+        // Instalação anterior às duas sessões: sem a da nuvem, e tudo bem.
+        cloudAccessToken: values[3] ?? '',
+        cloudRefreshToken: values[4] ?? '',
       );
     } catch (_) {
       return null;
@@ -68,6 +77,8 @@ class SecureSessionStore implements SessionStore {
       _storage.delete(_accessKey),
       _storage.delete(_refreshKey),
       _storage.delete(_userKey),
+      _storage.delete(_cloudAccessKey),
+      _storage.delete(_cloudRefreshKey),
     ]);
   }
 }

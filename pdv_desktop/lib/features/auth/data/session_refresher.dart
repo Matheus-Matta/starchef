@@ -50,12 +50,11 @@ class SessionRefresher {
         statusCode: 401,
       );
     }
-    final refreshed = AuthSession(
-      accessToken: access,
-      refreshToken: '${json['refresh'] ?? ''}'.isEmpty
+    final refreshed = current.comTokens(
+      access,
+      '${json['refresh'] ?? ''}'.isEmpty
           ? current.refreshToken
           : '${json['refresh']}',
-      user: current.user,
     );
     try {
       await sessionStore.save(refreshed).timeout(const Duration(seconds: 5));

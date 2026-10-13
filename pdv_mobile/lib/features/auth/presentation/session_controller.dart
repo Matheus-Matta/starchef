@@ -98,6 +98,14 @@ class SessionController extends ChangeNotifier {
         _session = current.withTokens(access, refresh);
         await store.saveSession(_session!);
       },
+      cloudAccessToken: session.cloudAccessToken,
+      cloudRefreshToken: session.cloudRefreshToken,
+      onCloudTokensChanged: (access, refresh) async {
+        final current = _session;
+        if (current == null) return;
+        _session = current.withCloudTokens(access, refresh);
+        await store.saveSession(_session!);
+      },
     );
   }
 

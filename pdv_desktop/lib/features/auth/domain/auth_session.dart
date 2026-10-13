@@ -3,21 +3,51 @@ class AuthSession {
     required this.accessToken,
     required this.refreshToken,
     required this.user,
+    this.cloudAccessToken = '',
+    this.cloudRefreshToken = '',
   });
 
   final String accessToken;
   final String refreshToken;
   final AuthUser user;
 
+  /// A sessão da NUVEM, do segundo login: a que vale quando a requisição
+  /// desvia para lá (o token da loja não é aceito na nuvem).
+  final String cloudAccessToken;
+  final String cloudRefreshToken;
+
   factory AuthSession.fromJson(Map<String, dynamic> json) => AuthSession(
     accessToken: json['access'] as String,
     refreshToken: json['refresh'] as String,
     user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
+    cloudAccessToken: '${json['cloud_access'] ?? ''}',
+    cloudRefreshToken: '${json['cloud_refresh'] ?? ''}',
+  );
+
+  /// A mesma sessão com outro par de tokens DA LOJA; a da nuvem segue junto.
+  AuthSession comTokens(String access, String refresh, {AuthUser? usuario}) =>
+      AuthSession(
+        accessToken: access,
+        refreshToken: refresh,
+        user: usuario ?? user,
+        cloudAccessToken: cloudAccessToken,
+        cloudRefreshToken: cloudRefreshToken,
+      );
+
+  /// A mesma sessão com outro par de tokens DA NUVEM.
+  AuthSession comNuvem(String access, String refresh) => AuthSession(
+    accessToken: accessToken,
+    refreshToken: refreshToken,
+    user: user,
+    cloudAccessToken: access,
+    cloudRefreshToken: refresh,
   );
 
   Map<String, dynamic> toJson() => {
     'access': accessToken,
     'refresh': refreshToken,
+    'cloud_access': cloudAccessToken,
+    'cloud_refresh': cloudRefreshToken,
     'user': user.toJson(),
   };
 }
