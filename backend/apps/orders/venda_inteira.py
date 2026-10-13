@@ -84,8 +84,9 @@ def _pedido(restaurant, user, order_id, dados):
 
 def _itens(pedido, user, linhas):
     from apps.menu.models import Product
-    from apps.orders.services import add_order_item
+    from apps.orders.services import add_order_item, recalculate_order
 
+    lancados = 0
     for linha in linhas:
         item_id = uuid_do_aparelho.ler(linha.get("id"), "item")
         if item_id is None:
@@ -104,8 +105,12 @@ def _itens(pedido, user, linhas):
             addons=linha.get("addons") or [], customer_note=linha.get("customer_note") or "",
             scale_reading=leitura_da_balanca(pedido, linha.get("scale_reading")),
             weight_kg=linha.get("weight_kg"), expected_unit_price=linha.get("expected_unit_price"),
-            metafields=linha.get("metafields"),
+            metafields=linha.get("metafields"), recalcular=False,
         )
+        lancados += 1
+    # O total é projeção dos itens: uma vez no fim, e não uma por item.
+    if lancados:
+        recalculate_order(pedido)
 
 
 def _comandas(pedido, user, comandas, nova, vistas=None):

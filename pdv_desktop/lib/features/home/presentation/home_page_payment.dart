@@ -343,7 +343,9 @@ mixin _PaymentSection on _HomePageShared {
       await _refreshOrder();
       registeredPayments = await _loadRegisteredPayments();
     }
-    if (touchedCash) await _refreshCashSession();
+    // O saldo da gaveta é só exibição: relido em segundo plano, não segura a
+    // próxima venda. Esperá-lo era mais uma ida ao servidor no "Finalizar".
+    if (touchedCash) unawaited(_refreshCashSession());
     if (mounted) setState(() {});
     return true;
   }
@@ -362,6 +364,7 @@ mixin _PaymentSection on _HomePageShared {
         },
         accessToken: token,
       );
+      if (mounted) setState(() {});
     } on ApiException {
       // O recebimento já foi registrado; a atualização geral tenta de novo.
     }

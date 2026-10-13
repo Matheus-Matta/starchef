@@ -152,7 +152,11 @@ mixin _OrderSection on _HomePageShared {
     // recebimentos — um envio só, em vez de criar, lançar item a item, fechar
     // e pagar em chamadas separadas que uma troca loja/nuvem partia ao meio.
     var simulando = _draftIsLive;
+    // O fechamento vai na PRIMEIRA simulação (`fechamento_inicial.dart`):
+    // eram duas idas ao servidor antes de a tela de pagamento abrir.
+    if (simulando) draft.fechamento = fechamentoInicial();
     if (simulando && !await _simularVenda()) {
+      draft.fechamento = null;
       // A recusa abriu a conta onde a comanda já estava: se ela está em
       // aberto, o caixa segue para pagá-la; paga, fica só aberta na tela.
       final aberta =
@@ -177,8 +181,8 @@ mixin _OrderSection on _HomePageShared {
     final fiscalCnpj = cnpjDigits(activeOrder?['fiscal_customer_cnpj']);
     final couponCode = '${activeOrder?['coupon_code'] ?? ''}'.trim();
     if (simulando) {
-      // Taxa, CPF e cupom vão no envio da conclusão; aqui o servidor só
-      // recalcula o total com eles, ainda sem gravar.
+      // Taxa, CPF e cupom vão no envio da conclusão: os da prévia, que o
+      // servidor já calculou com o padrão do pedido — sem simular de novo.
       draft.fechamento = {
         'discount': activeOrder?['discount'] ?? 0,
         'service_fee_enabled': chargeService,
@@ -186,7 +190,6 @@ mixin _OrderSection on _HomePageShared {
         'fiscal_customer_cnpj': fiscalCnpj,
         'coupon_code': couponCode,
       };
-      if (!await _simularVenda()) return;
       await _paymentDialog();
       return;
     }
