@@ -75,6 +75,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Antes de tudo, para medir tudo: Server-Timing em toda resposta e a
+    # requisição lenta no log, separando banco de aplicação.
+    "apps.core.tempo_da_requisicao.TempoDaRequisicaoMiddleware",
     # O mais externo: qualquer erro sob /api/ (view, middleware ou 404 HTML do
     # Django) sai no envelope {success, status_code, error}.
     "apps.core.envelope.ApiErrorEnvelopeMiddleware",
@@ -92,6 +95,9 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.TenantResponseSafetyMiddleware",
 ]
+
+#: Acima disto (ms) a requisição vai para o log (`apps/core/tempo_da_requisicao.py`).
+REQUISICAO_LENTA_MS = config("REQUISICAO_LENTA_MS", default=500, cast=int)
 
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"

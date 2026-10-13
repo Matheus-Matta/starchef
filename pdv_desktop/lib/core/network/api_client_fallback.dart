@@ -137,6 +137,7 @@ extension ApiClientFallback on ApiClient {
       if (body != null) pedido.body = jsonEncode(body);
       final transmitida = await _client.send(pedido).timeout(requestTimeout);
       final resposta = await http.Response.fromStream(transmitida);
+      ultimoServerTiming = resposta.headers['server-timing'];
       final texto = resposta.bodyBytes.isEmpty
           ? ''
           : utf8.decode(resposta.bodyBytes, allowMalformed: true);

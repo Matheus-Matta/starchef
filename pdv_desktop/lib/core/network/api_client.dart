@@ -115,6 +115,11 @@ class ApiClient {
   /// atual.
   ServerOrigin lastServerOrigin = ServerOrigin.loja;
 
+  /// O `Server-Timing` da última resposta: quanto dela foi o SERVIDOR
+  /// (banco e aplicação). O que faltar até o tempo medido aqui é caminho —
+  /// rede, Cloudflare, nginx, troca loja/nuvem.
+  String? ultimoServerTiming;
+
   String _baseUrl;
   String get baseUrl => _baseUrl;
   final http.Client _client;
@@ -356,6 +361,7 @@ class ApiClient {
         ? null
         : (repeticoes.chaveDe(assinatura) ?? _nextOperationId());
     final relogio = Stopwatch()..start();
+    ultimoServerTiming = null;
     final result = await _comChaveLembrada(
       assinatura,
       operationId,
@@ -402,6 +408,8 @@ class ApiClient {
         'rota': path,
         'ms': ms,
         'origem': lastServerOrigin.name,
+        // `total;dur=` daqui contra o `ms` acima separa servidor de caminho.
+        'servidor': ultimoServerTiming ?? 'sem resposta do servidor',
       },
     );
   }
@@ -516,6 +524,7 @@ class ApiClient {
       if (body != null) request.body = jsonEncode(body);
       final streamed = await _client.send(request).timeout(requestTimeout);
       final response = await http.Response.fromStream(streamed);
+      ultimoServerTiming = response.headers['server-timing'];
       // O CÓDIGO DE STATUS VEM PRIMEIRO. Decodificar antes de olhar o status
       // fazia uma resposta de erro sem JSON — a página HTML de um 502 do
       // proxy, ou um 500 do Django — estourar `FormatException` e virar um
