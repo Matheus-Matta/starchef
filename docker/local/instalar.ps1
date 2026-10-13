@@ -81,6 +81,7 @@ $defaults = [ordered]@{
     REDIS_MEM_LIMIT='256m'; REDIS_MAXMEMORY='192mb'; BACKEND_MEM_LIMIT='1g'
     CELERY_WORKER_MEM_LIMIT='768m'; CELERY_BEAT_MEM_LIMIT='256m'; SYNC_WORKER_MEM_LIMIT='512m'
     FRONTEND_MEM_LIMIT='256m'; PROXY_MEM_LIMIT='128m'
+    CELERY_WORKER_CPUS='1.0'; CELERY_BEAT_CPUS='0.25'
 }
 foreach ($chave in $defaults.Keys) { Padrao $chave $defaults[$chave] }
 Gravar-Valor 'SYNC_ENABLED' 'true'
@@ -104,9 +105,9 @@ Segredo-Se-Faltar DJANGO_SECRET_KEY 48
 Segredo-Se-Faltar DJANGO_FIRST_ACCESS_TOKEN 24
 Segredo-Se-Faltar SYNC_METRICS_TOKEN 32
 Segredo-Se-Faltar ACBRLIB_TOKEN 32
-# Onde a libacbrnfe64.so do emissor fiscal fica (docs/FISCAL_ACBRLIB.md).
-# Criada aqui para o Docker não a criar como root na primeira subida.
-New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'acbr/libs') | Out-Null
+# A ACBrLib do emissor fiscal em acbr\libs, baixada e conferida pelo SHA-256.
+# A pasta é criada aqui também para o Docker não a criar como root.
+. (Join-Path $PSScriptRoot 'instalar-acbrlib.ps1')
 
 if (-not (Ler-Valor 'STARCHEF_VERSION')) {
     $versao = Read-Host 'Versão da imagem StarChef [latest]'

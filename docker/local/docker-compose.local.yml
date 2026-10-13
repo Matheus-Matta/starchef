@@ -178,6 +178,10 @@ services:
   celery_worker:
     <<: *backend-base
     mem_limit: ${CELERY_WORKER_MEM_LIMIT:-768m}
+    # Teto de CPU: trabalho de fundo não pode tirar a CPU do backend que o
+    # caixa usa. Na nuvem, sem ele, um acúmulo de tarefas segurou 300% e as
+    # telas passaram a responder em 1,5 s.
+    cpus: ${CELERY_WORKER_CPUS:-1.0}
     # As filas `sync.*` entram junto com a default: numa loja não compensa um
     # processo por fila, e o volume é baixo. Fila vazia não custa nada.
     command: >
@@ -191,6 +195,7 @@ services:
   celery_beat:
     <<: *backend-base
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
+    cpus: ${CELERY_BEAT_CPUS:-0.25}
     command: celery -A config beat -l info
     depends_on:
       backend:
@@ -233,8 +238,9 @@ services:
   # (`acbrlib/provider.py`). O comunicador não guarda configuração nenhuma —
   # uma loja com dois restaurantes emite cada nota com os dados do dela.
   #
-  # A libacbrnfe64.so (Projeto ACBr, licença própria) não vem na imagem: fica
-  # em ./acbr/libs. Sem ela o serviço sobe assim mesmo, fica "unhealthy" no
+  # A libacbrnfe64.so e os Schemas da NF-e (Projeto ACBr, licença própria) não
+  # vêm na imagem: o instalador os baixa para ./acbr/libs, conferindo o SHA-256
+  # (`instalar-acbrlib.sh`). Sem eles o serviço sobe assim mesmo, fica "unhealthy" no
   # `docker ps` e responde ao caixa "ACBrLib não instalada" com a providência.
   # Nunca simula: nota de mentira é pior que nota nenhuma.
   #

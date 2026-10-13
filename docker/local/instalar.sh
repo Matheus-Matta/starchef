@@ -68,7 +68,7 @@ for chave in POSTGRES_DB:starchef_local POSTGRES_USER:starchef \
   IMAGE_UPLOAD_MAX_BYTES:8388608 RLS_ENABLED:false \
   POSTGRES_MEM_LIMIT:1g REDIS_MEM_LIMIT:256m REDIS_MAXMEMORY:192mb \
   BACKEND_MEM_LIMIT:1g CELERY_WORKER_MEM_LIMIT:768m CELERY_BEAT_MEM_LIMIT:256m \
-  SYNC_WORKER_MEM_LIMIT:512m FRONTEND_MEM_LIMIT:256m PROXY_MEM_LIMIT:128m; do
+  SYNC_WORKER_MEM_LIMIT:512m FRONTEND_MEM_LIMIT:256m PROXY_MEM_LIMIT:128m   CELERY_WORKER_CPUS:1.0 CELERY_BEAT_CPUS:0.25; do
   chave_nome=${chave%%:*}
   chave_valor=${chave#*:}
   default "$chave_nome" "$chave_valor"
@@ -123,9 +123,9 @@ segredo_se_faltar DJANGO_SECRET_KEY 48
 segredo_se_faltar DJANGO_FIRST_ACCESS_TOKEN 24
 segredo_se_faltar SYNC_METRICS_TOKEN 32
 segredo_se_faltar ACBRLIB_TOKEN 32
-# Onde a libacbrnfe64.so do emissor fiscal fica (docs/FISCAL_ACBRLIB.md).
-# Criada aqui para o Docker não a criar como root na primeira subida.
-mkdir -p acbr/libs
+# A ACBrLib do emissor fiscal em acbr/libs, baixada e conferida pelo SHA-256.
+# A pasta é criada aqui também para o Docker não a criar como root.
+. ./instalar-acbrlib.sh
 if [ -z "$(ler STARCHEF_VERSION)" ]; then
   printf 'Versão da imagem StarChef [latest]: '
   read -r versao || versao=""

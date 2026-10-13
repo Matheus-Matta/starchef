@@ -85,7 +85,7 @@ certificado. **Restrinja as portas 80 e 8000 no firewall** à faixa da loja.
 | `sync_worker` | A conexão WSS com a nuvem, sempre habilitada pelo instalador. |
 | `postgres` | O banco da loja. A fonte da verdade local. |
 | `redis` | Cache, canal do Channels e broker do Celery. |
-| `fiscal-acbr` | O emissor de NFC-e/NF-e da loja (provedor "ACBrLib"), que emite inclusive sem internet. Precisa da `libacbrnfe64.so` em `acbr/libs` (sem ela fica "unhealthy" e o caixa vê "ACBrLib não instalada"). Ver `docs/FISCAL_ACBRLIB.md`. |
+| `fiscal-acbr` | O emissor de NFC-e/NF-e da loja (provedor "ACBrLib"), que emite inclusive sem internet. Precisa da `libacbrnfe64.so` e dos Schemas em `acbr/libs`: o instalador os baixa de `ACBRLIB_PACOTE_URL` e só instala se a lib conferir com `ACBRLIB_SO_SHA256` (`instalar-acbrlib.sh`/`.ps1`). Sem eles fica "unhealthy" e o caixa vê "ACBrLib não instalada". Ver `docs/FISCAL_ACBRLIB.md`. |
 
 ## Dia a dia
 
