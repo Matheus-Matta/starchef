@@ -104,11 +104,18 @@ void main() {
     expect(await press([LogicalKeyboardKey.enter]), [PdvAction.confirm]);
   });
 
-  test('F4 paga e barra leva à pesquisa do catálogo', () async {
-    expect(await press([LogicalKeyboardKey.f4, LogicalKeyboardKey.slash]), [
+  test('F4 paga e F2 leva à pesquisa do catálogo', () async {
+    expect(await press([LogicalKeyboardKey.f4, LogicalKeyboardKey.f2]), [
       PdvAction.payment,
       PdvAction.focusSearch,
     ]);
+  });
+
+  test('a barra NAO e atalho: o leitor de comanda a digita no meio do QR', () async {
+    // Um QR com endereço ("https://.../c/12") chega como teclas; a "/" no
+    // meio levava o cursor à busca e o resto do código caía nela, travando
+    // a leitura da comanda.
+    expect(await press([LogicalKeyboardKey.slash]), isEmpty);
   });
 
   test(

@@ -287,14 +287,10 @@ abstract final class PdvShortcuts {
       trigger: ShortcutTrigger(LogicalKeyboardKey.escape, label: 'Esc'),
       group: 'Navegação',
     ),
-    PdvShortcut(
-      id: PdvAction.focusSearch,
-      label: 'Focar a busca (alternativo)',
-      description: 'Mesma ação do F2.',
-      trigger: ShortcutTrigger(LogicalKeyboardKey.slash, label: '/'),
-      screens: {PdvScreen.order, PdvScreen.orders, PdvScreen.context},
-      group: 'Navegação',
-    ),
+    // A "/" NÃO é atalho: o leitor de comanda digita o QR como teclas, e um
+    // QR com endereço ("https://.../c/12") trazia a barra no meio — o cursor
+    // ia para a busca e o resto do código caía nela, travando a leitura.
+    // F2 e Ctrl + F levam à busca.
     PdvShortcut(
       id: PdvAction.focusSearch,
       label: 'Focar a busca (Ctrl + F)',
