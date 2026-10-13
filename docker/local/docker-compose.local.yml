@@ -25,6 +25,16 @@
 # Sem TLS de propósito: o acesso é pela rede interna do restaurante, e não há
 # domínio público para emitir certificado. Restrinja a porta no firewall do
 # host à faixa interna da loja.
+#
+# CPU e memória, para um servidor de loja de 2 vCPU e 4 GB, com o Postgres na
+# MESMA máquina: o BACKEND (que o caixa espera) e o BANCO não têm teto e têm a
+# maior prioridade (`cpu_shares` 2048 e 1536). O trabalho de fundo tem teto
+# (`cpus`) e prioridade baixa: na disputa o backend leva 8 fatias para cada
+# uma do Celery, e com ele parado o Celery usa a sobra até o próprio teto.
+#
+# Os padrões ficam AQUI, e não no `.env.local`: um valor gravado lá vence este,
+# e foi assim que um worker ficou com o dobro de processos sem ninguém ver.
+# Para outro tamanho de máquina, defina *_CPUS, *_SHARES ou *_MEM_LIMIT lá.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -85,6 +95,9 @@ x-backend-base: &backend-base
     # cadastro fiscal do restaurante escolhe o provedor ACBrLib.
     ACBRLIB_URL: http://fiscal-acbr:8001
     ACBRLIB_TOKEN: ${ACBRLIB_TOKEN:-}
+    # 3 processos em 2 vCPU: o padrão do gunicorn.conf.py (2 x CPU + 1) dava 5,
+    # que não cabem no limite de memória do backend. Só o backend o lê.
+    GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
   volumes:
     - backend_media:/app/media
     - backend_static:/app/staticfiles
@@ -108,6 +121,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    cpu_shares: ${POSTGRES_CPU_SHARES:-1536}
     logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-starchef_local}
@@ -178,11 +192,11 @@ services:
 
   celery_worker:
     <<: *backend-base
-    mem_limit: ${CELERY_WORKER_MEM_LIMIT:-768m}
+    mem_limit: ${CELERY_WORKER_MEM_LIMIT:-640m}
     # Teto de CPU: trabalho de fundo não pode tirar a CPU do backend que o
     # caixa usa. Na nuvem, sem ele, um acúmulo de tarefas segurou 300% e as
     # telas passaram a responder em 1,5 s.
-    cpus: ${CELERY_WORKER_CPUS:-1.0}
+    cpus: ${CELERY_WORKER_CPUS:-0.75}
     # Prioridade baixa: na disputa, o backend (que o caixa espera) vence.
     cpu_shares: ${CELERY_WORKER_SHARES:-256}
     # As filas `sync.*` entram junto com a default: numa loja não compensa um
@@ -197,8 +211,8 @@ services:
 
   celery_beat:
     <<: *backend-base
-    mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
-    cpus: ${CELERY_BEAT_CPUS:-0.25}
+    mem_limit: ${CELERY_BEAT_MEM_LIMIT:-192m}
+    cpus: ${CELERY_BEAT_CPUS:-0.2}
     cpu_shares: ${CELERY_BEAT_SHARES:-128}
     command: celery -A config beat -l info
     depends_on:
@@ -207,7 +221,10 @@ services:
 
   sync_worker:
     <<: *backend-base
-    mem_limit: ${SYNC_WORKER_MEM_LIMIT:-512m}
+    mem_limit: ${SYNC_WORKER_MEM_LIMIT:-384m}
+    # A conexão com a nuvem: fundo, mas é ela que entrega a venda lá.
+    cpus: ${SYNC_WORKER_CPUS:-0.5}
+    cpu_shares: ${SYNC_WORKER_SHARES:-512}
     # Com a sincronização DESLIGADA o `sync_worker` aborta — e com `restart:
     # unless-stopped` o Docker o religaria em laço para sempre, enchendo o log.
     # Então ele só roda quando ligada; desligada, o container fica parado de
@@ -253,6 +270,9 @@ services:
     image: "${ACBR_IMAGE:-ghcr.io/matheus-matta/starchef-fiscal-acbr:${STARCHEF_VERSION}}"
     restart: unless-stopped
     mem_limit: ${ACBR_MEM_LIMIT:-256m}
+    # A nota sai depois da venda, em segundo plano: teto para não disputar
+    # com o caixa.
+    cpus: ${ACBR_CPUS:-0.5}
     logging: *default-logging
     environment:
       ACBRLIB_TOKEN: ${ACBRLIB_TOKEN:-}
@@ -270,7 +290,8 @@ services:
   frontend:
     image: "${FRONTEND_IMAGE:-ghcr.io/matheus-matta/starchef-frontend:${STARCHEF_VERSION}}"
     restart: unless-stopped
-    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-128m}
+    cpus: ${FRONTEND_CPUS:-0.25}
     logging: *default-logging
     environment:
       # Mesma origem: o navegador fala com o proxy, que manda /api para o
