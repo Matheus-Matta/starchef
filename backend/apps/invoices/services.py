@@ -20,6 +20,7 @@ from django.utils.dateparse import parse_datetime
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
+from apps.invoices.emissao_da_loja import avancar_contador, serie_desta_emissao
 from apps.invoices.emission_secrets import segredos_de
 from apps.customers.validators import is_valid_cnpj, is_valid_cpf, strip_cnpj, strip_cpf
 from apps.invoices.fiscal import (
@@ -583,7 +584,8 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
                 # repetidos em 200 emissões com 4 caixas (test_numeracao_concorrente).
                 # Ordem fixa pedido → configuração em toda emissão: sem deadlock.
                 config = FiscalConfig.objects.select_for_update().get(pk=config.pk)
-                number = _proximo_numero_livre(config)
+                serie, contador = serie_desta_emissao(order, config)
+                number = _proximo_numero_livre(config, serie, contador)
                 # O CSC pode não estar gravado aqui: a loja não recebe segredo de
                 # emissão pela sincronização. Resolvido UMA vez por emissão — o
                 # empréstimo tem cache em memória, mas duas chamadas seriam duas
@@ -595,7 +597,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
                     emission_date=emission_dt,
                     cnpj=config.cnpj,
                     model=config.document_model,
-                    series=config.series,
+                    series=serie,
                     number=number,
                 )
                 qr_data = build_nfce_qrcode(
@@ -621,7 +623,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
                 invoice.branch = config.branch  # a filial cuja FiscalConfig realmente emitiu a nota.
                 invoice.phase = Invoice.PHASE_FISCAL
                 invoice.document_model = config.document_model
-                invoice.series = config.series
+                invoice.series = serie
                 invoice.number = str(number)
                 invoice.environment = config.environment
                 invoice.crt = config.crt
@@ -684,8 +686,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
             _mark_failed(invoice, FAILURE_REJECTION, _incomplete_profile_message(profile_issues))
             invoice.issued_at = emission_dt
             invoice.save()
-            config.next_number = number + 1
-            config.save(update_fields=["next_number", "updated_at"])
+            avancar_contador(config, contador, number)
             record_audit(
                 action=AuditLog.ACTION_CREATED,
                 instance=invoice,
@@ -729,8 +730,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
         invoice.issued_at = emission_dt
         invoice.save()
 
-        config.next_number = number + 1
-        config.save(update_fields=["next_number", "updated_at"])
+        avancar_contador(config, contador, number)
 
         record_audit(
             action=AuditLog.ACTION_CREATED,
@@ -812,8 +812,11 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
             return locked
 
 
-def _proximo_numero_livre(config):
+def _proximo_numero_livre(config, serie=None, contador="next_number"):
     """O próximo número que AINDA NÃO FOI USADO nesta série e ambiente.
+
+    `serie`/`contador` são os da loja por padrão; a nuvem que divide a emissão
+    com a loja numera na série e no contador dela (`emissao_da_loja.py`).
 
     `config.next_number` sozinho era um voto de confiança: qualquer coisa que
     mexesse no contador sem olhar as notas já gravadas — restauração de
@@ -839,21 +842,22 @@ def _proximo_numero_livre(config):
     usados = set(
         Invoice.all_objects.filter(
             branch_id=config.branch_id,
-            series=config.series,
+            series=config.series if serie is None else serie,
             document_model=config.document_model,
             environment=config.environment,
         )
         .exclude(number="")
         .values_list("number", flat=True)
     )
-    numero = config.next_number
+    inicio = getattr(config, contador)
+    numero = inicio
     while str(numero) in usados:
         numero += 1
-    if numero != config.next_number:
+    if numero != inicio:
         logging.getLogger(__name__).warning(
             "Numeracao fiscal pulou de %s para %s: os numeros no meio ja estavam "
             "gravados nesta serie/ambiente.",
-            config.next_number,
+            inicio,
             numero,
         )
     return numero

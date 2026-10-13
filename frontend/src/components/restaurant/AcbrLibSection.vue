@@ -32,12 +32,16 @@
         <small>{{ config.offline_contingency && isNfce ? "Ligada" : "Desligada" }}</small>
       </div>
     </div>
+
+    <AcbrPontosDeEmissao :config="config" @update-field="(c, v) => emit('update-field', c, v)" />
   </section>
 </template>
 
 <script setup>
 import { computed } from "vue";
 import InputSwitch from "primevue/inputswitch";
+
+import AcbrPontosDeEmissao from "./AcbrPontosDeEmissao.vue";
 
 // A contingência offline é decisão da empresa (o documento emitido não se
 // apaga) e só existe para NFC-e — ver docs/FISCAL_ACBRLIB.md.

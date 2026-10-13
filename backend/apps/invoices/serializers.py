@@ -94,6 +94,7 @@ class FiscalConfigSerializer(TenantModelSerializer):
         read_only_fields = [
             *AUDIT_READ_ONLY_FIELDS,
             "next_number",
+            "cloud_next_number",
             "focus_company_id",
             "focus_sync_status",
             "focus_sync_error",
@@ -181,6 +182,12 @@ class FiscalConfigSerializer(TenantModelSerializer):
         )
         if erros_locais:
             raise serializers.ValidationError(erros_locais)
+
+        from apps.invoices.emissao_da_loja import erro_da_serie_da_nuvem
+
+        erro_serie = erro_da_serie_da_nuvem(attrs, self.instance)
+        if erro_serie:
+            raise serializers.ValidationError({"cloud_series": erro_serie})
 
         document_model = attrs.get("document_model", getattr(self.instance, "document_model", FiscalConfig.MODEL_NFCE))
         if provider == FiscalConfig.PROVIDER_FOCUS_NFE and document_model == FiscalConfig.MODEL_SAT:

@@ -136,8 +136,9 @@ não derruba o container: ele sobe "unhealthy" e diz o motivo.
 O `fiscal-acbr` também sobe sempre na nuvem, sem perfil. Os quatro serviços
 da imagem do backend recebem `ACBRLIB_URL=${ACBRLIB_URL:-http://fiscal-acbr:8001}`:
 o valor do `.env` vale; vazio, vale o emissor da própria nuvem. A lib fica em
-`./acbr/libs` (fora do git). A nuvem emite só para conta sem servidor de loja
-(`emissao_da_loja.py`): venda de loja é emitida pela loja.
+`./acbr/libs` (fora do git). A nuvem emite para conta sem servidor de loja; com
+loja, só a venda feita na nuvem e só com "A nuvem também emite" ligado
+(`emissao_da_loja.py`, ver "Loja e nuvem emitindo ao mesmo tempo").
 
 ### Homologação e produção
 
@@ -303,6 +304,40 @@ restaurante sem configuração fiscal e documento enviado com tipo errado pela A
   que emite sozinha quando o pedido pago chegar (`emitir_pagos_sem_nota`). Dois
   emissores com a mesma série produziriam números repetidos. Conta só-nuvem
   (sem servidor local) emite pela ACBrLib da nuvem normalmente.
+
+### Loja e nuvem emitindo ao mesmo tempo
+
+No cadastro fiscal do restaurante (seção ACBrLib), **A nuvem também emite**
+(`FiscalConfig.cloud_emission`, desligado por padrão) faz a nuvem emitir as
+vendas feitas NELA, numa **série só dela** (`cloud_series`, com contador
+próprio `cloud_next_number`, que não viaja). Quem emite cada venda:
+
+| Venda | Desligado (padrão) | Ligado |
+|---|---|---|
+| feita na loja | loja, série da loja | loja, série da loja |
+| feita na nuvem (pedido ≥ 1.000.000) | loja, quando o pedido chega | **nuvem, série da nuvem** |
+
+"Feita na nuvem" é o pedido na faixa da nuvem (`orders/sequence_ranges.py`).
+A loja deixa de varrer esses pedidos (`emitir_pagos_sem_nota`): eles chegam
+pagos e ainda sem nota — a nota vem atrás — e varrê-los daria duas notas.
+
+**Por que série separada, e não trocar o último número pela sincronização
+(ou por WebSocket).** Funcionaria só com os dois lados conectados. A nuvem
+emite justamente quando a loja está fora — e aí nenhum dos dois enxerga o
+contador do outro: a loja em contingência offline e a nuvem entregariam o
+mesmo número. Série diferente não colide nunca, online ou offline, sem fila
+distribuída nem trava entre servidores. A SEFAZ aceita várias séries no mesmo
+CNPJ (é o normal: uma por ponto de emissão).
+
+O que continua igual em cada ponto: uma emissão por vez (trava do cadastro,
+`select_for_update`), o pulo de número já visto numa nota sincronizada
+(`_proximo_numero_livre`) e as notas viajando nos dois sentidos — o painel dos
+dois lados mostra as duas séries.
+
+A série da nuvem é obrigatória e diferente da série da loja: o serializer
+responde 400 e o banco tem a trava (`fiscal_config_serie_da_nuvem_distinta`)
+para o que não passa por ele (admin, shell). Ao ligar em produção, confira na
+SEFAZ que a série escolhida não tem uso anterior.
 
 ## Teste no par Docker (loja ⇄ nuvem)
 

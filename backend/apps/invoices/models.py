@@ -165,6 +165,11 @@ class FiscalConfig(TenantModel):
     crt = models.CharField(max_length=1, choices=CRT_CHOICES, default=CRT_SIMPLES)
     series = models.PositiveIntegerField(default=1)
     next_number = models.PositiveIntegerField(default=1, help_text="Proximo numero sequencial (nNF).")
+    # ACBrLib com loja: a nuvem tambem emite a venda feita nela, numa serie so
+    # dela. Contador compartilhado nao serve: offline os dois repetiriam numero.
+    cloud_emission = models.BooleanField(default=False, help_text="A nuvem tambem emite as vendas feitas nela.")
+    cloud_series = models.PositiveIntegerField(null=True, blank=True, help_text="Serie da nuvem (diferente da loja).")
+    cloud_next_number = models.PositiveIntegerField(default=1, help_text="Proximo numero da serie da nuvem.")
     # Desligada por padrao: emitir em contingencia e decisao da empresa, e um
     # documento emitido nao se apaga. So vale para NFC-e (modelo 65).
     offline_contingency = models.BooleanField(
@@ -289,6 +294,13 @@ class FiscalConfig(TenantModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["branch"], condition=models.Q(deleted_at__isnull=True), name="unique_fiscal_config_by_branch"),
+            # A mesma serie nos dois pontos e numero repetido na SEFAZ. A trava
+            # e do banco: o admin e o shell nao passam pelo serializer.
+            models.CheckConstraint(
+                condition=models.Q(cloud_emission=False)
+                | (models.Q(cloud_series__isnull=False) & ~models.Q(cloud_series=models.F("series"))),
+                name="fiscal_config_serie_da_nuvem_distinta",
+            ),
         ]
 
     def __str__(self):

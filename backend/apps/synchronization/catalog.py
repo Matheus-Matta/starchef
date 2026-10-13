@@ -92,7 +92,8 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, dependencies
    # `next_number` é de quem EMITE: com "vence o mais novo", uma edição do
    # cadastro na nuvem trazia o contador velho de volta e a próxima nota da loja
    # (ACBrLib) repetia número. Cada nó guarda o seu (docs/FISCAL_ACBRLIB.md).
-   local_only_fields=("local_fiscal_url", "next_number"))
+   # `cloud_next_number` idem: é o contador da série que só a nuvem emite.
+   local_only_fields=("local_fiscal_url", "next_number", "cloud_next_number"))
 
 # 4. Funções, permissões e usuários. Sessão autenticada nunca sincroniza.
 # `permission` NÃO sincroniza — ver `decisions.py`. É catálogo global
