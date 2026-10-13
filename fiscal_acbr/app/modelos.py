@@ -23,6 +23,8 @@ class Contexto(BaseModel):
     ambiente: str = "2"  # 1 = produção, 2 = homologação
     uf: str
     cnpj: str
+    # O fuso do dhEmi ("-03:00"). Vazio = backend antigo: vale o do container.
+    fuso: str = ""
     certificado: Certificado = Certificado()
     csc: Csc = Csc()
 

@@ -85,6 +85,18 @@ def _identificacao(documento, invoice, tp_emis, contingencia):
     return campos
 
 
+def fuso_acbr():
+    """O fuso em que `data_acbr` escreve as datas, como a ACBrLib quer: "-03:00".
+
+    A data vai ao INI sem fuso, e a lib o acrescenta. Sem ele explícito, ela
+    usava o do container (UTC) e a NFC-e saía três horas "atrasada" (704).
+    """
+    from django.utils import timezone
+
+    bruto = timezone.localtime().strftime("%z")
+    return f"{bruto[:3]}:{bruto[3:]}"
+
+
 def data_acbr(valor):
     """Data no formato do INI da ACBrLib: `dd/mm/aaaa hh:mm:ss`, horário local."""
     from datetime import datetime

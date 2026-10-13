@@ -25,6 +25,16 @@ _DIGEST = re.compile(r"<DigestValue>(.*?)</DigestValue>", re.S)
 _CHAVE = re.compile(r'Id="NFe(\d{44})"')
 
 
+
+def fuso_local():
+    """O fuso do container no formato da ACBrLib: "-03:00" (6 caracteres)."""
+    import time
+
+    if hasattr(time, "tzset"):  # relê o TZ do ambiente (só existe no Unix)
+        time.tzset()
+    bruto = time.strftime("%z")  # "-0300"
+    return f"{bruto[:3]}:{bruto[3:]}"
+
 class AcbrLib:
     nome = "acbrlib"
 
@@ -64,6 +74,11 @@ class AcbrLib:
             ("NFe", "CSC"): pedido.csc.token,
             ("NFe", "VersaoQRCode"): "2",
             ("NFe", "FormaEmissao"): FORMA_EMISSAO.get(tp_emis, "0"),
+            # O dhEmi chega SEM fuso; deixado à lib, ela lia o do sistema (UTC
+            # no container) e a nota das 22:36 de Brasília saía +00:00 — três
+            # horas "atrasada", rejeição 704. 2 = tzManual (ACBrUtil.DateTime).
+            ("DFe", "TimeZone.Modo"): "2",
+            ("DFe", "TimeZone.Str"): pedido.fuso or fuso_local(),
         }
         for (secao, chave), valor in valores.items():
             self._ok(self.lib.NFE_ConfigGravarValor(self.handle, _c(secao), _c(chave), _c(valor or "")))

@@ -16,7 +16,17 @@ WORKDIR /app
 # libxml2 + OpenSSL: assinatura e validação; fontconfig/fontes: impressão do DANFE.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libxml2 openssl ca-certificates libfontconfig1 fontconfig fonts-dejavu-core tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # A ACBrLib abre "libxml2.so", sem versão, e o pacote só traz o .so.2 (o
+    # nome curto é do libxml2-dev). Sem o atalho a lib carrega e o /health
+    # responde 200, mas a ASSINATURA do XML falha na primeira nota.
+    && ln -sf "$(ls /usr/lib/*-linux-gnu/libxml2.so.2 | head -n 1)" /usr/lib/libxml2.so \
+    && ldconfig \
+    # O fuso do SISTEMA também, onde a ACBrLib o procura (/etc/timezone, que
+    # dizia Etc/UTC). O comunicador já o grava a cada nota (TimeZone.Str):
+    # isto é a segunda defesa contra a nota sair em UTC (rejeição 704).
+    && ln -sf /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime \
+    && echo America/Sao_Paulo > /etc/timezone
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

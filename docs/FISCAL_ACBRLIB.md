@@ -55,12 +55,35 @@ sem ninguém ter pedido faria a loja "emitir" notas que nunca existiram na SEFAZ
 
 O serviço `fiscal-acbr` faz parte do compose da loja e **sobe sempre**, sem
 perfil: o backend já recebe `ACBRLIB_URL=http://fiscal-acbr:8001` fixo no
-compose, e o instalador gera o `ACBRLIB_TOKEN` e cria `docker/local/acbr/libs`.
-Para emitir, só falta:
+compose, e o instalador gera o `ACBRLIB_TOKEN` e **instala a lib sozinho**
+(`instalar-acbrlib.sh`/`.ps1`): baixa o pacote de `ACBRLIB_PACOTE_URL`, confere
+a `libacbrnfe64.so` contra `ACBRLIB_SO_SHA256` e põe a lib e os `.xsd` de
+`Schemas/NFe` em `docker/local/acbr/libs`. Lib que não confere não é instalada
+(aviso, sem derrubar a instalação); lib já instalada e conferida não é baixada
+de novo. Link do MediaFire é aceito: o direto muda a cada visita e é lido da
+página do arquivo. Para emitir, só falta escolher o provedor **ACBrLib** no
+cadastro fiscal do restaurante.
 
-1. copiar a `libacbrnfe64.so` para `docker/local/acbr/libs` e rodar
-   `docker compose --env-file .env.local -f docker-compose.local.yml restart fiscal-acbr`;
-2. no painel, escolher o provedor **ACBrLib** no cadastro fiscal do restaurante.
+Lib atual: ACBrLibNFe 1.5.0.488 (SVN trunk2 r48608, `Linux-x86_64-MT`), exige
+glibc 2.34+ (a imagem é Debian 12, glibc 2.36), SHA-256
+`deec61a921b830516ad3d7f5833aee7cb69603391eb497e649296ecc5522b3f0`. Compilada
+com `export ACBR_HOME=<fontes>` e `lazbuild --build-all
+--build-mode=Linux-x86_64-MT --ws=nogui --no-write-project
+Projetos/ACBrLib/Fontes/NFe/ACBrLibNFeConsoleMT.lpi` — sem o `ACBR_HOME` o
+projeto não acha `ACBr.inc` nem `synachar`.
+
+A lib abre `libxml2.so` (sem versão) para assinar o XML, e o Debian só traz o
+`libxml2.so.2`. A imagem cria o atalho (`fiscal_acbr/Dockerfile`): sem ele o
+`/health` responde 200 com a lib carregada, mas a primeira nota falha na
+assinatura.
+
+**O fuso do `dhEmi` vai explícito.** O INI leva a data sem fuso (horário de
+Brasília) e a ACBrLib acrescenta o fuso — lido de `/etc/timezone`, que no
+container dizia `Etc/UTC`. A NFC-e das 22:36 saía `22:36:00+00:00` (19:36 em
+Brasília) e a SEFAZ recusava com **704 — Data-Hora de emissão atrasada**. Agora
+o backend manda `fuso` no contexto (`ini.fuso_acbr()`) e o comunicador grava
+`[DFe] TimeZone.Modo=2` (manual) e `TimeZone.Str` a cada chamada; a imagem
+também acerta `/etc/timezone` para `America/Sao_Paulo`.
 
 Tudo isso roda dentro da loja: com a internet fora, o backend da loja chama o
 comunicador da loja, e a nota sai em contingência offline (tpEmis=9) quando a

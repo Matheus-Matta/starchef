@@ -171,3 +171,11 @@ def test_retransmissao_envia_o_mesmo_xml_sem_refazer_a_chave(ambiente, monkeypat
     assert rota == "/v1/nfe/transmitir" and corpo["xml"] == XML
     assert chave_impressa == "3" * 44  # a do cupom, até a SEFAZ responder
     assert nota.status == Invoice.STATUS_ISSUED
+
+
+def test_o_fuso_do_dhemi_vai_explicito_para_o_comunicador():
+    """A data vai ao INI sem fuso e a ACBrLib acrescentava o do container (UTC):
+    a NFC-e das 22:36 de Brasília saía +00:00, três horas "atrasada" (704)."""
+    from apps.invoices.acbrlib.ini import fuso_acbr
+
+    assert fuso_acbr() == "-03:00"

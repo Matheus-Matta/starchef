@@ -141,6 +141,7 @@ class AcbrLibProvider(DocumentoFiscal, FiscalProvider):
         return {
             "referencia": str(invoice.pk), "modelo": str(invoice.document_model or config.document_model),
             "ambiente": str(invoice.environment or config.environment), "uf": emitente.uf,
+            "fuso": ini.fuso_acbr(),
             "cnpj": only_digits(emitente.cnpj),
             "certificado": {"pfx_base64": segredos.certificate_base64,
                             "senha": segredos.certificate_password},
