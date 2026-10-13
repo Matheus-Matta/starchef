@@ -880,7 +880,7 @@ class OrderViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="print")
     def print_order(self, request, pk=None):
         from apps.printers.models import Printer
-        from apps.printers.services import printer_payload, register_print_job
+        from apps.printers.services import html_do_trabalho, printer_payload, register_print_job
 
         order = self.get_object()
         printer = None
@@ -911,7 +911,8 @@ class OrderViewSet(BaseTenantViewSet):
         return Response(
             {
                 "print_job_id": str(job.id),
-                "html": job.html_content,
+                # Gerado agora, se o recibo nasceu só com o texto.
+                "html": html_do_trabalho(job),
                 # O agente local usa payload.text_content (e barcode/QR) como
                 # texto pronto pro cupom termico; sem isso ele caia pro
                 # conversor generico de HTML, que nao entende tabela e gruda

@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from apps.core.access import has_role_at_least
 from apps.core.audit import record_audit
+from apps.core.lote import atualizar_em_lote
 from apps.core.models import AuditLog
 from apps.core.numbers import (
     MAX_QUANTITY,
@@ -559,7 +560,8 @@ def send_order_to_kitchen(order, user, *, client_batch_serial=None, offline_prin
             item.batch = batch
             item.sent_to_kitchen_at = None
             item.updated_by = user
-            item.save(update_fields=["status", "batch", "sent_to_kitchen_at", "updated_by", "updated_at"])
+        # Uma gravação para a rodada inteira (`core/lote.py`), não uma por item.
+        atualizar_em_lote(OrderItem, items, ["status", "batch", "sent_to_kitchen_at", "updated_by", "updated_at"])
 
         order.updated_by = user
         order.save(update_fields=["updated_by", "updated_at"])
@@ -702,7 +704,8 @@ def dispatch_kitchen_batch(batch, *, now=None):
         for item in items:
             item.status = OrderItem.STATUS_SENT
             item.sent_to_kitchen_at = now
-            item.save(update_fields=["status", "sent_to_kitchen_at", "updated_at"])
+        atualizar_em_lote(OrderItem, items, ["status", "sent_to_kitchen_at", "updated_at"])
+        for item in items:
             transaction.on_commit(
                 lambda current=item: broadcast_kitchen_event(
                     current.account_id,

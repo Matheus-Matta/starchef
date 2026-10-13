@@ -10,7 +10,7 @@ from unittest import mock
 import pytest
 from django.db.models.signals import post_save
 
-from apps.core.lote import criar_em_lote
+from apps.core.lote import atualizar_em_lote, criar_em_lote
 from apps.core.models import AuditLog
 
 pytestmark = pytest.mark.django_db
@@ -55,3 +55,23 @@ def test_a_sincronizacao_recebe_cada_registro(account):
             mock.patch("apps.synchronization.signals._sincronizavel", return_value=True):
         criar_em_lote(AuditLog, [_auditoria(account, n) for n in range(3)])
     assert registrar.call_count == 3
+
+
+def test_atualizar_em_lote_e_um_update_so_com_o_post_save_de_cada(account, django_assert_num_queries):
+    objetos = criar_em_lote(AuditLog, [_auditoria(account, n) for n in range(4)])
+    for objeto in objetos:
+        objeto.reason = "revisado"
+    recebidos = []
+
+    def receptor(sender, instance, created, update_fields, **kwargs):
+        recebidos.append((created, update_fields))
+
+    post_save.connect(receptor, sender=AuditLog, dispatch_uid="teste-atualizar")
+    try:
+        with django_assert_num_queries(1):
+            atualizar_em_lote(AuditLog, objetos, ["reason", "updated_at"])
+    finally:
+        post_save.disconnect(dispatch_uid="teste-atualizar", sender=AuditLog)
+
+    assert AuditLog.all_objects.filter(entity="Teste", reason="revisado").count() == 4
+    assert recebidos == [(False, frozenset({"reason", "updated_at"}))] * 4

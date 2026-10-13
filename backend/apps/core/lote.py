@@ -15,6 +15,7 @@ de `StockMovement`) precisa fazer o mesmo antes de chamar.
 """
 from django.db import router
 from django.db.models.signals import post_save
+from django.utils import timezone
 
 
 def criar_em_lote(modelo, objetos):
@@ -28,3 +29,25 @@ def criar_em_lote(modelo, objetos):
         post_save.send(sender=modelo, instance=objeto, created=True, update_fields=None,
                        raw=False, using=banco)
     return criados
+
+
+def atualizar_em_lote(modelo, objetos, campos):
+    """`save(update_fields=campos)` de cada um, numa gravação só.
+
+    `bulk_update` não roda o `auto_now`: o `updated_at` (que a sincronização
+    usa como versão) é posto aqui, igual para todos, quando está nos campos.
+    """
+    objetos, campos = list(objetos), list(campos)
+    if not objetos:
+        return []
+    if "updated_at" in campos:
+        agora = timezone.now()
+        for objeto in objetos:
+            objeto.updated_at = agora
+    banco = router.db_for_write(modelo)
+    modelo._base_manager.using(banco).bulk_update(objetos, campos)
+    alterados = frozenset(campos)
+    for objeto in objetos:
+        post_save.send(sender=modelo, instance=objeto, created=False, update_fields=alterados,
+                       raw=False, using=banco)
+    return objetos

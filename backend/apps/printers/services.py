@@ -465,7 +465,13 @@ def register_print_job(
                 return claimed
 
         barcode = _order_command_barcode(order)
-        html = render_print_html(
+        texto = (
+            _customer_receipt_text(order) if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL} else ""
+        )
+        # Com o texto pronto, o HTML fica para quando for pedido
+        # (`html_do_trabalho`): quem imprime lê o texto, e gerá-lo custava
+        # ~0,19 s da conclusão da venda. Sem texto, o HTML é o que se imprime.
+        html = "" if texto else render_print_html(
             order,
             job_type,
             establishment=_establishment_info(order),
@@ -490,9 +496,7 @@ def register_print_job(
                 # nenhuma mudanca no cliente.
                 "payload_version": 2,
                 "barcode": {"symbology": barcode["symbology"], "value": barcode["value"]},
-                "text_content": (
-                    _customer_receipt_text(order) if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL} else ""
-                ),
+                "text_content": texto,
             },
             html_content=html,
             printed_by=user,
@@ -501,6 +505,26 @@ def register_print_job(
         )
         record_audit(action=AuditLog.ACTION_PRINTED, instance=job, actor=user, metadata={"job_type": job_type})
         return job
+
+
+def html_do_trabalho(job):
+    """O HTML do trabalho, gerado agora se ele nasceu só com o texto.
+
+    A pré-visualização é o único leitor do HTML de um recibo: ele é montado
+    na primeira vez que é pedido e fica guardado.
+    """
+    if job.html_content or not job.order_id:
+        return job.html_content
+    order = job.order
+    with tenant_context(order.account):
+        job.html_content = render_print_html(
+            order,
+            job.job_type,
+            establishment=_establishment_info(order),
+            barcode=_order_command_barcode(order),
+        )
+    job.save(update_fields=["html_content", "updated_at"])  # save, não update: sincroniza
+    return job.html_content
 
 
 def _kitchen_quantity(value):
