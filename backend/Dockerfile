@@ -57,7 +57,12 @@ COPY . /app
 # copia o dono junto ao inicializar o volume.
 RUN adduser --disabled-password --gecos "" --uid 1000 appuser \
     && mkdir -p /app/media/sync_tmp /app/staticfiles /app/sync \
-    && chown -R appuser:appuser /app     && chmod +x /app/docker-entrypoint.sh
+    && chown -R appuser:appuser /app \
+    && sed -i 's/\r$//' /app/docker-entrypoint.sh \
+    && chmod +x /app/docker-entrypoint.sh
+# O `sed` acima: construida no Windows, a copia do script vem com CRLF, e o
+# Linux le "#!/bin/sh" + CR como um interpretador que nao existe ("exec
+# /app/docker-entrypoint.sh: no such file or directory", e o container sai).
 
 EXPOSE 8000
 

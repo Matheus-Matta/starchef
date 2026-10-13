@@ -1,6 +1,6 @@
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.utils import timezone
+
+from apps.realtime import envio_em_lote
 
 
 def account_group(account_id):
@@ -8,10 +8,10 @@ def account_group(account_id):
 
 
 def broadcast_model_event(account_id, event, payload):
-    channel_layer = get_channel_layer()
-    if not channel_layer or not account_id:
+    # Em lote dentro da requisição: uma conexão para todos (`envio_em_lote`).
+    if not account_id:
         return
-    async_to_sync(channel_layer.group_send)(
+    envio_em_lote.enviar(
         account_group(account_id),
         {"type": "realtime.event", "event": event, "payload": payload},
     )

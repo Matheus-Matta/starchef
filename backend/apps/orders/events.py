@@ -1,5 +1,4 @@
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+from apps.realtime import envio_em_lote
 
 
 def compact_id(value):
@@ -11,11 +10,8 @@ def kitchen_group(account_id, branch_id, sector):
 
 
 def broadcast_kitchen_event(account_id, branch_id, sector, event_type, payload):
-    channel_layer = get_channel_layer()
-    if not channel_layer:
-        return
-
-    async_to_sync(channel_layer.group_send)(
+    # Em lote dentro da requisição: uma conexão para todos (`envio_em_lote`).
+    envio_em_lote.enviar(
         kitchen_group(account_id, branch_id, sector),
         {
             "type": "kitchen.event",

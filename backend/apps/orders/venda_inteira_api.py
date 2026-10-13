@@ -32,8 +32,16 @@ def responder(viewset, request):
 
     def montar(pedido, recebimentos, nova):
         # Relido com os prefetches do viewset: o pedido avulso fazia o
-        # serializer buscar produto, restaurante e adicionais item a item.
-        pedido = viewset.queryset.filter(pk=pedido.pk).first() or pedido
+        # serializer buscar produto, restaurante e adicionais item a item
+        # (~0,7 s em 50 itens). Pelo `all_objects`, e não por
+        # `viewset.queryset`: aquele foi montado na importação, sem conta
+        # ativa, e não acha pedido nenhum — caía sempre no avulso. O pedido é
+        # o desta requisição, já autorizado.
+        pedido = (
+            type(pedido).all_objects.select_related("command")
+            .prefetch_related(*viewset.queryset._prefetch_related_lookups)
+            .filter(pk=pedido.pk).first()
+        ) or pedido
         return {
             "order": viewset.get_serializer(pedido).data,
             "payments": PaymentSerializer(recebimentos, many=True).data,

@@ -78,6 +78,9 @@ MIDDLEWARE = [
     # Antes de tudo, para medir tudo: Server-Timing em toda resposta e a
     # requisição lenta no log, separando banco de aplicação.
     "apps.core.tempo_da_requisicao.TempoDaRequisicaoMiddleware",
+    # Os avisos de tempo real da requisição saem juntos, numa conexão só, no
+    # fim dela (`realtime/envio_em_lote.py`). Eram 261 conexões numa venda.
+    "apps.realtime.envio_em_lote.RealtimeEmLoteMiddleware",
     # O mais externo: qualquer erro sob /api/ (view, middleware ou 404 HTML do
     # Django) sai no envelope {success, status_code, error}.
     "apps.core.envelope.ApiErrorEnvelopeMiddleware",

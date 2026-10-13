@@ -15,7 +15,7 @@ pytestmark = pytest.mark.django_db
 
 #: Consultas que cada item A MAIS pode custar (lock, produto, preço, insert,
 #: auditoria). Eram 19 antes da validação em lote.
-POR_ITEM = 7
+POR_ITEM = 5
 
 
 def _consultas(api_client, corpo):
