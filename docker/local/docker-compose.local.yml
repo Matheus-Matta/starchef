@@ -145,6 +145,7 @@ services:
   backend:
     <<: *backend-base
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    cpu_shares: ${BACKEND_CPU_SHARES:-2048}
     # `sync_install_triggers` depois do migrate: a rede de segurança que
     # captura escrita feita por fora do ORM. Idempotente, roda em todo boot.
     #
@@ -182,6 +183,8 @@ services:
     # caixa usa. Na nuvem, sem ele, um acúmulo de tarefas segurou 300% e as
     # telas passaram a responder em 1,5 s.
     cpus: ${CELERY_WORKER_CPUS:-1.0}
+    # Prioridade baixa: na disputa, o backend (que o caixa espera) vence.
+    cpu_shares: ${CELERY_WORKER_SHARES:-256}
     # As filas `sync.*` entram junto com a default: numa loja não compensa um
     # processo por fila, e o volume é baixo. Fila vazia não custa nada.
     command: >
@@ -196,6 +199,7 @@ services:
     <<: *backend-base
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
     cpus: ${CELERY_BEAT_CPUS:-0.25}
+    cpu_shares: ${CELERY_BEAT_SHARES:-128}
     command: celery -A config beat -l info
     depends_on:
       backend:

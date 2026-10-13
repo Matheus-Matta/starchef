@@ -16,6 +16,14 @@
 # Backend e frontend continuam publicados só em loopback, para diagnóstico.
 #
 # Log rotation evita que os logs dos containers ocupem todo o disco.
+#
+# CPU e memória, para uma instância de 2 vCPU e 4 GB (Lightsail): o BACKEND é
+# quem o caixa espera, então ele não tem teto e tem a maior prioridade
+# (`cpu_shares` 2048). O trabalho de fundo tem teto (`cpus`) e prioridade baixa
+# (256/128): na disputa o backend leva 8 fatias para cada uma do Celery, e com
+# o backend parado o Celery usa o que sobra até o próprio teto. Sem isso o
+# worker chegou a 300% de CPU e o painel e o PDV a 1,5–10 s por resposta.
+# Tudo ajustável pelo `.env` (as variáveis *_CPUS, *_SHARES e *_MEM_LIMIT).
 
 x-logging: &default-logging
   driver: json-file
@@ -37,7 +45,8 @@ services:
     image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
-    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    mem_limit: ${BACKEND_MEM_LIMIT:-1536m}
+    cpu_shares: ${BACKEND_CPU_SHARES:-2048}
     logging: *default-logging
 
     # `sync_install_triggers` depois do migrate, igual ao compose da loja: é a
@@ -92,11 +101,12 @@ services:
     image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
-    mem_limit: ${CELERY_WORKER_MEM_LIMIT:-1g}
+    mem_limit: ${CELERY_WORKER_MEM_LIMIT:-768m}
+    cpu_shares: ${CELERY_WORKER_SHARES:-256}
     # Teto de CPU: o worker é trabalho de fundo e não pode tirar a CPU do
     # backend. Sem ele, um acúmulo de tarefas segurou 300% numa máquina de 2
     # vCPU e o painel passou a responder em 1,5 s.
-    cpus: ${CELERY_WORKER_CPUS:-1.0}
+    cpus: ${CELERY_WORKER_CPUS:-0.75}
     logging: *default-logging
 
     # `-Q` e OBRIGATORIO com a sincronizacao ligada. As tarefas do modulo
@@ -139,8 +149,9 @@ services:
     image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
-    mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
-    cpus: ${CELERY_BEAT_CPUS:-0.25}
+    mem_limit: ${CELERY_BEAT_MEM_LIMIT:-192m}
+    cpus: ${CELERY_BEAT_CPUS:-0.2}
+    cpu_shares: ${CELERY_BEAT_SHARES:-128}
     logging: *default-logging
 
     command: celery -A config beat -l info
@@ -176,8 +187,9 @@ services:
     image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
-    mem_limit: ${CELERY_SYNC_MEM_LIMIT:-1g}
-    cpus: ${CELERY_SYNC_CPUS:-0.5}
+    mem_limit: ${CELERY_SYNC_MEM_LIMIT:-512m}
+    cpus: ${CELERY_SYNC_CPUS:-0.25}
+    cpu_shares: ${CELERY_SYNC_SHARES:-128}
     logging: *default-logging
 
     # Concorrencia baixa de proposito: duas cargas simultaneas ja sao muito
@@ -218,7 +230,7 @@ services:
   starchef-redis:
     image: redis:7.4-alpine
     restart: unless-stopped
-    mem_limit: ${REDIS_MEM_LIMIT:-512m}
+    mem_limit: ${REDIS_MEM_LIMIT:-384m}
     logging: *default-logging
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD é obrigatório}
@@ -249,6 +261,8 @@ services:
     image: ghcr.io/matheus-matta/starchef-fiscal-acbr:latest
     restart: unless-stopped
     mem_limit: ${ACBR_MEM_LIMIT:-256m}
+    # A emissão é rara e curta: teto para não disputar com o caixa.
+    cpus: ${ACBR_CPUS:-0.5}
     logging: *default-logging
     environment:
       ACBRLIB_TOKEN: ${ACBRLIB_TOKEN:-}
@@ -266,7 +280,8 @@ services:
   frontend:
     image: ghcr.io/matheus-matta/starchef-frontend:latest
     restart: unless-stopped
-    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-128m}
+    cpus: ${FRONTEND_CPUS:-0.25}
     logging: *default-logging
 
     environment:
