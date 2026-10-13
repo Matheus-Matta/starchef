@@ -1,6 +1,4 @@
 import csv
-from calendar import monthrange
-from datetime import timedelta
 
 from django.db.models import Avg, Count, Q, Sum
 from django.http import HttpResponse
@@ -14,6 +12,7 @@ from apps.core.access import is_tenant_admin
 from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment
 from apps.stock.models import StockMovement
+from apps.reports import dashboard as painel
 from apps.reports.comandas_abertas import resumo as comandas_abertas
 from apps.reports.waiter_sales import sales_by_waiter
 
@@ -52,28 +51,22 @@ class TenantReportMixin:
 
 
 class DashboardReportView(TenantReportMixin, APIView):
+    """A visão geral. Os números saem de `dashboard.py`, em poucas consultas."""
+
     def get(self, request):
         today = timezone.localdate()
         filters = self.tenant_filter()
-        orders = self.tenant_manager(Order).filter(opened_at__date=today, **filters)
+        orders = self.tenant_manager(Order).filter(**filters, **painel.faixa(today, today))
         paid_orders = orders.filter(payment_status=Order.PAYMENT_PAID)
-        paid_orders_last_7_days = self.tenant_manager(Order).filter(
-            opened_at__date__gte=today - timedelta(days=6),
-            opened_at__date__lte=today,
-            payment_status=Order.PAYMENT_PAID,
-            **filters,
+        pagos_no_periodo = self.tenant_manager(Order).filter(
+            payment_status=Order.PAYMENT_PAID, **filters,
+            **painel.faixa(painel.inicio_do_periodo(today), today),
         )
-        month_start = today.replace(day=1)
-        paid_orders_current_month = self.tenant_manager(Order).filter(
-            opened_at__date__gte=month_start,
-            opened_at__date__lte=today,
-            payment_status=Order.PAYMENT_PAID,
-            **filters,
-        )
-
+        hoje_pago = {"order__payment_status": Order.PAYMENT_PAID,
+                     **{f"order__{k}": v for k, v in painel.faixa(today, today).items()}}
         top_products = (
             self.tenant_manager(OrderItem)
-            .filter(order__opened_at__date=today, order__payment_status=Order.PAYMENT_PAID, **filters)
+            .filter(**hoje_pago, **filters)
             .values("product__name")
             .annotate(quantity=Sum("quantity"), total=Sum("total_price"))
             .order_by("-quantity")[:10]
@@ -100,19 +93,12 @@ class DashboardReportView(TenantReportMixin, APIView):
         low_stock.sort(key=lambda r: (r["balance"] or 0))
 
         data = {
-            "total_sold_today": paid_orders.aggregate(value=Sum("total"))["value"] or 0,
-            "orders_count": orders.count(),
-            "open_orders": orders.exclude(status__in=[Order.STATUS_PAID, Order.STATUS_CANCELLED]).count(),
+            **painel.resumo_de_hoje(orders, Order),
             "kitchen_open_items": self.tenant_manager(OrderItem)
             .filter(**filters)
             .exclude(status__in=[OrderItem.STATUS_DELIVERED, OrderItem.STATUS_CANCELLED])
             .count(),
-            "paid_orders": paid_orders.count(),
-            "cancelled_orders": orders.filter(status=Order.STATUS_CANCELLED).count(),
-            "average_ticket": paid_orders.aggregate(value=Avg("total"))["value"] or 0,
-            "sales_today_by_hour": self.sales_today_by_hour(paid_orders, today),
-            "sales_last_7_days": self.sales_last_7_days(paid_orders_last_7_days, today),
-            "sales_current_month": self.sales_current_month(paid_orders_current_month, today),
+            **painel.vendas_por_periodo(pagos_no_periodo, today),
             "sales_by_order_type": list(
                 paid_orders.values("order_type").annotate(total=Sum("total"), count=Count("id")).order_by("-total")
             ),
@@ -121,56 +107,6 @@ class DashboardReportView(TenantReportMixin, APIView):
             **comandas_abertas(filters),
         }
         return Response(data)
-
-    def sales_today_by_hour(self, queryset, today):
-        buckets = [
-            {"label": "08h", "start": 8, "end": 10, "total": 0},
-            {"label": "10h", "start": 10, "end": 12, "total": 0},
-            {"label": "12h", "start": 12, "end": 14, "total": 0},
-            {"label": "14h", "start": 14, "end": 16, "total": 0},
-            {"label": "16h", "start": 16, "end": 18, "total": 0},
-            {"label": "18h", "start": 18, "end": 20, "total": 0},
-            {"label": "20h", "start": 20, "end": 22, "total": 0},
-            {"label": "22h", "start": 22, "end": 24, "total": 0},
-        ]
-        rows = queryset.filter(opened_at__date=today).values("opened_at", "total")
-        for row in rows:
-            hour = timezone.localtime(row["opened_at"]).hour
-            for bucket in buckets:
-                if bucket["start"] <= hour < bucket["end"]:
-                    bucket["total"] += row["total"] or 0
-                    break
-        return [{"date": today.isoformat(), "label": bucket["label"], "total": bucket["total"]} for bucket in buckets]
-
-    def sales_last_7_days(self, queryset, today):
-        totals = {
-            row["opened_at__date"]: row["total"] or 0
-            for row in queryset.values("opened_at__date").annotate(total=Sum("total"))
-        }
-        return [
-            {
-                "date": day.isoformat(),
-                "label": day.strftime("%a"),
-                "total": totals.get(day, 0),
-            }
-            for day in [today - timedelta(days=offset) for offset in range(6, -1, -1)]
-        ]
-
-    def sales_current_month(self, queryset, today):
-        totals = {
-            row["opened_at__date"]: row["total"] or 0
-            for row in queryset.values("opened_at__date").annotate(total=Sum("total"))
-        }
-        first_day = today.replace(day=1)
-        days_in_month = monthrange(today.year, today.month)[1]
-        return [
-            {
-                "date": day.isoformat(),
-                "label": day.strftime("%d"),
-                "total": totals.get(day, 0),
-            }
-            for day in [first_day + timedelta(days=offset) for offset in range(days_in_month)]
-        ]
 
 
 class SalesReportView(TenantReportMixin, APIView):
