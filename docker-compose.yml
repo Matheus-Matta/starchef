@@ -131,6 +131,13 @@ services:
       --concurrency=${CELERY_CONCURRENCY:-2}
       -Q ${CELERY_QUEUES:-celery,sync.dispatch,sync.receive,sync.apply,sync.retry,sync.reconcile,sync.cleanup}
 
+    # A MESMA mídia do backend. O certificado A1 mora em media/certificates/,
+    # e a retransmissão da nota (a cada 2 min) roda AQUI: sem o volume, a nota
+    # que não saiu na hora ficava "aguardando SEFAZ" com "No such file or
+    # directory" no .pfx — só ela, porque as outras saíram pelo backend.
+    volumes:
+      - backend_media:/app/media
+
     env_file:
       - .env
 
@@ -202,6 +209,10 @@ services:
       -l info
       --concurrency=${CELERY_SYNC_CONCURRENCY:-1}
       -Q sync.bootstrap
+
+    # A carga total também lê arquivos da mídia (sincronização de arquivos).
+    volumes:
+      - backend_media:/app/media
 
     env_file:
       - .env
