@@ -462,14 +462,22 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           .cast<Map<String, dynamic>>()
           .toList();
       if (!mounted) return;
+      // A balança que estava em uso neste terminal volta escolhida (e
+      // ligada, logo abaixo): recriar a estação não pode largar o operador
+      // na tela de escolha no meio do expediente.
+      final emUso = _balancaEmUsoAqui(values);
       setState(() {
         scales = values;
-        if (values.length == 1) {
+        if (emUso != null) {
+          scaleId = '${emUso['id']}';
+          printerId = ValueFormatters.nullableId(emUso['printer']);
+        } else if (values.length == 1) {
           scaleId = '${values.first['id']}';
           printerId = ValueFormatters.nullableId(values.first['printer']);
         }
       });
       if (scaleId != null) await _loadScannerBinding();
+      if (emUso != null && !started && mounted) await _startStation();
     } on ApiException catch (error) {
       if (mounted) setState(() => errorMessage = error.message);
     } catch (error, stack) {
@@ -477,6 +485,20 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     } finally {
       if (mounted) setState(() => loadingScales = false);
     }
+  }
+
+  /// A balança que este terminal estava usando neste restaurante, se ainda
+  /// está na lista (`LocalPreferences.balancaEmUso`).
+  Map<String, dynamic>? _balancaEmUsoAqui(List<Map<String, dynamic>> lista) {
+    final emUso = widget.preferences.balancaEmUso ?? '';
+    final separador = emUso.indexOf(':');
+    if (separador < 0) return null;
+    if (emUso.substring(0, separador) != '${widget.restaurantId}') return null;
+    final id = emUso.substring(separador + 1);
+    return lista.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == id,
+      orElse: () => null,
+    );
   }
 
   Future<void> _loadPrinters() async {
@@ -579,6 +601,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       started = true;
     });
     widget.onRunningChanged?.call(true);
+    unawaited(
+      widget.preferences.setBalancaEmUso('${widget.restaurantId}:$scaleId'),
+    );
     try {
       await _attachReader();
     } catch (error, stack) {
@@ -589,6 +614,13 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     machine.start();
     clock?.cancel();
     clock = Timer.periodic(const Duration(seconds: 1), (_) => _onClockTick());
+  }
+
+  /// Parada PEDIDA pelo operador: só ela esquece a balança em uso. As
+  /// internas (tempo novo, troca de balança, fechar a tela) param e religam.
+  Future<void> _pararPeloOperador() async {
+    await widget.preferences.setBalancaEmUso(null);
+    await _stopStation();
   }
 
   Future<void> _stopStation() async {
@@ -1754,7 +1786,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             tooltip: 'Trocar restaurante ou balança',
             onPressed: machine.state == HandsFreeState.launching
                 ? null
-                : () => unawaited(_stopStation()),
+                : () => unawaited(_pararPeloOperador()),
             icon: const Icon(Icons.settings_outlined),
           ),
         ],

@@ -29,6 +29,7 @@ class LocalPreferences {
   static const _showCatalogKey = 'scale_show_catalog';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _somenteNuvemKey = 'somente_nuvem';
+  static const _balancaEmUsoKey = 'scale_station_in_use';
   static const _serialPortOverridesKey = 'serial_port_overrides';
   static const _masterPrinterIdKey = 'master_printer_id';
   static const _terminalInstallationIdKey = 'terminal_installation_id';
@@ -114,6 +115,15 @@ class LocalPreferences {
   bool get somenteNuvem => _values[_somenteNuvemKey] as bool? ?? false;
 
   Future<void> setSomenteNuvem(bool value) => _write(_somenteNuvemKey, value);
+
+  /// A balança que a estação deste terminal estava USANDO, por restaurante
+  /// ("restaurante:balança"), ou null se o operador a parou. Recriada por
+  /// qualquer motivo (erro, recarga, troca de tela), a estação religa nela
+  /// em vez de voltar para a escolha da balança.
+  String? get balancaEmUso => _values[_balancaEmUsoKey] as String?;
+
+  Future<void> setBalancaEmUso(String? value) =>
+      _write(_balancaEmUsoKey, value);
 
   Future<void> setApiBaseUrlOverride(String? value) => _write(
     _apiBaseUrlOverrideKey,
