@@ -55,6 +55,13 @@ class Restaurant(TenantBaseModel):
         max_length=255, blank=True, default="",
         help_text="IP ou endereço do servidor local da loja, ex.: 192.168.0.10:8000",
     )
+    # Ignora o IP acima: o PDV e o app do garçom ficam SEMPRE na nuvem. Sem
+    # isto, o IP gravado forçava os aparelhos para o servidor da loja mesmo
+    # com ele fora de uso, e o jeito era apagar o IP do cadastro.
+    somente_nuvem = models.BooleanField(
+        default=False,
+        help_text="Ignora o IP server local: PDV e app do garçom usam só a nuvem.",
+    )
     stock_deduction_timing = models.CharField(
         max_length=20, choices=STOCK_DEDUCTION_CHOICES, default=STOCK_DEDUCTION_PAYMENT
     )

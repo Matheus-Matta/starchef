@@ -78,3 +78,16 @@ def test_devolve_o_ip_server_nuvem_do_api_url(api_client, restaurant, settings, 
     settings.API_URL = api_url
 
     assert api_client.get(URL).json()["ip_server_nuvem"] == esperado
+
+
+def test_somente_nuvem_ignora_o_ip_local_e_o_app_fica_na_nuvem(api_client, restaurant):
+    """Com o servidor da loja fora de uso, o IP gravado forçava o app para ele:
+    não havia como usar só a nuvem sem apagar o IP do cadastro."""
+    _com_ip(restaurant, "192.168.0.10")
+    restaurant.somente_nuvem = True
+    restaurant.save(update_fields=["somente_nuvem"])
+
+    corpo = api_client.get(URL).json()
+
+    assert corpo["ip_server_local"] == ""
+    assert corpo["somente_nuvem"] is True

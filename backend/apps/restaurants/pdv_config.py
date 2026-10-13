@@ -33,9 +33,14 @@ class PdvConfigView(APIView):
 
     def get(self, request):
         restaurante = getattr(getattr(request.user, "profile", None), "restaurant", None)
+        # "Só nuvem": sem IP local o app entra e fica na nuvem
+        # (`login_pela_nuvem.dart`: IP vazio = a nuvem).
+        so_nuvem = bool(getattr(restaurante, "somente_nuvem", False))
+        ip_local = "" if so_nuvem else getattr(restaurante, "ip_server_local", "")
         return Response({
             "restaurant": str(restaurante.pk) if restaurante else None,
-            "ip_server_local": url_da_api(getattr(restaurante, "ip_server_local", "")),
+            "ip_server_local": url_da_api(ip_local),
+            "somente_nuvem": so_nuvem,
             "ip_server_nuvem": ip_server_nuvem(),
         })
 

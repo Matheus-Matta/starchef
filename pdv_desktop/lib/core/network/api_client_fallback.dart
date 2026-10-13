@@ -51,7 +51,14 @@ extension ApiClientFallback on ApiClient {
       } on ApiException catch (erroDaNuvem) {
         // A nuvem também não atende: a loja pode ter voltado. Segue o caminho
         // normal, que tenta a loja primeiro.
-        if (!erroDaNuvem.isConnectivity) rethrow;
+        //
+        // E a nuvem RECUSANDO A SESSÃO (401/403) também segue para a loja: o
+        // token é da loja, assinado com a SECRET_KEY dela, e a nuvem nunca o
+        // aceita. Repassar essa recusa mostrava "credenciais inválidas" ao
+        // garçom logado, por até 5 minutos, em toda tela (comandas, mesas).
+        if (!erroDaNuvem.isConnectivity && !_sessaoRecusada(erroDaNuvem)) {
+          rethrow;
+        }
       }
     }
     try {
@@ -105,6 +112,10 @@ extension ApiClientFallback on ApiClient {
       }
     }
   }
+
+  /// A nuvem recusou o token: ele é da loja, e só ela o reconhece.
+  static bool _sessaoRecusada(ApiException erro) =>
+      erro.statusCode == 401 || erro.statusCode == 403;
 
   /// A requisição repetida contra a nuvem.
   ///
