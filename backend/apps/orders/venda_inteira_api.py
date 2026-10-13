@@ -43,7 +43,9 @@ def responder(viewset, request):
             .filter(pk=pedido.pk).first()
         ) or pedido
         return {
-            "order": viewset.get_serializer(pedido).data,
+            # Enxuto: o item sem o que nenhum PDV lê (`CAMPOS_FORA_DA_VENDA`).
+            "order": viewset.get_serializer(
+                pedido, context={**viewset.get_serializer_context(), "enxuto": True}).data,
             "payments": PaymentSerializer(recebimentos, many=True).data,
             "created": nova,
         }

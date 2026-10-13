@@ -15,6 +15,17 @@ class OrderItemAddonSerializer(TenantModelSerializer):
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_price"]
 
 
+#: Campos do item que nenhum PDV lê da resposta da venda (`/orders/submit/`):
+#: o pedido repetido em cada linha, o KDS e a autoria. Fora da venda o item
+#: segue completo — o KDS e o painel usam todos eles.
+CAMPOS_FORA_DA_VENDA = frozenset({
+    "order_sequence", "order_status", "order_payment_status", "order_production_status",
+    "order_delivery_status", "kds_position", "kds_entered_at", "order_table_number",
+    "order_command_code", "launched_by", "voided_by", "created_by", "updated_by",
+    "sent_to_kitchen_at", "production_sector",
+})
+
+
 class OrderItemSerializer(TenantModelSerializer):
     # O código de QUEM lançou este item. É no item que ele serve de verdade: num
     # pedido de uma hora, três garçons anotam, e um código só no cabeçalho
@@ -38,6 +49,13 @@ class OrderItemSerializer(TenantModelSerializer):
     command_code = serializers.CharField(source="command.code", read_only=True, default=None)
     batch_number = serializers.IntegerField(source="batch.batch_number", read_only=True, default=None)
     addons = OrderItemAddonSerializer(many=True, read_only=True)
+
+    def get_fields(self):
+        campos = super().get_fields()
+        if self.context.get("enxuto"):
+            for nome in CAMPOS_FORA_DA_VENDA:
+                campos.pop(nome, None)
+        return campos
 
     class Meta:
         model = OrderItem

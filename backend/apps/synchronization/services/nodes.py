@@ -12,6 +12,33 @@ from apps.synchronization.services import guard
 CACHE_SELF = "sync:self-node"
 CACHE_TTL = 30  # segundos: revogar um nó tem de doer rápido
 
+#: O nó próprio guardado NESTE processo. O cache acima guarda só o id, então
+#: cada captura ainda ia ao Redis, ao banco e abria um savepoint — 4 vezes
+#: numa venda de 1 item. Curto (bem abaixo do CACHE_TTL) para a revogação
+#: continuar valendo rápido.
+MEMORIA_TTL = 5
+_memoria = {"chave": None, "no": None, "ate": 0.0}
+
+
+def _chave_da_memoria():
+    from django.conf import settings
+
+    return str(getattr(settings, "SYNC_NODE_ID", "") or "")
+
+
+def _da_memoria():
+    import time
+
+    if _memoria["no"] is not None and _memoria["chave"] == _chave_da_memoria()             and time.monotonic() < _memoria["ate"]:
+        return _memoria["no"]
+    return None
+
+
+def _guardar_na_memoria(no):
+    import time
+
+    _memoria.update(chave=_chave_da_memoria(), no=no, ate=time.monotonic() + MEMORIA_TTL)
+
 
 class NodeNotConfigured(RuntimeError):
     """Esta instalação não tem um SyncNode próprio configurado."""
@@ -25,10 +52,14 @@ def self_node(*, use_cache=True):
     em vez de gravar evento órfão.
     """
     if use_cache:
+        lembrado = _da_memoria()
+        if lembrado is not None:
+            return lembrado
         em_cache = cache.get(CACHE_SELF)
         if em_cache:
             no = SyncNode.objects.filter(pk=em_cache).first()
             if no is not None:
+                _guardar_na_memoria(no)
                 return no
 
     from django.conf import settings
@@ -44,6 +75,7 @@ def self_node(*, use_cache=True):
             "Rode `manage.py sync_provision_node` (nuvem) ou `sync_install_node` (loja)."
         )
     cache.set(CACHE_SELF, str(no.pk), CACHE_TTL)
+    _guardar_na_memoria(no)
     return no
 
 
@@ -62,6 +94,9 @@ def self_node_or_none():
     """
     from django.db import transaction
 
+    lembrado = _da_memoria()  # sem consulta, sem savepoint
+    if lembrado is not None:
+        return lembrado
     try:
         with transaction.atomic():
             return self_node()
@@ -108,6 +143,7 @@ def is_local():
 
 def invalidate_cache():
     cache.delete(CACHE_SELF)
+    _memoria.update(chave=None, no=None, ate=0.0)
 
 
 def registrar_contato():

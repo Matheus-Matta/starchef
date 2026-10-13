@@ -337,6 +337,33 @@ tabela sincronizada ficou sem trigger.
 O laço é cortado por `app.sync_apply`: durante a aplicação de um evento remoto
 a transação marca essa variável e a trigger não anota nada.
 
+## A venda grava em lote (e sincroniza igual)
+
+Com loja matriculada, cada registro salvo gerava o seu evento na hora: relia a
+linha, achava os destinos, reservava a sequência e gravava. Uma venda de 10
+itens fazia 942 consultas — uns 10 s na nuvem, a ~6 ms cada (medido com
+`loadtest/medir_venda.py` no alvo de carga com `LOADTEST_SYNC=true` e
+`loadtest/scripts/ligar_sync_no_alvo.py`).
+
+Na venda inteira (`orders/venda_inteira.py`), três peças trabalham juntas:
+
+- `core/lote.py` — `criar_em_lote`/`atualizar_em_lote`: `bulk_create`/
+  `bulk_update` e o `post_save` de cada registro disparado à mão. Todo
+  receptor roda como num `save()`; o que NÃO roda é o `save()` do modelo
+  (o id calculado de `StockMovement` é decidido antes, em lote).
+- `synchronization/services/outbox_lote.py` — dentro de `em_lote()` a captura
+  só anota; no fim do bloco, AINDA NA TRANSAÇÃO, os eventos saem juntos: uma
+  leitura por tipo de registro, as sequências de uma vez (`generate_series`
+  no Postgres) e um `bulk_create`. Um registro salvo várias vezes vira UM
+  evento, com o estado final, na ordem da primeira captura. A simulação usa
+  `descartando()`: é desfeita, então nada é montado.
+- `core/audit.py` — `auditoria_em_lote()` junta a auditoria e a grava no fim
+  (a auditoria sincroniza, então ela fecha ANTES da captura).
+
+A rede de segurança das triggers continua valendo e não duplica: a escrita
+em lote é marcada, e `dirty._ja_tem_evento` encerra a marca porque o evento do
+lote já leva a versão final da linha.
+
 ## Métricas (§19.1)
 
 ```
