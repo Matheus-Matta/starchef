@@ -53,6 +53,12 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+      # Sincronização como na NUVEM com loja matriculada: cada registro salvo
+      # gera evento de saída, e é parte grande do custo da venda lá. Desligada
+      # por padrão (as outras suítes não a esperam); ligue com
+      # LOADTEST_SYNC=true e rode loadtest/scripts/ligar_sync_no_alvo.py.
+      SYNC_ENABLED: ${LOADTEST_SYNC:-false}
+      SYNC_NODE_TYPE: cloud
       # O teste mede o sistema, não o throttle do DRF.
       THROTTLE_RATE_ANON: 1000000/min
       THROTTLE_RATE_USER: 10000000/hour

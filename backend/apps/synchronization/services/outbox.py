@@ -41,6 +41,14 @@ def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
     if is_applying() and not force:
         return []
 
+    # Numa venda, a captura só anota; os eventos saem juntos no fim, ainda na
+    # transação (`outbox_lote.py`). Carga total e rede de segurança (`run`,
+    # `force`) seguem gravando na hora: elas leem o retorno.
+    from apps.synchronization.services import outbox_lote
+
+    if run is None and not force and outbox_lote.anotar(instance, operation):
+        return []
+
     entry = registry.for_model(type(instance))
     if entry is None:
         return []

@@ -26,6 +26,7 @@ from django.db import transaction
 
 from apps.core import uuid_do_aparelho
 from apps.orders.venda_inteira_itens import lancar_itens
+from apps.synchronization.services import outbox_lote
 from apps.core.tenant import tenant_context
 from apps.orders.conflitos import ConflitoComDestino
 from apps.orders.models import Order, OrderItem
@@ -48,16 +49,20 @@ def executar(*, restaurant, user, dados, responder, simular=False, terminal=None
     order_id = uuid_do_aparelho.ler(dados.get("id"), "pedido")
     if order_id is None:
         raise ValidationError("Informe o identificador do pedido.")
+    # A captura da sincronização da venda sai junta no fim, ainda nesta
+    # transação; na simulação, que é desfeita, nem é montada (`outbox_lote`).
+    captura = outbox_lote.descartando() if simular else outbox_lote.em_lote()
     with tenant_context(restaurant.account), transaction.atomic():
-        pedido, nova = _pedido(restaurant, user, order_id, dados)
-        lancar_itens(pedido, user, dados.get("items") or [])
-        _comandas(pedido, user, dados.get("commands") or [], nova, dados.get("command_items"))
-        _cozinha(pedido, user, dados.get("kitchen"))
-        _fechar(pedido, user, dados.get("close"), autorizar_desconto)
-        if not simular:
-            conferir_total(pedido, dados)
-        recebimentos = [] if simular else receber(
-            pedido, user, dados.get("payments") or [], terminal, installation_id)
+        with captura:
+            pedido, nova = _pedido(restaurant, user, order_id, dados)
+            lancar_itens(pedido, user, dados.get("items") or [])
+            _comandas(pedido, user, dados.get("commands") or [], nova, dados.get("command_items"))
+            _cozinha(pedido, user, dados.get("kitchen"))
+            _fechar(pedido, user, dados.get("close"), autorizar_desconto)
+            if not simular:
+                conferir_total(pedido, dados)
+            recebimentos = [] if simular else receber(
+                pedido, user, dados.get("payments") or [], terminal, installation_id)
         pedido.refresh_from_db()
         resposta = responder(pedido, recebimentos, nova)
         if simular:
