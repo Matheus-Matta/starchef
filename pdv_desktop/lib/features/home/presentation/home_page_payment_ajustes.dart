@@ -34,6 +34,7 @@ mixin _PaymentAdjustSection on _HomePageShared {
   set discountPassword(String? value);
   Future<String?> _autorizarDesconto(String motivo);
   void _refreshSuggestedPaymentAmount();
+  void _valorSugeridoDoNovoTotal();
   Widget _paymentSummaryRow(String label, String value, {bool strong});
 
   /// As escolhas que o pedido carrega AGORA — a base de toda mudança.
@@ -89,8 +90,8 @@ mixin _PaymentAdjustSection on _HomePageShared {
       setState(() {
         activeOrder = Map<String, dynamic>.from(atualizado);
         adjustBusy = false;
+        _valorSugeridoDoNovoTotal();
       });
-      _refreshSuggestedPaymentAmount();
     } on ApiException catch (falha) {
       if (!mounted) return;
       setState(() => adjustBusy = false);

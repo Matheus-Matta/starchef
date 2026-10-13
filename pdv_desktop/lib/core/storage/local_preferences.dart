@@ -28,6 +28,7 @@ class LocalPreferences {
   static const _autoPrintKey = 'scale_auto_print';
   static const _showCatalogKey = 'scale_show_catalog';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
+  static const _somenteNuvemKey = 'somente_nuvem';
   static const _serialPortOverridesKey = 'serial_port_overrides';
   static const _masterPrinterIdKey = 'master_printer_id';
   static const _terminalInstallationIdKey = 'terminal_installation_id';
@@ -98,10 +99,21 @@ class LocalPreferences {
   /// URL da API definida manualmente na tela de login (sobrescreve o que veio
   /// de --dart-define/.env — ver `AppConfig.load`). `null`/vazio significa
   /// "sem override, usa a configuração padrão do build".
-  String? get apiBaseUrlOverride {
+  ///
+  /// Com [somenteNuvem] ligado responde `null`: abertura, login e reconexão
+  /// leem daqui, e todos passam a usar a nuvem sem apagar o IP guardado.
+  String? get apiBaseUrlOverride => somenteNuvem ? null : ipServerLocalGuardado;
+
+  /// O IP server local guardado, mesmo com o terminal em "só nuvem".
+  String? get ipServerLocalGuardado {
     final value = _values[_apiBaseUrlOverrideKey] as String?;
     return (value == null || value.trim().isEmpty) ? null : value.trim();
   }
+
+  /// Este terminal ignora o IP server local e fica SEMPRE na nuvem.
+  bool get somenteNuvem => _values[_somenteNuvemKey] as bool? ?? false;
+
+  Future<void> setSomenteNuvem(bool value) => _write(_somenteNuvemKey, value);
 
   Future<void> setApiBaseUrlOverride(String? value) => _write(
     _apiBaseUrlOverrideKey,

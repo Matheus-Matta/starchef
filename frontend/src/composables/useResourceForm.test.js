@@ -39,6 +39,35 @@ describe("useResourceForm multipart", () => {
   });
 });
 
+describe("useResourceForm multipart limpa texto apagado", () => {
+  it("texto vazio vai como vazio; numero vazio continua de fora", async () => {
+    // Com arquivo no formulario (o logo do restaurante) o envio e multipart,
+    // e campo vazio era OMITIDO: no PATCH isso e "nao mexe", entao apagar o
+    // IP server local nunca chegava ao servidor.
+    const service = { create: vi.fn(async () => ({ id: "r1" })) };
+    const form = useResourceForm({
+      service,
+      formFields: [
+        { name: "ip_server_local", type: "text" },
+        { name: "max_commands_per_table", type: "number" },
+        { name: "logo_upload", type: "file" },
+      ],
+      mode: ref("create"),
+      recordId: ref(null),
+      sharedAcrossRestaurants: true,
+    });
+    form.formData.ip_server_local = "";
+    form.formData.max_commands_per_table = "";
+
+    await form.save();
+
+    const payload = service.create.mock.calls[0][0];
+    expect(payload.has("ip_server_local")).toBe(true);
+    expect(payload.get("ip_server_local")).toBe("");
+    expect(payload.has("max_commands_per_table")).toBe(false);
+  });
+});
+
 describe("useResourceForm validacao no cliente", () => {
   it("barra antes de chamar a API e aponta o campo", async () => {
     const service = { create: vi.fn(async () => ({ id: "sla-1" })) };

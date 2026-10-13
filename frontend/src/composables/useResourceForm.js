@@ -18,6 +18,9 @@ import { validateForm } from "../utils/formValidation";
  * @param {import("vue").Ref<string>} options.mode  "view" | "create" | "edit".
  * @param {import("vue").Ref<string>} options.recordId  Id do registro (ausente no create).
  */
+/** Campos cujo vazio LIMPA o valor no servidor (ver `buildMultipartPayload`). */
+const TIPOS_DE_TEXTO = new Set(["text", "textarea", "email", "tel", "url"]);
+
 export function useResourceForm({ service, formFields = [], mode, recordId, sharedAcrossRestaurants = false }) {
   const isCreate = computed(() => unref(mode) === "create");
   const isEdit = computed(() => unref(mode) === "edit");
@@ -158,6 +161,14 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
           const removed = formData[field.removeField] || [];
           removed.forEach((id) => payload.append(field.removeField, id));
         }
+        continue;
+      }
+      // TEXTO apagado vai como vazio: omitido, o PATCH entende "não mexe", e
+      // limpar o IP server local do restaurante (que tem logo, então é
+      // multipart) nunca chegava ao servidor. Número, data e vínculo vazios
+      // seguem de fora — vazio não é valor válido para eles.
+      if (value === "" && TIPOS_DE_TEXTO.has(field.type || "text")) {
+        payload.append(field.name, "");
         continue;
       }
       if (value === "" || value === null || value === undefined) continue;

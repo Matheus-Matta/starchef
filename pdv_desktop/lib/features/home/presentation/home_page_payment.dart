@@ -217,6 +217,15 @@ mixin _PaymentSection on _HomePageShared {
     _syncPaymentAmount();
   }
 
+  /// O total MUDOU (desconto, taxa, cupom): o valor sugerido volta a ser o
+  /// restante novo. O que o caixa tinha digitado era para o total antigo, e
+  /// mantê-lo deixava a coluna das formas de pagamento com o valor de antes
+  /// do desconto.
+  void _valorSugeridoDoNovoTotal() {
+    paymentAmountTyped = false;
+    _refreshSuggestedPaymentAmount();
+  }
+
   void _syncPaymentAmount() {
     paymentAmount.text = paymentValue.toStringAsFixed(2).replaceAll('.', ',');
     paymentAmount.selection = TextSelection.collapsed(

@@ -44,8 +44,9 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
   late final _urlController = TextEditingController(
     // O IP server local guardado (vindo da nuvem no login, ou digitado).
     // Vazio quando o terminal usa só a nuvem — nunca o endereço da nuvem.
-    text: widget.preferences.apiBaseUrlOverride ?? '',
+    text: widget.preferences.ipServerLocalGuardado ?? '',
   );
+  late bool _somenteNuvem = widget.preferences.somenteNuvem;
   final _formKey = GlobalKey<FormState>();
   bool _saving = false;
 
@@ -80,6 +81,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
     await widget.preferences.setApiBaseUrlOverride(
       text.isEmpty ? null : AppConfig.normalizeApiBaseUrl(text),
     );
+    await widget.preferences.setSomenteNuvem(_somenteNuvem);
     if (!mounted) return;
     Navigator.pop(context, true);
   }
@@ -114,7 +116,21 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
                 ),
                 child: SelectableText(AppConfig.ipServerNuvem),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
+              // Liga no TERMINAL o que o cadastro do restaurante liga para
+              // todos: o IP local fica guardado, mas ignorado.
+              SwitchListTile(
+                key: const ValueKey('somente-nuvem'),
+                contentPadding: EdgeInsets.zero,
+                value: _somenteNuvem,
+                onChanged: (valor) => setState(() => _somenteNuvem = valor),
+                title: const Text('Usar só a nuvem'),
+                subtitle: const Text(
+                  'Ignora o IP server local: este terminal entra e fica na '
+                  'nuvem. Vale a partir do próximo login.',
+                ),
+              ),
+              const SizedBox(height: 8),
               Text(
                 'O IP server local vem sozinho no login, do cadastro do '
                 'restaurante na nuvem (Restaurantes > IP server local). Digite '

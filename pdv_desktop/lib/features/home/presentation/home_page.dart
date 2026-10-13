@@ -1383,7 +1383,10 @@ class _HomePageState extends State<HomePage>
       orderType = 'counter';
       flowStep = 'order';
     });
-    catalogSearchFocus.requestFocus();
+    // SEM puxar o cursor para a busca: com ela focada, o leitor de comanda
+    // escrevia o código ali, como texto de busca, em vez de a tela ler a
+    // comanda para o pedido. A busca continua a um atalho (`_focusPageSearch`).
+    catalogSearchFocus.unfocus();
   }
 
   @override

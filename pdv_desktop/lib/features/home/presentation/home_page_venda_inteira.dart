@@ -27,6 +27,7 @@ mixin _VendaInteiraSection on _HomePageShared {
   set paymentDigits(String value);
   double get remainingTotal;
   void _syncPaymentAmount();
+  void _valorSugeridoDoNovoTotal();
   Future<bool> _resolverConflito(Object erro);
 
   /// A confirmação, pelo servidor, da prévia aberta na hora
@@ -56,10 +57,12 @@ mixin _VendaInteiraSection on _HomePageShared {
 
   Future<bool> _confirmarPrevia(int rodada) async {
     try {
-      final previa = await OrderDraftMaterializer(
-        api,
-        accessToken: token,
-      ).simular(draft, restaurantId: restaurantId, fechamento: draft.fechamento);
+      final previa = await OrderDraftMaterializer(api, accessToken: token)
+          .simular(
+            draft,
+            restaurantId: restaurantId,
+            fechamento: draft.fechamento,
+          );
       if (!mounted || !draft.simulada) return false;
       if (rodada == _rodadaDaPrevia) setState(() => _aplicarPrevia(previa));
       return true;
@@ -85,14 +88,18 @@ mixin _VendaInteiraSection on _HomePageShared {
       for (final item in _itensDe(previa))
         if (item['command_item'] != null) '${item['command_item']}',
     ];
+    final totalAntes = '${activeOrder?['total']}';
     activeOrder = previa;
     orderItems = _itensDe(previa);
     selectedCommand = draft.command;
     selectedTable = draft.table;
     selectedCustomer = draft.customer;
     orderType = draft.orderType;
-    // O valor sugerido acompanha o total confirmado, se o caixa não digitou.
-    if (!paymentAmountTyped) {
+    // Total diferente do mostrado (taxa, promoção): o valor sugerido vai para
+    // o novo. Igual, o que o caixa digitou (um pagamento parcial) fica.
+    if (totalAntes != '${previa['total']}') {
+      _valorSugeridoDoNovoTotal();
+    } else if (!paymentAmountTyped) {
       paymentDigits = (remainingTotal * 100).round().toString();
       _syncPaymentAmount();
     }

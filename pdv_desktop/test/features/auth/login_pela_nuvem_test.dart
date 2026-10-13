@@ -58,6 +58,7 @@ void main() {
 
   Future<(Map<String, dynamic>, ApiClient)> entrar({
     String baseInicial = nuvem,
+    bool somenteNuvem = false,
   }) async {
     final cliente = servidores();
     // O cliente do PDV COMO EM PRODUÇÃO: com o desvio automático para a
@@ -70,6 +71,7 @@ void main() {
       httpClient: cliente,
       lerIpServerLocal: () => ipGuardado,
       salvarIpServerLocal: (ip) async => ipGuardado = ip,
+      somenteNuvem: () => somenteNuvem,
     );
     final sessao = await login.entrar(usuario: 'maria', senha: 'x');
     return (sessao, principal);
@@ -189,4 +191,16 @@ void main() {
     expect(sessao['access'], 'token-loja');
     expect(sessao['cloud_access'], 'token-nuvem');
   });
+
+  test(
+    'terminal em so nuvem ignora o IP local da config e fica na nuvem',
+    () async {
+      // A config da nuvem trazia o IP da loja e forçava o terminal para ela,
+      // mesmo com o servidor da loja fora de uso.
+      final (sessao, principal) = await entrar(somenteNuvem: true);
+
+      expect(sessao['access'], 'token-nuvem');
+      expect(principal.baseUrl, nuvem);
+    },
+  );
 }

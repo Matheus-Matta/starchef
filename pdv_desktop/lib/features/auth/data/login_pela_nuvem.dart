@@ -19,6 +19,7 @@ import '../../../core/network/cloud_fallback.dart';
 /// entrava nem com a loja respondendo. Loja fora do ar → entra na nuvem.
 class LoginPelaNuvem {
   LoginPelaNuvem({
+    this.somenteNuvem = _nunca,
     required this.principal,
     required this.ipServerNuvem,
     required this.lerIpServerLocal,
@@ -37,6 +38,10 @@ class LoginPelaNuvem {
   final http.Client? httpClient;
 
   /// Faz o login e devolve a resposta do servidor que vai atender o PDV.
+  /// O terminal está em "só nuvem" (`LocalPreferences.somenteNuvem`)?
+  final bool Function() somenteNuvem;
+  static bool _nunca() => false;
+
   Future<Map<String, dynamic>> entrar({
     required String usuario,
     required String senha,
@@ -45,7 +50,10 @@ class LoginPelaNuvem {
     if (config != null) {
       await salvarIpServerLocal(config.ipLocal.isEmpty ? null : config.ipLocal);
     }
-    final ipLocal = config?.ipLocal ?? (lerIpServerLocal() ?? '');
+    // "Só nuvem" no terminal: nem o IP da config nem o guardado valem.
+    final ipLocal = somenteNuvem()
+        ? ''
+        : config?.ipLocal ?? (lerIpServerLocal() ?? '');
     final nuvem = (config?.nuvem ?? '').isEmpty ? ipServerNuvem : config!.nuvem;
     // A sessão da nuvem vai JUNTO com a da loja: é com ela que o desvio fala
     // com a nuvem (`api_client_nuvem.dart`).

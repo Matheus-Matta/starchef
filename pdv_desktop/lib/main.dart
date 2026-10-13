@@ -145,6 +145,7 @@ Future<void> main(List<String> arguments) async {
       principal: apiClient,
       ipServerNuvem: AppConfig.ipServerNuvem,
       lerIpServerLocal: () => preferences.apiBaseUrlOverride,
+      somenteNuvem: () => preferences.somenteNuvem,
       salvarIpServerLocal: preferences.setApiBaseUrlOverride,
     ),
   );

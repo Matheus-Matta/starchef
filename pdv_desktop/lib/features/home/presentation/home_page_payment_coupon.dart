@@ -32,6 +32,7 @@ mixin _PaymentCouponSection on _HomePageShared {
   /// são do MESMO resumo: um estilo próprio faria "Cupom NATAL10" desalinhar
   /// de "Desconto" logo acima.
   Widget _paymentSummaryRow(String label, String value, {bool strong});
+  void _valorSugeridoDoNovoTotal();
 
   /// O código que o pedido carrega agora, vazio quando não há cupom.
   String get _appliedCoupon => '${activeOrder?['coupon_code'] ?? ''}'.trim();
@@ -75,6 +76,7 @@ mixin _PaymentCouponSection on _HomePageShared {
         activeOrder = Map<String, dynamic>.from(atualizado);
         couponCode.text = '${atualizado['coupon_code'] ?? ''}';
         couponBusy = false;
+        _valorSugeridoDoNovoTotal();
       });
     } on ApiException catch (falha) {
       if (!mounted) return;
