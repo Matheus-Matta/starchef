@@ -72,6 +72,9 @@ services:
       <<: *redis-env
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+      # 3 processos em 2 vCPU: o padrão do gunicorn.conf.py (2 x CPU + 1)
+      # dava 5, que não cabem no limite de memória do backend.
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
       # O emissor ACBrLib: o do `.env` (ACBRLIB_URL), ou o desta nuvem.
       ACBRLIB_URL: ${ACBRLIB_URL:-http://fiscal-acbr:8001}
 
