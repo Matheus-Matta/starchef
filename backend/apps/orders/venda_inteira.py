@@ -25,10 +25,11 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from apps.core import uuid_do_aparelho
+from apps.orders.venda_inteira_itens import lancar_itens
 from apps.core.tenant import tenant_context
 from apps.orders.conflitos import ConflitoComDestino
 from apps.orders.models import Order, OrderItem
-from apps.orders.venda_inteira_partes import conferir_total, leitura_da_balanca, receber
+from apps.orders.venda_inteira_partes import conferir_total, receber
 
 TIPOS = {Order.TYPE_COUNTER, Order.TYPE_COMMAND, Order.TYPE_DELIVERY, Order.TYPE_TAKEAWAY}
 
@@ -49,7 +50,7 @@ def executar(*, restaurant, user, dados, responder, simular=False, terminal=None
         raise ValidationError("Informe o identificador do pedido.")
     with tenant_context(restaurant.account), transaction.atomic():
         pedido, nova = _pedido(restaurant, user, order_id, dados)
-        _itens(pedido, user, dados.get("items") or [])
+        lancar_itens(pedido, user, dados.get("items") or [])
         _comandas(pedido, user, dados.get("commands") or [], nova, dados.get("command_items"))
         _cozinha(pedido, user, dados.get("kitchen"))
         _fechar(pedido, user, dados.get("close"), autorizar_desconto)
@@ -80,37 +81,6 @@ def _pedido(restaurant, user, order_id, dados):
     extras = {"customer_id": dados["customer"]} if dados.get("customer") else {}
     return create_order(restaurant=restaurant, order_type=tipo, user=user, id=order_id,
                         metafields=dados.get("metafields"), **extras), True
-
-
-def _itens(pedido, user, linhas):
-    from apps.menu.models import Product
-    from apps.orders.services import add_order_item, recalculate_order
-
-    lancados = 0
-    for linha in linhas:
-        item_id = uuid_do_aparelho.ler(linha.get("id"), "item")
-        if item_id is None:
-            raise ValidationError("Cada item precisa do identificador dado pelo PDV.")
-        lancado = OrderItem.all_objects.filter(pk=item_id).values_list("order_id", flat=True).first()
-        if lancado is not None:
-            if lancado != pedido.pk:
-                raise VendaEmConflito("Um dos itens já pertence a outro pedido.")
-            continue
-        produto = Product.objects.filter(pk=linha.get("product")).first() if linha.get("product") else None
-        if produto is None:
-            raise ValidationError("Produto não encontrado.")
-        add_order_item(
-            order=pedido, product=produto, user=user, item_id=item_id,
-            quantity=linha.get("quantity"), variations=linha.get("variations") or [],
-            addons=linha.get("addons") or [], customer_note=linha.get("customer_note") or "",
-            scale_reading=leitura_da_balanca(pedido, linha.get("scale_reading")),
-            weight_kg=linha.get("weight_kg"), expected_unit_price=linha.get("expected_unit_price"),
-            metafields=linha.get("metafields"), recalcular=False,
-        )
-        lancados += 1
-    # O total é projeção dos itens: uma vez no fim, e não uma por item.
-    if lancados:
-        recalculate_order(pedido)
 
 
 def _comandas(pedido, user, comandas, nova, vistas=None):

@@ -22,12 +22,91 @@ mixin _VendaInteiraSection on _HomePageShared {
   String? get discountPassword;
   set discountPassword(String? value);
 
+  set flowStep(String value);
+  bool get paymentAmountTyped;
+  set paymentDigits(String value);
+  double get remainingTotal;
+  void _syncPaymentAmount();
+  Future<bool> _resolverConflito(Object erro);
+
+  /// A confirmação, pelo servidor, da prévia aberta na hora
+  /// (`previa_local.dart`). A conclusão espera por ela: nunca conclui sobre
+  /// a soma local.
+  Future<bool>? _confirmacao;
+
+  /// Cada cálculo ganha um número: a resposta de um antigo não sobrescreve a
+  /// de um ajuste (taxa, cupom) feito depois na tela de pagamento.
+  int _rodadaDaPrevia = 0;
+
+  /// Mostra o pagamento JÁ, com o pedido que o PDV montou, e pede a conta ao
+  /// servidor em paralelo. Fora do `_work` de propósito: `busy` trava a tela
+  /// inteira, e a tela travada era justamente a espera que isto tira.
+  @override
+  void _abrirPreviaLocal() {
+    final previa = previaLocal(draft);
+    draft.simulada = true;
+    activeOrder = previa;
+    orderItems = _itensDe(previa);
+    selectedCommand = draft.command;
+    selectedTable = draft.table;
+    selectedCustomer = draft.customer;
+    orderType = draft.orderType;
+    _confirmacao = _confirmarPrevia(++_rodadaDaPrevia);
+  }
+
+  Future<bool> _confirmarPrevia(int rodada) async {
+    try {
+      final previa = await OrderDraftMaterializer(
+        api,
+        accessToken: token,
+      ).simular(draft, restaurantId: restaurantId, fechamento: draft.fechamento);
+      if (!mounted || !draft.simulada) return false;
+      if (rodada == _rodadaDaPrevia) setState(() => _aplicarPrevia(previa));
+      return true;
+    } catch (erro) {
+      if (!mounted || rodada != _rodadaDaPrevia) return false;
+      // O servidor recusou a venda: volta ao pedido, como se a tela de
+      // pagamento nunca tivesse aberto, e resolve a recusa como antes.
+      setState(() {
+        _desfazerSimulacao();
+        flowStep = 'order';
+      });
+      if (!await _resolverConflito(erro)) {
+        _error(erro, title: 'Não foi possível calcular o pedido');
+      }
+      return false;
+    }
+  }
+
+  void _aplicarPrevia(Map<String, dynamic> previa) {
+    draft.simulada = true;
+    // A partir daqui a venda é ESTA: a conclusão leva só estas anotações.
+    draft.anotacoesVistas ??= [
+      for (final item in _itensDe(previa))
+        if (item['command_item'] != null) '${item['command_item']}',
+    ];
+    activeOrder = previa;
+    orderItems = _itensDe(previa);
+    selectedCommand = draft.command;
+    selectedTable = draft.table;
+    selectedCustomer = draft.customer;
+    orderType = draft.orderType;
+    // O valor sugerido acompanha o total confirmado, se o caixa não digitou.
+    if (!paymentAmountTyped) {
+      paymentDigits = (remainingTotal * 100).round().toString();
+      _syncPaymentAmount();
+    }
+  }
+
   /// O total OFICIAL da venda, sem criá-la: a tela de pagamento abre sobre o
   /// pedido que o servidor CALCULOU (taxa, promoção, cupom), e ele só nasce na
   /// conclusão, com os recebimentos, num envio só.
   @override
   Future<bool> _simularVenda() async {
     if (draft.isEmpty) return false;
+    // Um cálculo novo (ajuste na tela) vence o que ainda estava em voo.
+    final rodada = ++_rodadaDaPrevia;
+    _confirmacao = null;
     final previa = await _workResolvendo(
       () => OrderDraftMaterializer(api, accessToken: token).simular(
         draft,
@@ -37,20 +116,7 @@ mixin _VendaInteiraSection on _HomePageShared {
       errorTitle: 'Não foi possível calcular o pedido',
     );
     if (previa == null || !mounted) return false;
-    setState(() {
-      draft.simulada = true;
-      // A partir daqui a venda é ESTA: a conclusão leva só estas anotações.
-      draft.anotacoesVistas ??= [
-        for (final item in _itensDe(previa))
-          if (item['command_item'] != null) '${item['command_item']}',
-      ];
-      activeOrder = previa;
-      orderItems = _itensDe(previa);
-      selectedCommand = draft.command;
-      selectedTable = draft.table;
-      selectedCustomer = draft.customer;
-      orderType = draft.orderType;
-    });
+    if (rodada == _rodadaDaPrevia) setState(() => _aplicarPrevia(previa));
     return true;
   }
 
@@ -58,6 +124,9 @@ mixin _VendaInteiraSection on _HomePageShared {
   @override
   void _desfazerSimulacao() {
     if (!draft.simulada) return;
+    // A confirmação que ainda voltar já não vale para nada na tela.
+    _rodadaDaPrevia++;
+    _confirmacao = null;
     draft.simulada = false;
     draft.fechamento = null;
     draft.anotacoesVistas = null;
@@ -75,6 +144,10 @@ mixin _VendaInteiraSection on _HomePageShared {
   Future<bool> _concluirVendaSimulada(
     List<Map<String, dynamic>> recebimentos,
   ) async {
+    // Aberto na hora: conclui só depois de o servidor confirmar o total. O
+    // clique espera aqui em vez de se perder (`_work` desiste se ocupado).
+    final pendente = _confirmacao;
+    if (pendente != null && !await pendente) return false;
     final resposta = await _workResolvendo(
       () => OrderDraftMaterializer(api, accessToken: token).concluir(
         draft,

@@ -155,7 +155,12 @@ mixin _OrderSection on _HomePageShared {
     // O fechamento vai na PRIMEIRA simulação (`fechamento_inicial.dart`):
     // eram duas idas ao servidor antes de a tela de pagamento abrir.
     if (simulando) draft.fechamento = fechamentoInicial();
-    if (simulando && !await _simularVenda()) {
+    // Balcão: a tela abre NA HORA e o servidor confirma em paralelo
+    // (`previa_local.dart`); com comanda, espera a resposta como antes.
+    final naHora = simulando && podeAbrirNaHora(draft);
+    if (naHora) {
+      _abrirPreviaLocal();
+    } else if (simulando && !await _simularVenda()) {
       draft.fechamento = null;
       // A recusa abriu a conta onde a comanda já estava: se ela está em
       // aberto, o caixa segue para pagá-la; paga, fica só aberta na tela.

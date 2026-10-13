@@ -247,12 +247,17 @@ def add_order_item(
     metafields=None,
     item_id=None,
     recalcular=True,
+    lote=False,
 ):
     """Lança o item no pedido.
 
     `recalcular=False` é de quem lança vários itens de uma vez e recalcula o
     pedido UMA vez no fim (venda inteira): o total é projeção dos itens, e
     refazê-lo a cada item custava ~8 consultas por item na conta do caixa.
+
+    `lote=True` é da venda inteira, que já travou o pedido nesta transação e
+    conferiu num select só que os produtos são do restaurante: reler o pedido e
+    perguntar produto a produto eram duas idas ao banco por item.
 
     `item_id` é o UUID que o PDV deu à linha (venda inteira, `venda_inteira.py`):
     com ele a linha NÃO é somada a outra igual — cada linha do PDV é um item com
@@ -262,11 +267,12 @@ def add_order_item(
         # Conta, restaurante e filial vêm no MESMO select: o item os usa logo
         # abaixo, e lidos um a um eram três consultas por item. O lock fica só
         # no pedido (`of`), como antes.
-        order = (
-            Order.objects.select_for_update(of=("self",))
-            .select_related("account", "restaurant", "branch")
-            .get(pk=order.pk)
-        )
+        if not lote:
+            order = (
+                Order.objects.select_for_update(of=("self",))
+                .select_related("account", "restaurant", "branch")
+                .get(pk=order.pk)
+            )
         # O código é exigido somente pelo app do garçom. O backend apenas
         # normaliza o que recebeu, pois estas rotas também atendem o desktop,
         # que não participa dessa regra de interface.
@@ -278,7 +284,7 @@ def add_order_item(
         )
         if product.account_id != order.account_id:
             raise ValidationError("O produto não pertence à conta do pedido.")
-        if not product.restaurants.filter(pk=order.restaurant_id).exists():
+        if not lote and not product.restaurants.filter(pk=order.restaurant_id).exists():
             raise ValidationError("O produto não está disponível neste restaurante.")
         if order.is_locked:
             raise ValidationError("Pedidos pagos, cancelados ou estornados não podem ser alterados.")

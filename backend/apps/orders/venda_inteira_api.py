@@ -31,6 +31,9 @@ def responder(viewset, request):
                                  restaurante.account_id, permission=DISCOUNT_PERMISSION)
 
     def montar(pedido, recebimentos, nova):
+        # Relido com os prefetches do viewset: o pedido avulso fazia o
+        # serializer buscar produto, restaurante e adicionais item a item.
+        pedido = viewset.queryset.filter(pk=pedido.pk).first() or pedido
         return {
             "order": viewset.get_serializer(pedido).data,
             "payments": PaymentSerializer(recebimentos, many=True).data,

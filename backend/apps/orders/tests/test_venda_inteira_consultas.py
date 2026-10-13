@@ -14,8 +14,8 @@ from apps.orders.tests.test_venda_inteira import URL, _venda
 pytestmark = pytest.mark.django_db
 
 #: Consultas que cada item A MAIS pode custar (lock, produto, preço, insert,
-#: auditoria). Antes eram 19.
-POR_ITEM = 12
+#: auditoria). Eram 19 antes da validação em lote.
+POR_ITEM = 7
 
 
 def _consultas(api_client, corpo):

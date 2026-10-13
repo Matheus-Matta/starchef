@@ -87,6 +87,7 @@ mixin _HomePageShared on State<HomePage> {
   /// A venda inteira (`orders/venda_inteira.py`), providos por `_VendaInteiraSection`.
   Future<bool> _simularVenda();
   void _desfazerSimulacao();
+  void _abrirPreviaLocal();
   Future<bool> _concluirVendaSimulada(List<Map<String, dynamic>> recebimentos);
 
   /// `_work` que resolve a recusa indo ao lugar certo (`_ConflitosSection`).

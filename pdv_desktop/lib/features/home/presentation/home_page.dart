@@ -86,6 +86,7 @@ import 'payment_keypad.dart';
 import 'table_details_panel.dart';
 import 'table_occupancy.dart';
 import '../../orders/data/fechamento_inicial.dart';
+import '../../orders/data/previa_local.dart';
 import '../../orders/data/order_draft.dart';
 import '../../orders/data/order_exit.dart';
 import '../../orders/data/order_draft_cart.dart';
