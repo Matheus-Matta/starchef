@@ -25,6 +25,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from apps.core import uuid_do_aparelho
+from apps.core.audit import auditoria_em_lote
 from apps.orders.venda_inteira_itens import lancar_itens
 from apps.synchronization.services import outbox_lote
 from apps.core.tenant import tenant_context
@@ -53,7 +54,9 @@ def executar(*, restaurant, user, dados, responder, simular=False, terminal=None
     # transação; na simulação, que é desfeita, nem é montada (`outbox_lote`).
     captura = outbox_lote.descartando() if simular else outbox_lote.em_lote()
     with tenant_context(restaurant.account), transaction.atomic():
-        with captura:
+        # A auditoria por dentro: sai antes da captura, que sincroniza também
+        # os registros dela.
+        with captura, auditoria_em_lote(descartar=simular):
             pedido, nova = _pedido(restaurant, user, order_id, dados)
             lancar_itens(pedido, user, dados.get("items") or [])
             _comandas(pedido, user, dados.get("commands") or [], nova, dados.get("command_items"))

@@ -1,3 +1,6 @@
+import contextvars
+from contextlib import contextmanager
+
 from apps.core.models import AuditLog
 
 
@@ -51,7 +54,7 @@ def record_audit(
         forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
         ip_address = forwarded.split(",")[0] if forwarded else request.META.get("REMOTE_ADDR")
 
-    return AuditLog.all_objects.create(
+    registro = AuditLog(
         account=account,
         restaurant=restaurant,
         branch=branch,
@@ -64,3 +67,39 @@ def record_audit(
         metadata=metadata or {},
         ip_address=ip_address,
     )
+    # Dentro da venda, a auditoria sai junta no fim (`auditoria_em_lote`).
+    pendentes = _lote.get()
+    if pendentes is not None:
+        if pendentes is not _DESCARTAR:
+            pendentes.append(registro)
+        return registro
+    registro.save()
+    return registro
+
+
+_DESCARTAR = object()
+_lote = contextvars.ContextVar("auditoria_lote", default=None)
+
+
+@contextmanager
+def auditoria_em_lote(*, descartar=False):
+    """Junta a auditoria do bloco e a grava de uma vez no fim (ou nenhuma).
+
+    Uma venda de 50 itens gravava 154 registros, um por vez (~0,34 s). Em
+    lote, uma inserção, e cada registro dispara o seu `post_save` como antes
+    (`core/lote.py`) — a auditoria sincroniza. `descartar` é para o que vai ser
+    desfeito de qualquer jeito: a simulação da venda.
+    """
+    if _lote.get() is not None:  # dentro de outro lote: quem abriu grava
+        yield
+        return
+    pendentes = _DESCARTAR if descartar else []
+    token = _lote.set(pendentes)
+    try:
+        yield
+    finally:
+        _lote.reset(token)
+    if pendentes is not _DESCARTAR:
+        from apps.core.lote import criar_em_lote
+
+        criar_em_lote(AuditLog, pendentes)

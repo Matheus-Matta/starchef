@@ -17,6 +17,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from apps.core.audit import record_audit
+from apps.core.lote import criar_em_lote
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.menu.units import IncompatibleUnitError, convert
@@ -287,7 +288,7 @@ def deduct_order_stock(*, order, user, items=None):
             ).values_list("source_key", flat=True)
         )
 
-        created = []
+        novos = []
         for component in components:
             if component.source_key in already:
                 continue
@@ -295,7 +296,7 @@ def deduct_order_stock(*, order, user, items=None):
             if quantity <= 0:
                 continue
             unit_cost = Decimal(str(component.unit_cost or 0))
-            movement = StockMovement.objects.create(
+            novos.append(StockMovement(
                 account=order.account,
                 restaurant=order.restaurant,
                 branch=order.branch,
@@ -312,13 +313,19 @@ def deduct_order_stock(*, order, user, items=None):
                 source_snapshot=component.snapshot,
                 created_by=user,
                 updated_by=user,
-            )
-            created.append(movement)
+            ))
+        # De uma vez (`core/lote.py`): eram 98 gravações numa venda de 50
+        # itens, cada uma com a sua checagem de id. O id calculado pela origem
+        # (`StockMovement.save`, que o lote não chama) vem daqui, com UMA
+        # consulta para os já ocupados.
+        _ids_calculados(order.account_id, novos)
+        created = criar_em_lote(StockMovement, novos)
+        for movement in created:
             record_audit(
                 action=AuditLog.ACTION_CREATED,
                 instance=movement,
                 actor=user,
-                metadata={"auto": True, "source_key": component.source_key},
+                metadata={"auto": True, "source_key": movement.source_key},
             )
 
         if skipped:
@@ -329,6 +336,22 @@ def deduct_order_stock(*, order, user, items=None):
                 metadata={"event": "stock_deduction_skipped", "skipped": skipped},
             )
         return created
+
+
+def _ids_calculados(account_id, movimentos):
+    """O id que `StockMovement.save` daria a cada um, decidido em lote.
+
+    A mesma baixa feita na loja e na nuvem é UM movimento: o id vem da
+    `source_key`. Ocupado por um movimento excluído, fica o sorteado.
+    """
+    from apps.stock.movement_ids import id_do_movimento
+
+    calculados = [(m, id_do_movimento(account_id, m.source_key)) for m in movimentos if m.source_key]
+    ocupados = set(StockMovement.all_objects.filter(pk__in=[c for _, c in calculados])
+                   .values_list("pk", flat=True))
+    for movimento, calculado in calculados:
+        if calculado not in ocupados:
+            movimento.id = calculado
 
 
 @transaction.atomic

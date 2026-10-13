@@ -257,7 +257,8 @@ def add_order_item(
 
     `lote=True` é da venda inteira, que já travou o pedido nesta transação e
     conferiu num select só que os produtos são do restaurante: reler o pedido e
-    perguntar produto a produto eram duas idas ao banco por item.
+    perguntar produto a produto eram duas idas ao banco por item. E o item volta
+    MONTADO, sem gravar, para a venda gravar todos de uma vez.
 
     `item_id` é o UUID que o PDV deu à linha (venda inteira, `venda_inteira.py`):
     com ele a linha NÃO é somada a outra igual — cada linha do PDV é um item com
@@ -382,7 +383,7 @@ def add_order_item(
                 recalculate_order(order)
             return existing
 
-        item = OrderItem.objects.create(
+        item = OrderItem(
             **({"id": item_id} if item_id else {}),
             account=order.account,
             restaurant=order.restaurant,
@@ -405,8 +406,8 @@ def add_order_item(
             updated_by=user,
             metafields=extras,
         )
-        for addon in selected_addons:
-            OrderItemAddon.objects.create(
+        adicionais = [
+            OrderItemAddon(
                 account=order.account,
                 restaurant=order.restaurant,
                 branch=order.branch,
@@ -418,12 +419,23 @@ def add_order_item(
                 created_by=user,
                 updated_by=user,
             )
+            for addon in selected_addons
+        ]
+        record_audit(action=AuditLog.ACTION_CREATED, instance=item, actor=user)
+        if lote:
+            # Validado e montado, mas NÃO gravado: quem lança vários grava
+            # todos de uma vez (`venda_inteira_itens.lancar_itens`).
+            item._lote_adicionais = adicionais
+            item._lote_leitura = reading_to_link
+            return item
+        item.save(force_insert=True)
+        for adicional in adicionais:
+            adicional.save(force_insert=True)
         if reading_to_link is not None:
             reading_to_link.order_item = item
             reading_to_link.save(update_fields=["order_item", "updated_at"])
         if recalcular:
             recalculate_order(order)
-        record_audit(action=AuditLog.ACTION_CREATED, instance=item, actor=user)
         return item
 
 

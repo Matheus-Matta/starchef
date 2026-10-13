@@ -2,7 +2,8 @@
 from django.core.exceptions import ValidationError
 
 from apps.core import uuid_do_aparelho
-from apps.orders.models import OrderItem
+from apps.core.lote import criar_em_lote
+from apps.orders.models import OrderItem, OrderItemAddon
 from apps.orders.venda_inteira_partes import leitura_da_balanca
 
 
@@ -43,20 +44,29 @@ def lancar_itens(pedido, user, linhas):
     # A disputa de promoções, uma vez para todos (sem restaurante, como o
     # `current_price` de um produto avulso: o preço não muda por vir em lote).
     primar(list(produtos.values()))
+    montados = []
     for item_id, linha in novos:
         produto = produtos.get(str(linha.get("product")))
         if produto is None:
             raise ValidationError("Produto não encontrado.")
         if str(produto.pk) not in no_restaurante:
             raise ValidationError("O produto não está disponível neste restaurante.")
-        add_order_item(
+        montados.append(add_order_item(
             order=pedido, product=produto, user=user, item_id=item_id,
             quantity=linha.get("quantity"), variations=linha.get("variations") or [],
             addons=linha.get("addons") or [], customer_note=linha.get("customer_note") or "",
             scale_reading=leitura_da_balanca(pedido, linha.get("scale_reading")),
             weight_kg=linha.get("weight_kg"), expected_unit_price=linha.get("expected_unit_price"),
             metafields=linha.get("metafields"), recalcular=False, lote=True,
-        )
+        ))
+    # Todos de uma vez (`core/lote.py`): eram uma gravação por item e outra
+    # por adicional, cada uma com a sua captura.
+    criar_em_lote(OrderItem, montados)
+    criar_em_lote(OrderItemAddon, [a for item in montados for a in item._lote_adicionais])
+    for item in montados:
+        if item._lote_leitura is not None:
+            item._lote_leitura.order_item = item
+            item._lote_leitura.save(update_fields=["order_item", "updated_at"])
     # O total é projeção dos itens: uma vez no fim, e não uma por item.
     if novos:
         recalculate_order(pedido)
