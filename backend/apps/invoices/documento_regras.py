@@ -12,6 +12,14 @@ from apps.invoices.providers_erros import FiscalRejection
 
 TWO_PLACES = Decimal("0.01")
 
+#: Formas com o grupo do cartão na nota: crédito, débito e PIX.
+COM_GRUPO_DO_CARTAO = {"03", "04", "17"}
+#: Pagamento NÃO integrado: a maquininha é separada do sistema, então não há
+#: CNPJ da credenciadora, bandeira nem autorização a informar — e o
+#: `tpIntegra=2` é o que dispensa os três. Sem o grupo, a SEFAZ recusava a
+#: NFC-e paga no cartão com 391 ("Não informados os dados do cartão").
+NAO_INTEGRADO = "2"
+
 
 class DocumentoRegras:
     rotulo = "Focus NFe"
@@ -32,6 +40,13 @@ class DocumentoRegras:
                 return "03"
         return "99"
 
+    @classmethod
+    def _forma_de_pagamento(cls, payment, valor):
+        forma = {"forma_pagamento": cls._payment_code(payment), "valor_pagamento": valor}
+        if forma["forma_pagamento"] in COM_GRUPO_DO_CARTAO:
+            forma["tipo_integracao"] = NAO_INTEGRADO
+        return forma
+
     def _build_payments(self, invoice):
         from apps.payments.models import Payment
 
@@ -41,7 +56,7 @@ class DocumentoRegras:
             paid_value = payment.amount
             if payment.payment_method.method_type == "cash":
                 paid_value += payment.change_amount
-            result.append({"forma_pagamento": self._payment_code(payment), "valor_pagamento": str(paid_value)})
+            result.append(self._forma_de_pagamento(payment, str(paid_value)))
         return result or [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
 
     # O desconto tem teto por item (ver `discount_allocation.py`): o rateio

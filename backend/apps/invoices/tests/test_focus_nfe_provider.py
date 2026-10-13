@@ -160,7 +160,7 @@ def test_payload_maps_approved_payments_and_cash_change(mock_post, account, rest
     sent_payload = mock_post.call_args.kwargs["json"]
     assert sent_payload["formas_pagamento"] == [
         {"forma_pagamento": "01", "valor_pagamento": "25.00"},
-        {"forma_pagamento": "17", "valor_pagamento": "5.00"},
+        {"forma_pagamento": "17", "valor_pagamento": "5.00", "tipo_integracao": "2"},
     ]
     assert sent_payload["valor_troco"] == "5.00"
 

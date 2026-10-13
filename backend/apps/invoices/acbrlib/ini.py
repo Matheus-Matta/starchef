@@ -58,11 +58,18 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
     })
     secao("Transportador", {"modFrete": documento.get("modalidade_frete", "9")})
     for n, pagamento in enumerate(documento["formas_pagamento"], start=1):
-        secao(f"pag{n:03d}", {"tPag": pagamento["forma_pagamento"],
-                              "vPag": pagamento["valor_pagamento"]})
+        secao(f"pag{n:03d}", _pagamento(pagamento))
     if documento.get("valor_troco"):
         secao("pag", {"vTroco": documento["valor_troco"]})
     return "\n".join(linhas)
+
+
+def _pagamento(pagamento):
+    """Uma forma de pagamento no INI. `tpIntegra` é o grupo do cartão (391)."""
+    campos = {"tPag": pagamento["forma_pagamento"], "vPag": pagamento["valor_pagamento"]}
+    if pagamento.get("tipo_integracao"):
+        campos["tpIntegra"] = pagamento["tipo_integracao"]
+    return campos
 
 
 def _identificacao(documento, invoice, tp_emis, contingencia):
