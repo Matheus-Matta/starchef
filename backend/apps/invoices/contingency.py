@@ -95,6 +95,21 @@ def justifica_contingencia(erro):
     return classificar(erro) == INDISPONIBILIDADE
 
 
+#: A EXCEÇÃO à regra acima, só onde o emissor assina sozinho (ACBrLib) e a
+#: empresa ligou a contingência offline — decisão do dono da loja
+#: (2026-10-13): o cliente não sai sem cupom. Recusada, a nota sai em
+#: contingência e o erro é corrigido e reemitido depois; incerta (tempo
+#: esgotado, "aguardando autorização"), a chave normal é consultada antes de
+#: transmitir a contingência (`contingencia_offline.py`), e a autorizada vence.
+#: Cadastro inválido continua de fora: sem certificado nem a contingência sai.
+FALHAS_QUE_IMPRIMEM_EM_CONTINGENCIA = (FiscalUnavailable, FiscalAmbiguous, FiscalRejection)
+
+
+def imprime_em_contingencia(erro):
+    """A porta da contingência para imprimir (ACBrLib). Ver acima."""
+    return isinstance(erro, FALHAS_QUE_IMPRIMEM_EM_CONTINGENCIA)
+
+
 def motivo_da_recusa(erro):
     """Por que esta falha NÃO vira contingência. Vazio quando ela vira."""
     if justifica_contingencia(erro):

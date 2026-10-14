@@ -37,7 +37,8 @@ def autenticar(authorization: str = Header(default="")):
 async def _falha(_request, erro):
     for classe, (status, codigo) in _ERROS.items():
         if isinstance(erro, classe):
-            return JSONResponse({"erro": codigo, "mensagem": str(erro)}, status_code=status)
+            return JSONResponse({"erro": codigo, "motivo": erro.motivo, "mensagem": str(erro)},
+                                status_code=status)
     return JSONResponse({"erro": "incerto", "mensagem": f"Falha inesperada: {erro}"}, status_code=500)
 
 

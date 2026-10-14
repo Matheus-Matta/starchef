@@ -130,6 +130,27 @@ class PdvCashCenterDialog extends StatelessWidget {
                   ),
                 ],
               ),
+            const SizedBox(height: 10),
+            // Reimprimir: o papel enroscou ou se perdeu. Só imprime — não
+            // mexe no caixa nem abre a gaveta.
+            AppResponsiveFields(
+              breakpoint: 420,
+              spacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('cash-reprint-opening'),
+                  onPressed: () => _select(context, 'reprint_opening'),
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Reimprimir abertura'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('cash-reprint-closing'),
+                  onPressed: () => _select(context, 'reprint_closing'),
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Reimprimir fechamento'),
+                ),
+              ],
+            ),
           ],
         ),
       ),

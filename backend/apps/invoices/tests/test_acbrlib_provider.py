@@ -17,11 +17,14 @@ from apps.invoices.services import (
     is_fiscally_printable,
     reprocess_pending_fiscal_invoices,
 )
+from apps.invoices.tests.certificado_de_teste import SENHA, pfx
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
 
 pytestmark = pytest.mark.django_db
+
+PFX = pfx(cnpj="11222333000181")
 
 XML = "<nfeProc>assinado</nfeProc>"
 
@@ -48,6 +51,8 @@ class Comunicador:
             raise requests.ConnectionError("recusada")
         if self.sefaz == "timeout":
             raise requests.Timeout("lento")
+        if self.sefaz == "timeout_so_na_normal" and json.get("tp_emis") == "1":
+            raise requests.Timeout("lento")
         if rota == "/v1/nfe/emitir" and json["tp_emis"] == "9":
             return _resposta(200, {"situacao": "contingencia", "chave": "3" * 44, "xml": XML,
                                    "qrcode": "https://qr?p=offline"})
@@ -69,7 +74,7 @@ def ambiente(settings, monkeypatch, account, restaurant, branch, manager_user):
     settings.ACBRLIB_URL = "http://acbr.local"
     settings.ACBRLIB_TOKEN = "segredo"
     monkeypatch.setattr("apps.invoices.acbrlib.provider.segredos_de", lambda _c: SimpleNamespace(
-        certificate_base64="UEZY", certificate_password="1234", csc_id="000001", csc_token="CSC"))
+        certificate_base64=PFX, certificate_password=SENHA, csc_id="000001", csc_token="CSC"))
     config = FiscalConfig.objects.create(
         account=account, restaurant=restaurant, branch=branch,
         provider=FiscalConfig.PROVIDER_ACBRLIB, cnpj="11222333000181", uf="SP",
@@ -101,12 +106,12 @@ def test_autorizada_vira_emitida_com_protocolo_e_xml(ambiente, monkeypatch):
     assert rota == "/v1/nfe/emitir" and corpo["tp_emis"] == "1"
     assert "[Identificacao]" in corpo["ini"] and "tpEmis=1" in corpo["ini"]
     assert "[Produto001]" in corpo["ini"] and "[pag001]" in corpo["ini"]
-    assert corpo["certificado"]["pfx_base64"] == "UEZY"
+    assert corpo["certificado"]["pfx_base64"] == PFX
 
 
-def test_recusa_da_sefaz_vira_erro_e_nao_contingencia(ambiente, monkeypatch):
-    ambiente.config.offline_contingency = True
-    ambiente.config.save()
+def test_recusa_da_sefaz_sem_contingencia_ligada_vira_erro(ambiente, monkeypatch):
+    # Com a contingência ligada a recusa sai em contingência para imprimir
+    # (test_acbrlib_contingencia_para_imprimir).
     nota, comunicador = _emitir(ambiente, monkeypatch, "recusa")
 
     assert nota.status == Invoice.STATUS_ERROR
@@ -137,9 +142,7 @@ def test_sefaz_fora_sem_contingencia_so_espera_transmitir(ambiente, monkeypatch)
     assert len(comunicador.chamadas) == 1
 
 
-def test_tempo_esgotado_consulta_e_nunca_entra_em_contingencia(ambiente, monkeypatch):
-    ambiente.config.offline_contingency = True
-    ambiente.config.save()
+def test_tempo_esgotado_sem_contingencia_ligada_so_consulta(ambiente, monkeypatch):
     nota, comunicador = _emitir(ambiente, monkeypatch, "timeout")
 
     assert nota.fiscal_payload["awaiting"] == "reconciliation"

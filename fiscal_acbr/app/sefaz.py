@@ -17,7 +17,16 @@ PARALISADA = {"108", "109"}
 
 
 class FalhaFiscal(Exception):
-    """Base das falhas que o contrato devolve com `erro` (ver `main._ERROS`)."""
+    """Base das falhas que o contrato devolve com `erro` (ver `main._ERROS`).
+
+    `motivo` detalha a família para o operador (`senha_invalida`,
+    `certificado_vencido`, `acbrlib_ausente`, `sefaz_sem_comunicacao`...);
+    vazio quando a frase já basta. Quem decide o destino da nota é o `erro`.
+    """
+
+    def __init__(self, mensagem="", motivo=""):
+        super().__init__(mensagem)
+        self.motivo = motivo
 
 
 class FalhaDeComunicacao(FalhaFiscal):
@@ -49,5 +58,5 @@ def situacao(cstat):
     if cstat in CANCELADA:
         return "cancelada"
     if cstat in PARALISADA:
-        raise FalhaDeComunicacao(f"SEFAZ com o serviço paralisado (cStat {cstat}).")
+        raise FalhaDeComunicacao(f"SEFAZ com o serviço paralisado (cStat {cstat}).", "sefaz_sem_comunicacao")
     return "rejeitada"

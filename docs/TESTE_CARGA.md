@@ -213,8 +213,22 @@ Cinco fases:
    certo. A estação tem lista de operadores autorizados, então a suíte se
    vincula antes: falta de pré-condição do teste não pode virar "defeito do
    sistema" no relatório.
-3. **Turno** — vendas concorrentes de ponta a ponta: abre o pedido (comanda ou
-   balcão), lança item, recebe em `/orders/{id}/pay/`.
+3. **Turno** — vendas concorrentes pela **venda inteira** (`/orders/submit/`,
+   `suites/desktop_venda.py`), como o app faz hoje: simula ao abrir o
+   pagamento e conclui num envio só (itens, fechamento, recebimentos e
+   cozinha). Cada trabalhador é um PDV, e cada venda sorteia um cenário com
+   grupo próprio no relatório (p50/p95/p99 e coluna `409`):
+   `simples`, `cupom_valido` (o desconto TEM de vir), `cupom_recusado` (código
+   inexistente: a simulação TEM de dar 4xx, e a venda segue sem ele) e
+   `dividido` (dinheiro + outra forma; cartão leva `card_subtype`). A nota da
+   execução diz quantas vendas por cenário e quantos 409 no turno.
+
+   Medido em 2026-10-13 no alvo de produção local (4 workers, sync ligada):
+   perfil `leve` aprovado, 79 vendas, 0 conflito; o `concluir_cupom_valido`
+   fica ~1,5x mais lento que os outros, e no `medio` (64 PDVs) ~2x, com 3
+   tempos esgotados — todos usam o MESMO cupom, e a venda com ele entra em
+   fila. Cupom da campanha usado em todos os caixas ao mesmo tempo é o caso
+   real; é o próximo ponto a investigar.
 4. **Fiscal** — emissão, e uma regra que vale sozinha: `emitted: false` **sem**
    `message` é defeito. Sem motivo, o PDV cai num texto fixo que ele inventa, e
    o operador lê "o provedor fiscal não está configurado" para qualquer falha —

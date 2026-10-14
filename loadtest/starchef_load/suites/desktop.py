@@ -13,11 +13,14 @@ As fases seguem o dia do caixa:
 
 1. **Abertura** — o app dispara sete leituras de uma vez ao abrir. Com N
    terminais ligando às 8h, isso é uma rajada simultânea, não uma fila.
-2. **Turno** — vendas concorrentes: abre, lança item, paga, conclui.
+2. **Turno** — vendas concorrentes pela venda inteira (`/orders/submit/`):
+   simula, conclui; com cupom válido e recusado e pagamento dividido
+   (`desktop_venda.py`).
 3. **Fiscal** — emissão, e a regra que hoje importa: recusa TEM de dizer o
    motivo.
 4. **Conferência** — ninguém foi cobrado duas vezes.
 """
+import random
 import threading
 import time
 import uuid
@@ -25,6 +28,7 @@ from decimal import Decimal
 
 from ..auth import clone
 from ..workers import LoadRunner
+from . import desktop_venda
 
 SUITE = "desktop"
 
@@ -50,13 +54,6 @@ ROTAS_DE_ABERTURA = [
     "/api/v1/payments/methods/?page_size=100&is_active=true",
     "/api/v1/cash-stations/?page_size=300&is_active=true",
 ]
-
-
-def _preco(produto):
-    try:
-        return Decimal(str(produto.get("price") or produto.get("sale_price") or "0"))
-    except (TypeError, ValueError):
-        return Decimal("0")
 
 
 def fase_abertura(ctx):
@@ -163,111 +160,35 @@ def fase_abrir_caixa(ctx, refs):
     return False
 
 
-def _uma_venda(ctx, sessao, refs, rng):
-    """Abre, lança um item, paga e conclui. Devolve o total cobrado."""
-    restaurante = str((refs.restaurant or {}).get("id", ""))
-
-    corpo = {"order_type": "counter", "restaurant": restaurante}
-    if refs.command_codes and rng.random() < 0.6:
-        rota, corpo = "/api/v1/orders/open-command/", {
-            "command": rng.choice(refs.ids["commands"])
-        }
-    else:
-        rota = "/api/v1/orders/"
-
-    inicio = time.time()
-    resposta = sessao.post(rota, corpo, idempotency_key=str(uuid.uuid4()))
-    ctx.record(SUITE, f"{SUITE}::abrir_pedido", "POST", rota, resposta,
-               expectation="2xx", started=inicio)
-    if resposta.status not in (200, 201):
-        return None
-    pedido = (resposta.json() or {}).get("id")
-    if not pedido:
-        return None
-
-    produto = rng.choice(refs.unit_products) if refs.unit_products else None
-    if produto is None:
-        return None
-    inicio = time.time()
-    item = sessao.post(
-        f"/api/v1/orders/{pedido}/items/",
-        {
-            "product": produto.get("id"),
-            "quantity": 1,
-            "variations": [],
-            "addons": [],
-            # Conferencia, nao preco: o total autoritativo e do servidor.
-            "expected_unit_price": str(_preco(produto)),
-            "customer_note": "",
-        },
-        idempotency_key=str(uuid.uuid4()),
-    )
-    ctx.record(SUITE, f"{SUITE}::lancar_item", "POST", "/api/v1/orders/{id}/items/",
-               item, expectation="2xx", started=inicio)
-    if item.status not in (200, 201):
-        return None
-
-    # O fluxo real tem dois passos que faltavam aqui: a cozinha recebe o lote
-    # ANTES de o caixa fechar, e o fechamento aplica taxa/desconto e trava o
-    # total. Pular isso media um caminho que o app nunca percorre.
-    inicio = time.time()
-    cozinha = sessao.post(
-        f"/api/v1/orders/{pedido}/send-to-kitchen/",
-        {"client_batch_serial": str(uuid.uuid4())},
-        idempotency_key=str(uuid.uuid4()),
-    )
-    ctx.record(SUITE, f"{SUITE}::enviar_cozinha", "POST",
-               "/api/v1/orders/{id}/send-to-kitchen/", cozinha,
-               expectation="2xx", started=inicio)
-
-    inicio = time.time()
-    fechamento = sessao.post(
-        f"/api/v1/orders/{pedido}/close/",
-        {"discount": 0, "service_fee_enabled": False, "fiscal_customer_cpf": ""},
-        idempotency_key=str(uuid.uuid4()),
-    )
-    ctx.record(SUITE, f"{SUITE}::fechar", "POST", "/api/v1/orders/{id}/close/",
-               fechamento, expectation="2xx", started=inicio)
-
-    metodo = (refs.payment_by_type.get("cash") or {}).get("id")
-    if not metodo:
-        return None
-    valor = _preco(produto)
-    inicio = time.time()
-    # `/orders/{id}/pay/` — e nao `/payments/`, que responde 405. E a rota que
-    # o app usa de verdade (`home_page_payment.dart`).
-    pagamento = sessao.post(
-        f"/api/v1/orders/{pedido}/pay/",
-        {"payment_method": metodo, "amount": str(valor)},
-        idempotency_key=str(uuid.uuid4()),
-    )
-    ctx.record(SUITE, f"{SUITE}::pagar", "POST", "/api/v1/orders/{id}/pay/", pagamento,
-               expectation="2xx", started=inicio)
-    if pagamento.status not in (200, 201):
-        return None
-    return {"pedido": pedido, "valor": valor}
-
-
 def fase_turno(ctx, refs):
-    """Vendas concorrentes. Aqui aparece qualquer serialização de escrita."""
-    ctx.log(f"[{SUITE}] fase 3/5 — turno de vendas concorrentes")
+    """Vendas concorrentes pelo `/orders/submit/` (`desktop_venda.py`).
+
+    Cada trabalhador é um PDV; os cenários (simples, cupom válido e recusado,
+    pagamento dividido) se misturam como num turno de verdade.
+    """
+    ctx.log(f"[{SUITE}] fase 3/5 — turno de vendas concorrentes (venda inteira)")
     rng = ctx.rng(31337)
-    vendas = []
+    cupom = desktop_venda.criar_cupom(ctx)
+    resultados = []
     trava = threading.Lock()
 
     def vender(indice, _iteracao):
         sessao = clone(ctx.session, terminal_name=f"LT-PDV-{indice + 1}")
-        venda = _uma_venda(ctx, sessao, refs, rng)
+        with trava:
+            sorteio = random.Random(rng.random())
+        venda = desktop_venda.uma_venda(ctx, sessao, refs, sorteio, cupom)
         if venda:
             with trava:
-                vendas.append(venda)
+                resultados.append(venda)
 
     LoadRunner(
         workers=ctx.config.workers, rate=ctx.config.rate,
         duration=ctx.config.duration, count=ctx.config.count,
     ).run(vender)
 
+    vendas = [r for r in resultados if r.get("pedido")]
     ctx.note(SUITE, f"turno: {len(vendas)} vendas concluídas de ponta a ponta")
+    desktop_venda.conferir_cenarios(ctx, resultados)
     ctx.check(
         SUITE, "o turno produz vendas",
         bool(vendas),

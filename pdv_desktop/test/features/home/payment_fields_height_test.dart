@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
-import 'package:starchef_pdv_desktop/core/network/api_client.dart';
 import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
-import 'package:starchef_pdv_desktop/features/home/presentation/coupon_select.dart';
 import 'package:starchef_pdv_desktop/features/home/presentation/payment_adjustments.dart';
 import 'package:starchef_pdv_desktop/features/home/presentation/payment_input_style.dart';
 
-/// Cupom, forma de pagamento, CPF/CNPJ e desconto com a MESMA altura.
+/// Forma de pagamento, CPF/CNPJ e desconto com a MESMA altura.
+///
+/// O cupom fica de fora: voltou ao campo com botões Aplicar/Retirar e a
+/// recusa do servidor embaixo dele (`payment_coupon_input.dart`), que precisa
+/// crescer para mostrar a frase inteira.
 ///
 /// Com a fonte real (Segoe UI) o campo com ícone ficava mais alto que o sem
 /// ícone: o tema dá altura mínima só à caixa do ícone. A fonte dos testes não
@@ -27,18 +27,6 @@ void main() {
         home: Scaffold(
           body: Column(
             children: [
-              CouponSelect(
-                api: ApiClient(
-                  baseUrl: 'http://loja.local/api/v1',
-                  client: MockClient((_) async => http.Response('{}', 200)),
-                ),
-                accessToken: 't',
-                aplicado: 'NATAL10',
-                busy: false,
-                erro: '',
-                onAplicar: (_) {},
-                onRemover: () {},
-              ),
               PaymentAdjustments(
                 cobrarTaxa: true,
                 rotuloTaxa: '10%',
@@ -59,7 +47,6 @@ void main() {
     );
 
     for (final chave in [
-      'payment-coupon',
       'payment-document',
       'payment-discount',
     ]) {

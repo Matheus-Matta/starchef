@@ -120,17 +120,7 @@ mixin _InputSection on _HomePageShared {
     // mesmo item de novo soma quantidade lá dentro.
     modalAcceptsScanner: scanningProductId != null,
     hasOrder: activeOrder != null,
-    textFieldOwnsArrows: _focoNaListaDoCupom,
   );
-
-  /// O cursor está no cupom, cuja lista de opções anda pelas setas: ali ↑ e ↓
-  /// não trocam a forma de pagamento.
-  bool get _focoNaListaDoCupom =>
-      FocusManager.instance.primaryFocus?.context
-          ?.findAncestorWidgetOfExactType<
-            RawAutocomplete<Map<String, dynamic>>
-          >() !=
-      null;
 
   /// ↑ e ↓ na tela de pagamento: a forma anterior ou a seguinte da lista.
   void _trocarFormaDePagamento(int passo) {

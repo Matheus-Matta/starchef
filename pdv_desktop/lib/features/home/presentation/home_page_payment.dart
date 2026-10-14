@@ -44,6 +44,10 @@ mixin _PaymentSection on _HomePageShared {
   int get stagedPaymentSequence;
   set stagedPaymentSequence(int value);
   bool get completingOrder;
+  set couponBusy(bool value);
+  set adjustBusy(bool value);
+  CalculoDoTotal get calculoDoTotal;
+  bool get _calculandoTotal;
   set completingOrder(bool value);
   String? get removingPaymentId;
   set removingPaymentId(String? value);
@@ -160,6 +164,10 @@ mixin _PaymentSection on _HomePageShared {
     paymentDigits = (remainingTotal * 100).round().toString();
     _syncPaymentAmount();
     paymentReference.clear();
+    // Um ajuste ainda no ar de uma visita anterior não vale para esta.
+    calculoDoTotal.descartar();
+    couponBusy = false;
+    adjustBusy = false;
     setState(() => flowStep = 'payment');
   }
 
@@ -257,6 +265,9 @@ mixin _PaymentSection on _HomePageShared {
   /// venda passa a paga e o papel sai em seguida, sem uma janela entre as duas
   /// coisas em que o operador pudesse sair da tela.
   void _addSplitPayment() {
+    // A mesma trava do botão, para o Enter e o atalho: sobre um total que
+    // ainda está sendo calculado, nada se registra.
+    if (_calculandoTotal) return;
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
     final method = paymentMethods.firstWhere(
       (item) => '${item['id']}' == selectedPaymentMethod,
@@ -422,7 +433,7 @@ mixin _PaymentSection on _HomePageShared {
   }
 
   Future<void> _completePaidOrder() async {
-    if (completingOrder) return;
+    if (completingOrder || _calculandoTotal) return;
     if (remainingTotal > .009) {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
       return;

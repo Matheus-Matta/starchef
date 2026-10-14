@@ -38,6 +38,7 @@ mixin _PaymentView on _HomePageShared {
   Widget _couponControl(BuildContext context);
   Widget _ajustesControl(BuildContext context);
   Widget _couponSummaryRow();
+  bool get _calculandoTotal;
   Widget _documentoSummaryRow();
   void _goBack();
   void _pressPaymentKey(String key);
@@ -285,21 +286,15 @@ mixin _PaymentView on _HomePageShared {
                                   },
                                 ),
                         ),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 40,
-                          child: FilledButton.icon(
-                            onPressed: remainingTotal <= .009
-                                ? _completePaidOrder
-                                : null,
-                            icon: const Icon(Icons.check_circle, size: 18),
-                            label: Text(
-                              stagedPayments.isEmpty
-                                  ? 'Concluir pedido'
-                                  : 'Concluir pedido e receber',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ),
+                        BotaoDoPagamento(
+                          calculando: _calculandoTotal,
+                          onPressed: remainingTotal <= .009
+                              ? _completePaidOrder
+                              : null,
+                          icon: Icons.check_circle,
+                          label: stagedPayments.isEmpty
+                              ? 'Concluir pedido'
+                              : 'Concluir pedido e receber',
                         ),
                       ],
                     ),
@@ -413,21 +408,16 @@ mixin _PaymentView on _HomePageShared {
                         // tela, decididos sem ver o total.
                         _ajustesControl(context),
                         const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 40,
-                          child: FilledButton.icon(
-                            onPressed: paymentValue > 0
-                                ? _addSplitPayment
-                                : null,
-                            icon: const Icon(Icons.add_card, size: 18),
-                            label: Text(
-                              pendingChange > .009
-                                  ? 'Receber e registrar troco'
-                                  : 'Adicionar pagamento',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ),
+                        // "Calculando total..." enquanto cupom, desconto,
+                        // taxa ou documento estão no servidor: registrar sobre
+                        // o total que ainda vai mudar cobraria o valor errado.
+                        BotaoDoPagamento(
+                          calculando: _calculandoTotal,
+                          onPressed: paymentValue > 0 ? _addSplitPayment : null,
+                          icon: Icons.add_card,
+                          label: pendingChange > .009
+                              ? 'Receber e registrar troco'
+                              : 'Adicionar pagamento',
                         ),
                       ],
                     ),

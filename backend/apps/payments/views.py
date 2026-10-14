@@ -129,7 +129,8 @@ class CashStationViewSet(BaseTenantViewSet):
 class CashRegisterViewSet(BaseTenantViewSet):
     serializer_class = CashRegisterSerializer
     queryset = CashRegister.objects.select_related("restaurant", "branch", "opened_by", "closed_by").prefetch_related("movements").all()
-    filterset_fields = ["status", "opened_by", "station"]
+    # `cash_station`: o PDV reimprime a última abertura/fechamento DESTA estação.
+    filterset_fields = ["status", "opened_by", "station", "cash_station"]
     ordering_fields = ["opened_at", "closed_at"]
 
     @action(detail=True, methods=["get"], url_path="statement")

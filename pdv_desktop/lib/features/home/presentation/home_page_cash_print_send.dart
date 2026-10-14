@@ -29,6 +29,7 @@ mixin _CashPrintDelivery on _HomePageShared {
     required String summary,
     required String failureTitle,
     Map<String, String> extraQuery = const {},
+    bool abrirGaveta = true,
   }) async {
     try {
       final rendered = await api.get(
@@ -101,8 +102,8 @@ mixin _CashPrintDelivery on _HomePageShared {
         // Todo documento daqui existe porque alguém vai pôr a mão no
         // dinheiro: abertura conta o fundo de troco, sangria tira, suprimento
         // põe e o fechamento confere. A gaveta abre junto com o comprovante,
-        // e não em um segundo gesto.
-        printer.compose(content: content, openCashDrawer: true),
+        // e não em um segundo gesto. A REIMPRESSÃO não abre: é só papel.
+        printer.compose(content: content, openCashDrawer: abrirGaveta),
       );
       // ACEITO NA FILA é silêncio: a impressora não respondeu agora, mas o
       // cupom está guardado e sai sozinho quando ela voltar. Avisar a cada

@@ -74,6 +74,7 @@ class GroupStats:
             "duracao_s": round(self.elapsed, 2),
             "p50_ms": round(percentile(ordered, 0.50), 1),
             "p90_ms": round(percentile(ordered, 0.90), 1),
+            "p95_ms": round(percentile(ordered, 0.95), 1),
             "p99_ms": round(percentile(ordered, 0.99), 1),
             "max_ms": round(ordered[-1], 1) if ordered else 0.0,
             "vereditos": dict(self.verdicts),

@@ -160,16 +160,26 @@ def _classificar(mensagem):
     """A falha da lib vira a família do contrato (docs/FISCAL_ACBRLIB.md)."""
     texto = mensagem.lower()
     if any(p in texto for p in ("certificado", "pfx", "senha", "csc", "biblioteca")):
-        return sefaz.FalhaDeConfiguracao(mensagem)
+        return sefaz.FalhaDeConfiguracao(mensagem, _motivo_de_configuracao(texto))
     if any(p in texto for p in ("schema", "validar", "rejei", "ini inv")):
         return sefaz.DocumentoInvalido(mensagem)
     if any(p in texto for p in ("timeout", "tempo limite", "timed out", "read timed")):
         return sefaz.FalhaIncerta(mensagem)
     if any(p in texto for p in ("socket", "conex", "http", "host", "resolver", "winsock")):
-        return sefaz.FalhaDeComunicacao(mensagem)
+        return sefaz.FalhaDeComunicacao(mensagem, "sefaz_sem_comunicacao")
     # Falha não reconhecida durante o envio: tratar como INCERTA é o lado seguro —
     # o backend consulta antes de qualquer reenvio.
     return sefaz.FalhaIncerta(mensagem)
+
+
+def _motivo_de_configuracao(texto):
+    if "senha" in texto:
+        return "senha_invalida"
+    if any(p in texto for p in ("vencid", "expirad", "expired")):
+        return "certificado_vencido"
+    if any(p in texto for p in ("certificado", "pfx")):
+        return "certificado_invalido"
+    return ""
 
 
 def _c(texto):

@@ -237,6 +237,17 @@ E o erro, em HTTP, é classificado com as exceções que o backend já tem
 | situação `rejeitada`/`denegada` | `FiscalRejection` | erro |
 | situação `nao_encontrada` | `FiscalNotFound` | pode transmitir de novo |
 
+O erro do comunicador traz também um **`motivo`**, que o backend guarda na
+exceção (`.motivo`) e transforma na providência escrita na nota
+(`acbrlib/cliente.py`): `acbrlib_ausente`, `sefaz_sem_comunicacao`,
+`comunicador_fora_do_ar`, `senha_invalida`, `certificado_vencido`,
+`certificado_invalido`. Antes de qualquer chamada, o backend confere o A1
+sozinho (`acbrlib/certificado.py`): `certificado_ausente`, `senha_invalida`,
+`certificado_invalido`, `certificado_vencido` (com a data) e `cnpj_diferente`
+(a raiz do CNPJ do certificado — o da matriz vale para a filial). Nenhuma
+mensagem nem log leva o certificado, o base64 ou a senha: o que a lib ecoar é
+trocado por `***` antes de ser gravado.
+
 ## Plano de contingência
 
 A regra que já existe e continua valendo: **contingência é para
@@ -266,10 +277,36 @@ com `tpEmis=9`, chave própria, QR Code offline e transmissão depois.
      ISSUED   ERROR + alerta     continua pendente
 ```
 
+### O cliente não sai sem cupom (decisão de 2026-10-13)
+
+Com **Permitir contingência offline** ligado, a ACBrLib também assina e
+imprime em contingência a nota **recusada** pela SEFAZ, a de **tempo
+esgotado** e a que ficou **aguardando autorização** (em processamento)
+— `contingency.imprime_em_contingencia` e `contingencia_offline.tentar(...,
+para_imprimir=True)`. Erro de cadastro (certificado, CSC) continua de fora:
+sem certificado nem a contingência se assina. Desligado, vale o diagrama acima.
+
+* **Recusada:** o DANFE de contingência sai e o motivo fica em
+  `contingency_reason`. Transmitida, a contingência é recusada de novo (o
+  conteúdo é o mesmo) e a nota vira erro; depois da correção, **Reenviar**
+  descarta o XML recusado e emite uma nota NORMAL nova, mesmo número, chave
+  refeita (`reemitir_normal_apos_recusa`). O cupom impresso fica com a chave
+  da contingência, que nunca é autorizada — é o preço de o cliente sair com
+  papel; corrigir rápido (prazo de 24 h) é o que limita isso.
+* **Tempo esgotado / em processamento:** a nota normal PODE ter sido
+  autorizada. A chave dela fica em `chave_normal` e, antes de transmitir a
+  contingência, é CONSULTADA (`conferir_a_normal`): autorizada, a nota passa a
+  ser ela (chave, protocolo, QR refeito) e a contingência é descartada
+  (`contingencia_descartada`), sem transmitir — nada em dobro; desconhecida
+  ou recusada, a contingência é transmitida; ainda processando, espera a
+  próxima rodada.
+
 Os pontos que impedem documento em dobro:
 
-1. **Timeout nunca vira contingência.** A SEFAZ pode ter autorizado a primeira;
-   o próximo passo é sempre consultar (`AWAITING_RECONCILIATION`).
+1. **Timeout não transmite contingência às cegas.** A SEFAZ pode ter
+   autorizado a primeira: sem contingência ligada, o próximo passo é consultar
+   (`AWAITING_RECONCILIATION`); com ela, a chave normal é consultada antes da
+   transmissão (acima).
 2. **O XML de contingência é transmitido como foi assinado.** A retransmissão
    não refaz `dhEmi` nem a chave (`_refresh_emission_for_retry` é pulado): o
    cupom impresso tem aquela chave, e é ela que a SEFAZ tem de receber.
@@ -389,10 +426,13 @@ Resultado da primeira rodada e os dois defeitos que ela achou:
 4. Derrubar a internet → venda → DANFE de **contingência**; nota `pendente`.
 5. Reiniciar o container com a nota pendente → nada se perde.
 6. Voltar a internet → a nota é autorizada sozinha em até 2 min.
-7. Simular timeout (bloquear a resposta) → a nota fica em conciliação e é
-   consultada, nunca reenviada.
+7. Simular timeout (bloquear a resposta) → sem contingência ligada, a nota
+   fica em conciliação e é consultada, nunca reenviada; com ela, sai o DANFE de
+   contingência e a chave normal é consultada antes da transmissão.
 8. Dois caixas emitindo ao mesmo tempo → números diferentes.
-9. Forçar uma rejeição (NCM inválido) → erro explicado, sem contingência.
+9. Forçar uma rejeição (NCM inválido) → sem contingência ligada, erro
+   explicado; com ela, DANFE de contingência, erro na transmissão, corrigir e
+   reenviar sai como nota normal nova.
 10. Cancelar uma nota autorizada → evento registrado.
 
 O mapeamento do INI (`acbrlib/ini.py`) segue o leiaute da ACBrLib NFe e é

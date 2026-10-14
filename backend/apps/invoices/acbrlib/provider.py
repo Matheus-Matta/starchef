@@ -11,6 +11,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.invoices.acbrlib import cliente, ini
+from apps.invoices.acbrlib.certificado import CertificadoRecusado, conferir_certificado
 from apps.invoices.acbrlib.emitente import Emitente
 from apps.invoices.documento import DocumentoFiscal
 from apps.invoices.emission_secrets import segredos_de
@@ -35,8 +36,11 @@ class AcbrLibProvider(DocumentoFiscal, FiscalProvider):
         if motivo:
             return motivo
         segredos = segredos_de(config)
-        if not segredos.certificate_base64:
-            return "ACBrLib: a empresa não tem certificado A1 cadastrado."
+        try:
+            conferir_certificado(segredos.certificate_base64, segredos.certificate_password,
+                                 cnpj_emitente=Emitente(config).cnpj)
+        except CertificadoRecusado as recusa:
+            return f"ACBrLib: {recusa}"
         if config.document_model == FiscalConfig.MODEL_NFCE and not segredos.csc_token:
             return "ACBrLib: a NFC-e precisa do CSC cadastrado."
         return None
@@ -138,6 +142,10 @@ class AcbrLibProvider(DocumentoFiscal, FiscalProvider):
         """
         segredos = segredos_de(config)
         emitente = Emitente(config)
+        # Antes do comunicador: a recusa da ACBrLib era a mesma frase para senha
+        # errada, vencido e certificado de outra empresa.
+        conferir_certificado(segredos.certificate_base64, segredos.certificate_password,
+                             cnpj_emitente=emitente.cnpj)
         return {
             "referencia": str(invoice.pk), "modelo": str(invoice.document_model or config.document_model),
             "ambiente": str(invoice.environment or config.environment), "uf": emitente.uf,

@@ -255,7 +255,7 @@ def is_fiscally_printable(invoice):
     return invoice.emission_type == Invoice.EMISSION_CONTINGENCY
 
 
-def entrar_em_contingencia(invoice, erro, *, user=None):
+def entrar_em_contingencia(invoice, erro, *, user=None, para_imprimir=False):
     """Marca a nota como emitida em contingência (tpEmis=9). Porta ÚNICA.
 
     Recusa tudo que não seja indisponibilidade, e a recusa é uma exceção — não
@@ -271,7 +271,10 @@ def entrar_em_contingencia(invoice, erro, *, user=None):
     """
     from apps.invoices import contingency
 
-    if not contingency.justifica_contingencia(erro):
+    # `para_imprimir`: a exceção da ACBrLib (`contingency.imprime_em_contingencia`).
+    aceita = (contingency.imprime_em_contingencia(erro) if para_imprimir
+              else contingency.justifica_contingencia(erro))
+    if not aceita:
         raise ValidationError(contingency.motivo_da_recusa(erro))
 
     invoice.emission_type = Invoice.EMISSION_CONTINGENCY
@@ -700,13 +703,21 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
             provider.emit(invoice, config)
         except FiscalRejection as exc:
             # Recusa definitiva: reenviar repete a recusa. Precisa de correcao humana.
-            _mark_failed(invoice, FAILURE_REJECTION, exc)
+            # Na ACBrLib com contingencia ligada o cupom sai assim mesmo
+            # (`contingencia_offline.py`), e a correcao vem depois.
+            if not contingencia_offline.tentar(invoice, config, provider, exc, user=user,
+                                               para_imprimir=True):
+                _mark_failed(invoice, FAILURE_REJECTION, exc)
         except FiscalConfigurationError as exc:
             # Nenhuma nota da empresa sai enquanto isso nao for corrigido.
             _mark_failed(invoice, FAILURE_CONFIGURATION, exc)
         except FiscalAmbiguous as exc:
             # Pode ter sido emitida do outro lado: consultar antes de reenviar.
-            _mark_awaiting(invoice, AWAITING_RECONCILIATION, exc)
+            # Na ACBrLib o cupom sai em contingencia, e a normal e consultada
+            # antes de transmiti-la (`chave_normal`).
+            if not contingencia_offline.tentar(invoice, config, provider, exc, user=user,
+                                               para_imprimir=True):
+                _mark_awaiting(invoice, AWAITING_RECONCILIATION, exc)
         except FiscalUnavailable as exc:
             # Sem SEFAZ: contingencia offline, se o emissor sabe assinar e a
             # empresa permite; senao a retransmissao periodica resolve.
@@ -718,7 +729,11 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
         else:
             if invoice.status == Invoice.STATUS_PENDING and provider.transmits:
                 # O provider aceitou mas a SEFAZ ainda processa: so consultar.
-                _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
+                # Na ACBrLib o cliente nao espera: cupom em contingencia.
+                processando = FiscalAmbiguous("A SEFAZ ainda nao autorizou a nota (em processamento).")
+                if not contingencia_offline.tentar(invoice, config, provider, processando, user=user,
+                                                   para_imprimir=True):
+                    _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
         # Quanto a chamada demorou, e se ela ja voltou autorizada. E a
         # diferenca entre 'a SEFAZ responde na hora' e 'o cliente espera'.
         _record_timing(
@@ -978,10 +993,13 @@ def resend_fiscal_invoice(invoice, *, user=None):
                 )
                 return locked
 
+            contingencia_offline.reemitir_normal_apos_recusa(locked)
             if not contingencia_offline.transmite_como_assinada(locked):
                 _refresh_emission_for_retry(locked, config)
             try:
-                get_provider(config.provider).emit(locked, config)
+                provider = get_provider(config.provider)
+                if not contingencia_offline.conferir_a_normal(locked, provider, config):
+                    provider.emit(locked, config)
             except FiscalAmbiguous as exc:
                 _mark_awaiting(locked, AWAITING_RECONCILIATION, exc)
             except FiscalUnavailable as exc:
@@ -1052,9 +1070,11 @@ def reprocess_pending_fiscal_invoices(*, account=None):
             retried += 1
             try:
                 if awaiting == AWAITING_TRANSMISSION:
-                    if not contingencia_offline.transmite_como_assinada(invoice):
-                        _refresh_emission_for_retry(invoice, config)
-                    provider.emit(invoice, config)
+                    # A normal autorizada (contingência incerta): nada a transmitir.
+                    if not contingencia_offline.conferir_a_normal(invoice, provider, config):
+                        if not contingencia_offline.transmite_como_assinada(invoice):
+                            _refresh_emission_for_retry(invoice, config)
+                        provider.emit(invoice, config)
                 else:
                     provider.status(invoice)
             except FiscalNotFound as exc:

@@ -93,7 +93,8 @@ def to_markdown(dados):
             [
                 {
                     "suite": g["suite"], "grupo": g["grupo"], "reqs": g["requisicoes"], "rps": g["rps"],
-                    "p50": g["p50_ms"], "p99": g["p99_ms"], "max": g["max_ms"],
+                    "p50": g["p50_ms"], "p95": g.get("p95_ms", ""), "p99": g["p99_ms"],
+                    "max": g["max_ms"], "409": g["status"].get("409", 0),
                     "5xx": g["vereditos"].get(verdicts.SERVER_ERROR, 0),
                     "sem_resposta": g["vereditos"].get(verdicts.TRANSPORT_ERROR, 0),
                     "lixo_aceito": g["vereditos"].get(verdicts.GARBAGE_ACCEPTED, 0),
@@ -102,7 +103,7 @@ def to_markdown(dados):
                 }
                 for g in sorted(dados["grupos"], key=lambda item: -item["requisicoes"])
             ],
-            ["suite", "grupo", "reqs", "rps", "p50", "p99", "max", "5xx", "sem_resposta", "lixo_aceito", "429", "503"],
+            ["suite", "grupo", "reqs", "rps", "p50", "p95", "p99", "max", "409", "5xx", "sem_resposta", "lixo_aceito", "429", "503"],
         ),
         "",
         "## Verificacoes de coerencia",

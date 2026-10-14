@@ -107,8 +107,13 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
   mesma entrada de cache.
 - **↑ e ↓ trocam a forma de pagamento** na tela de pagamento, dando a volta
   nas pontas (`forma_vizinha.dart`). Valem com o cursor no campo do valor,
-  que não usa as setas (`PdvShortcut.insideTextField`); no campo do cupom as
-  setas continuam andando na lista de cupons (`textFieldOwnsArrows`).
+  que não usa as setas (`PdvShortcut.insideTextField`).
+- **"Calculando total..."** (`calculo_do_total.dart`): cupom, desconto, taxa,
+  CPF/CNPJ e a prévia aberta na hora passam por UM cálculo por vez. Enquanto
+  ele está no servidor, "Adicionar pagamento" e "Concluir" mostram
+  "Calculando total..." e não aceitam clique, Enter nem atalho; um segundo
+  ajuste é recusado (duplo clique), a recusa deixa o total anterior e uma
+  resposta de uma visita anterior à tela é descartada.
 - **Carrinho só com o total.** Subtotal, taxa de serviço e desconto saíram do
   rodapé do carrinho: eles se decidem (e se mostram) na tela de pagamento, e
   ali roubavam espaço da lista de itens. O desconto é digitado na tela de
@@ -126,10 +131,10 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`OfflineStore`** (`core/network/offline_store.dart`, `sqlite_async`): cache de respostas GET (até 300 entradas, sem TTL — offline sempre entrega a última resposta conhecida) + uma **outbox transacional** de mutações pendentes, com retry, lease e mapeamento de ID temporário→real. Escopado por `origem-da-API | conta | usuário` (com fallback se claims do JWT faltarem).
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
-- **Tela de pagamento, sem modal antes dela.** À esquerda, o **cupom** (um
-  seletor com busca no servidor, `coupon_select.dart`: "Nenhum" sempre em
-  primeiro, os vigentes mais usados, Enter aplica um código fora da lista e o
-  X remove) e o resumo, que mostra o que foi aplicado: taxa de serviço (ou
+- **Tela de pagamento, sem modal antes dela.** À esquerda, o **cupom** (campo
+  de código com **Aplicar**/**Trocar** e **Retirar**, `payment_coupon_input.dart`,
+  e os vigentes mais usados em botões logo abaixo, `coupon_suggestions.dart`)
+  e o resumo, que mostra o que foi aplicado: taxa de serviço (ou
   "não cobrada"), desconto, cupom e "CPF/CNPJ na nota". À direita, abaixo do
   teclado (que se ajusta à altura que sobra), a **chave da taxa de serviço**,
   o **CPF ou CNPJ** (um campo só, reconhecido pelo tamanho) e o **desconto**

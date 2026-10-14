@@ -39,14 +39,20 @@ mixin _CashOpsSection on _HomePageShared {
   Future<void> _refreshCashSession();
   // Comprovantes no papel (`_CashPrintSection`): saem DEPOIS de a operação
   // estar registrada, e uma impressora fora do ar nunca a desfaz.
-  Future<void> _printCashOpening(Map<String, dynamic> session);
+  Future<void> _printCashOpening(
+    Map<String, dynamic> session, {
+    bool abrirGaveta,
+  });
   Future<void> _printCashMovement(
     Map<String, dynamic> movement,
     Map<String, dynamic> session, {
     String authorizedBy,
     String managerReason,
   });
-  Future<void> _printCashClosing(Map<String, dynamic> session);
+  Future<void> _printCashClosing(
+    Map<String, dynamic> session, {
+    bool abrirGaveta,
+  });
 
   Future<void> _openCash() async {
     final userId = widget.controller.session!.user.id;

@@ -24,6 +24,8 @@ mixin _PaymentAdjustSection on _HomePageShared {
   List<Map<String, dynamic>> get registeredPayments;
   double get defaultServiceFeePercent;
   bool get adjustBusy;
+  CalculoDoTotal get calculoDoTotal;
+  bool get _calculandoTotal;
   set adjustBusy(bool value);
   String get adjustError;
   set adjustError(String value);
@@ -55,65 +57,73 @@ mixin _PaymentAdjustSection on _HomePageShared {
     Map<String, dynamic> mudanca, {
     String? senha,
   }) async {
-    if (adjustBusy || activeOrder == null) return;
+    if (_calculandoTotal || activeOrder == null) return;
     setState(() {
       adjustBusy = true;
       adjustError = '';
     });
     final fechamento = {..._fechamentoAtual(), ...mudanca};
     final senhaUsada = senha ?? discountPassword;
-    try {
-      final Map<String, dynamic> atualizado;
-      if (draft.simulada) {
-        atualizado = await OrderDraftMaterializer(api, accessToken: token)
-            .simular(
-              draft,
-              restaurantId: restaurantId,
-              fechamento: fechamento,
-              senhaDoCaixa: senhaUsada,
-            );
-        draft.fechamento = fechamento;
-      } else {
-        // Sem `coupon_code`: o cupom tem rota própria, e omiti-lo aqui é
-        // "não mexe" — reenviá-lo poderia reavaliar um cupom já aceito.
-        atualizado = await api.post(
-          '/orders/${activeOrder!['id']}/close/',
-          body: {
-            ...fechamento..remove('coupon_code'),
-            'cash_password': ?senhaUsada,
-          },
-          accessToken: token,
+    final simulada = draft.simulada;
+    final pedidoId = activeOrder!['id'];
+    Object? recusa;
+    await calculoDoTotal.rodar<Map<String, dynamic>>(
+      calcular: () async => Map<String, dynamic>.from(
+        simulada
+            ? await OrderDraftMaterializer(api, accessToken: token).simular(
+                draft,
+                restaurantId: restaurantId,
+                fechamento: fechamento,
+                senhaDoCaixa: senhaUsada,
+              )
+            // Sem `coupon_code`: o cupom tem rota própria, e omiti-lo aqui é
+            // "não mexe" — reenviá-lo poderia reavaliar um cupom já aceito.
+            : await api.post(
+                '/orders/$pedidoId/close/',
+                body: {
+                  ...fechamento..remove('coupon_code'),
+                  'cash_password': ?senhaUsada,
+                },
+                accessToken: token,
+              ),
+      ),
+      aplicar: (atualizado) {
+        if (simulada) draft.fechamento = fechamento;
+        if (senha != null) discountPassword = senha;
+        if (!mounted) return;
+        setState(() {
+          activeOrder = atualizado;
+          adjustBusy = false;
+          _valorSugeridoDoNovoTotal();
+        });
+      },
+      falhar: (erro) => recusa = erro,
+    );
+    final falha = recusa;
+    if (falha == null || !mounted) return;
+    setState(() => adjustBusy = false);
+    // 403 no desconto: um gerente precisa aprovar. Quem não é gerente libera
+    // com a senha de ações do caixa, como no cancelamento.
+    if (falha is ApiException &&
+        falha.statusCode == 403 &&
+        senha == null &&
+        mudanca.containsKey('discount')) {
+      final liberada = await _autorizarDesconto(falha.message);
+      if (liberada != null && mounted) {
+        return _ajustarFechamento(mudanca, senha: liberada);
+      }
+      if (mounted) {
+        setState(
+          () => adjustError =
+              'Desconto não aplicado: ele precisa da aprovação de um gerente.',
         );
       }
-      if (senha != null) discountPassword = senha;
-      if (!mounted) return;
-      setState(() {
-        activeOrder = Map<String, dynamic>.from(atualizado);
-        adjustBusy = false;
-        _valorSugeridoDoNovoTotal();
-      });
-    } on ApiException catch (falha) {
-      if (!mounted) return;
-      setState(() => adjustBusy = false);
-      // 403 no desconto: um gerente precisa aprovar. Quem não é gerente
-      // libera com a senha de ações do caixa, como no cancelamento.
-      if (falha.statusCode == 403 &&
-          senha == null &&
-          mudanca.containsKey('discount')) {
-        final liberada = await _autorizarDesconto(falha.message);
-        if (liberada != null && mounted) {
-          return _ajustarFechamento(mudanca, senha: liberada);
-        }
-        if (mounted) {
-          setState(
-            () => adjustError =
-                'Desconto não aplicado: ele precisa da aprovação de um gerente.',
-          );
-        }
-        return;
-      }
-      setState(() => adjustError = falha.message);
+      return;
     }
+    // Recusado, o total fica o anterior: nada do que foi pedido entrou.
+    setState(
+      () => adjustError = falha is ApiException ? falha.message : '$falha',
+    );
   }
 
   void _ajustarDocumento(String digitos) => _ajustarFechamento({
@@ -151,7 +161,8 @@ mixin _PaymentAdjustSection on _HomePageShared {
           : cnpjDigits(pedido['fiscal_customer_cnpj']),
       descontoCentavos: centavosDe(pedido['discount']),
       maxDescontoCentavos: centavosDe(pedido['subtotal']),
-      busy: adjustBusy,
+      // Trava também enquanto o CUPOM recalcula: um cálculo por vez.
+      busy: _calculandoTotal,
       // Com recebimento lançado, mudar o total deixaria o recebido diferente
       // da conta: remove-se o pagamento primeiro.
       bloqueado: registeredPayments.isNotEmpty,

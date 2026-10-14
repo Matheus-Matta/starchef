@@ -307,6 +307,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   Future<void> _applyRestaurantTiming({required bool restaurantChanged}) async {
+    AppLogger.instance.info(
+      'scale_troca_de_configuracao',
+      data: {'restaurante': restaurantChanged, 'tempos': !restaurantChanged},
+    );
     await _stopStation();
     if (!mounted) return;
     machine.removeListener(_onMachineChanged);
@@ -530,6 +534,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   Future<void> _selectScale(String? value) async {
+    AppLogger.instance.info(
+      'scale_troca_de_configuracao',
+      data: {'de': scaleId, 'para': value},
+    );
     await _stopStation();
     await _detachScanner(clearBinding: true);
     if (!mounted) return;

@@ -5,6 +5,7 @@ import 'package:flutter_libserialport/flutter_libserialport.dart';
 import '../peripheral_lock.dart';
 import 'scale_protocol.dart';
 import 'scale_sample.dart';
+import 'scale_event_log.dart';
 import 'scale_transport.dart';
 
 /// Lê o peso direto do equipamento, sem intermediários.
@@ -28,7 +29,9 @@ class SerialScaleReader {
     this.silenceTimeout = const Duration(seconds: 4),
     this.role = 'balanca-rapida',
     this.ownerDetail,
-  });
+  }) {
+    _log.registrar('criado');
+  }
 
   /// Constrói um leitor ligado a uma porta serial real.
   factory SerialScaleReader.serial({
@@ -93,6 +96,10 @@ class SerialScaleReader {
   /// hardware conectado.
   final ScaleTransport Function() transportFactory;
 
+  /// O que aconteceu com a porta, em ordem (`scale_event_log.dart`).
+  late final ScaleEventLog _log = ScaleEventLog(portName);
+  List<String> get eventos => _log.eventos;
+
   final _samples = StreamController<ScaleSample>.broadcast();
   final _statuses = StreamController<ScaleLinkStatus>.broadcast();
 
@@ -129,13 +136,27 @@ class SerialScaleReader {
   bool get isAtZero => (_lastSample?.weightKg ?? 0) <= zeroThresholdKg;
 
   Future<void> start() async {
-    if (_disposed || _started) return;
+    if (_disposed || _started) return _conectando;
     _started = true;
     await _connect();
   }
 
-  Future<void> _connect() async {
-    if (_disposed || !_started) return;
+  /// A abertura em curso. UMA por vez: a reconexão automática e o "pegar
+  /// peso" disputavam a porta, e a perdedora derrubava a vencedora.
+  Future<void>? _conectando;
+
+  /// Cada abertura ganha um número: um aviso atrasado de um canal antigo não
+  /// derruba nem reagenda o novo. Defesa: hoje a assinatura é cancelada antes
+  /// de um segundo aviso chegar.
+  int _geracao = 0;
+
+  Future<void> _connect() {
+    if (_disposed || !_started) return Future.value();
+    return _conectando ??= _abrir().whenComplete(() => _conectando = null);
+  }
+
+  Future<void> _abrir() async {
+    _log.registrar('abrindo');
     _publish(
       ScaleLinkStatus(
         state: ScaleLinkState.connecting,
@@ -177,10 +198,12 @@ class SerialScaleReader {
       }
       _transport = transport;
       protocol.reset();
+      final geracao = ++_geracao;
       _subscription = stream.listen(
         _onBytes,
-        onError: (Object error) => unawaited(_handleFailure('$error')),
-        onDone: () => unawaited(_handleFailure('A porta $portName fechou.')),
+        onError: (Object error) => unawaited(_handleFailure('$error', geracao)),
+        onDone: () =>
+            unawaited(_handleFailure('A porta $portName fechou.', geracao)),
         cancelOnError: false,
       );
       _retryAttempt = 0;
@@ -201,11 +224,9 @@ class SerialScaleReader {
         const Duration(seconds: 1),
         (_) => _checkSilence(),
       );
-      AppLogger.instance.info(
-        'scale_port_open',
-        data: {'port': portName, 'protocol': protocol.id},
-      );
+      _log.registrar('aberto', {'protocol': protocol.id});
     } on ScaleTransportException catch (error) {
+      _log.registrar('erro', {'message': error.message});
       await _releaseLock();
       _publish(
         ScaleLinkStatus(
@@ -218,6 +239,7 @@ class SerialScaleReader {
       );
       _scheduleRetry();
     } catch (error) {
+      _log.registrar('erro', {'message': '$error'});
       await _releaseLock();
       _publish(
         ScaleLinkStatus(
@@ -404,12 +426,11 @@ class SerialScaleReader {
     }
   }
 
-  Future<void> _handleFailure(String message) async {
-    if (_disposed || !_started) return;
-    AppLogger.instance.warning(
-      'scale_port_failure',
-      data: {'port': portName, 'message': message},
-    );
+  Future<void> _handleFailure(String message, int geracao) async {
+    if (_disposed || !_started || geracao != _geracao) return;
+    // Invalida já: o segundo aviso do mesmo canal (erro + fim) para aqui.
+    _geracao++;
+    _log.registrar('erro', {'message': message});
     await _teardownTransport();
     _publish(
       ScaleLinkStatus(
@@ -429,6 +450,10 @@ class SerialScaleReader {
       1,
       _maximumRetryDelay.inSeconds,
     );
+    _log.registrar('reconexao_agendada', {
+      'attempt': _retryAttempt,
+      'seconds': seconds,
+    });
     _retryTimer = Timer(
       Duration(seconds: seconds),
       () => unawaited(_connect()),
@@ -453,7 +478,13 @@ class SerialScaleReader {
     if (_disposed) return ScaleWeightRequest.unavailable;
     if (!_started) return ScaleWeightRequest.unavailable;
 
-    if (_transport == null || _status.state != ScaleLinkState.connected) {
+    final emCurso = _conectando;
+    if (emCurso != null) {
+      // Já está abrindo: espera essa abertura, não começa outra (e não
+      // derruba a trava que ela acabou de pegar).
+      await emCurso;
+    } else if (_transport == null ||
+        _status.state != ScaleLinkState.connected) {
       // Canal fechado, em erro ou sem resposta: reabrir é o primeiro socorro.
       _retryTimer?.cancel();
       _retryAttempt = 0;
@@ -492,6 +523,7 @@ class SerialScaleReader {
     final transport = _transport;
     _transport = null;
     if (transport != null) {
+      _log.registrar('fechado');
       try {
         await transport.close();
       } catch (_) {
@@ -507,7 +539,10 @@ class SerialScaleReader {
     await lock?.release();
   }
 
+  /// Parada pedida (operador, troca de balança, tela fechada): cancela a
+  /// reconexão pendente e não reabre sozinha.
   Future<void> stop() async {
+    if (_started) _log.registrar('parado');
     _started = false;
     _retryTimer?.cancel();
     _retryTimer = null;
@@ -523,6 +558,7 @@ class SerialScaleReader {
   Future<void> dispose() async {
     if (_disposed) return;
     await stop();
+    _log.registrar('encerrado');
     _disposed = true;
     await _samples.close();
     await _statuses.close();

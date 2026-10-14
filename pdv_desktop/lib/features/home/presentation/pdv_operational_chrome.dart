@@ -5,6 +5,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/update/pdv_update_service.dart';
 import '../../../core/widgets/pdv_version_indicator.dart';
 import '../../devices/printing/printer.dart';
+import 'pdv_network_status.dart';
 import 'pdv_status_indicators.dart';
 
 class PdvOperationalBar extends StatelessWidget {
@@ -59,27 +60,7 @@ class PdvOperationalBar extends StatelessWidget {
               onCheckVersion: onCheckVersion,
             ),
           ),
-          PdvStatusIndicator(
-            icon: network.hasConnection
-                ? Icons.lan_outlined
-                : Icons.link_off_outlined,
-            label: network.hasConnection ? 'Servidor local' : 'Sem servidor',
-            tone: network.hasConnection
-                ? const Color(0xFF166534)
-                : scheme.error,
-          ),
-          const SizedBox(width: 14),
-          PdvStatusIndicator(
-            icon: syncPending
-                ? Icons.cloud_upload_outlined
-                : Icons.cloud_outlined,
-            label: syncPending
-                ? 'Sincronização pendente'
-                : 'Nuvem não monitorada',
-            tone: syncPending
-                ? const Color(0xFF9A5B00)
-                : scheme.onSurfaceVariant,
-          ),
+          PdvNetworkStatus(network: network, syncPending: syncPending),
           const SizedBox(width: 14),
           ValueListenableBuilder<PrinterAvailability>(
             valueListenable: printer,

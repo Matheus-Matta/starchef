@@ -24,19 +24,24 @@ mixin _CashPrintSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
   Map<String, dynamic>? get selectedRestaurant;
+  Map<String, dynamic>? get cashSession;
+  List<Map<String, dynamic>> get stations;
 
   String get _cashOperatorName => widget.controller.session?.user.name ?? '';
 
-  Future<void> _printCashOpening(Map<String, dynamic> session) =>
-      _printCashDocument(
-        session: session,
-        document: 'opening',
-        title: 'Imprimir comprovante de abertura',
-        summary:
-            '${cashStationLabelOf(session)} · '
-            '${_money(session['opening_amount'])}',
-        failureTitle: 'O comprovante de abertura não saiu na impressora',
-      );
+  Future<void> _printCashOpening(
+    Map<String, dynamic> session, {
+    bool abrirGaveta = true,
+  }) => _printCashDocument(
+    session: session,
+    abrirGaveta: abrirGaveta,
+    document: 'opening',
+    title: 'Imprimir comprovante de abertura',
+    summary:
+        '${cashStationLabelOf(session)} · '
+        '${_money(session['opening_amount'])}',
+    failureTitle: 'O comprovante de abertura não saiu na impressora',
+  );
 
   Future<void> _printCashOpeningDivergence(Map<String, dynamic> session) =>
       _printCashDocument(
@@ -79,16 +84,19 @@ mixin _CashPrintSection on _HomePageShared {
     );
   }
 
-  Future<void> _printCashClosing(Map<String, dynamic> session) =>
-      _printCashDocument(
-        session: session,
-        document: 'closing',
-        title: 'Imprimir relatório de fechamento',
-        summary:
-            '${cashStationLabelOf(session)} · '
-            'esperado ${_money(session['expected_amount'])}',
-        failureTitle: 'O relatório de fechamento não saiu na impressora',
-      );
+  Future<void> _printCashClosing(
+    Map<String, dynamic> session, {
+    bool abrirGaveta = true,
+  }) => _printCashDocument(
+    session: session,
+    abrirGaveta: abrirGaveta,
+    document: 'closing',
+    title: 'Imprimir relatório de fechamento',
+    summary:
+        '${cashStationLabelOf(session)} · '
+        'esperado ${_money(session['expected_amount'])}',
+    failureTitle: 'O relatório de fechamento não saiu na impressora',
+  );
 
   /// Põe um comprovante de caixa no papel — implementado em
   /// `home_page_cash_print_send.dart`.
@@ -99,5 +107,50 @@ mixin _CashPrintSection on _HomePageShared {
     required String summary,
     required String failureTitle,
     Map<String, String> extraQuery,
+    bool abrirGaveta,
   });
+
+  /// "Reimprimir abertura/fechamento" do centro de caixa: o último documento
+  /// DESTA estação (`UltimoDocumentoDoCaixa`), sem abrir a gaveta — ninguém
+  /// vai pôr a mão no dinheiro — e sem mexer no caixa.
+  Future<void> _reimprimirDoCaixa({required bool abertura}) async {
+    final estacao = _estacaoDoTerminal;
+    final busca = UltimoDocumentoDoCaixa(api, accessToken: token);
+    try {
+      final sessao = abertura
+          ? await busca.ultimaAbertura(estacao: estacao)
+          : await busca.ultimoFechamento(estacao: estacao);
+      if (!mounted) return;
+      if (sessao == null) {
+        showAppToast(
+          context,
+          abertura
+              ? 'Nenhuma abertura de caixa registrada nesta estação.'
+              : 'Nenhum fechamento de caixa registrado nesta estação.',
+          severity: AppErrorSeverity.warning,
+        );
+        return;
+      }
+      await (abertura
+          ? _printCashOpening(sessao, abrirGaveta: false)
+          : _printCashClosing(sessao, abrirGaveta: false));
+    } catch (erro) {
+      if (mounted) _error(erro, title: 'Não foi possível reimprimir');
+    }
+  }
+
+  /// A estação deste terminal: a do caixa aberto ou, fechado, a primeira a
+  /// que o operador está vinculado — a mesma que a abertura escolheria.
+  String get _estacaoDoTerminal {
+    final aberta = cashSession?['cash_station'];
+    if (aberta != null && '$aberta'.isNotEmpty) return '$aberta';
+    final userId = widget.controller.session?.user.id;
+    for (final estacao in stations) {
+      final operadores = (estacao['operators'] as List? ?? const []).map(
+        (id) => '$id',
+      );
+      if (operadores.contains(userId)) return '${estacao['id']}';
+    }
+    return '';
+  }
 }

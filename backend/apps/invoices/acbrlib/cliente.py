@@ -9,6 +9,11 @@ tradução é a parte que importa deste arquivo:
   reenviar ou entrar em contingência aqui é o caminho da nota em dobro;
 * documento inválido (schema, assinatura) → `FiscalRejection`;
 * certificado, CSC, token ou lib ausente → `FiscalConfigurationError`.
+
+O `motivo` que o comunicador manda (`acbrlib_ausente`, `senha_invalida`,
+`sefaz_sem_comunicacao`...) fica na exceção, e a frase ganha a providência.
+A senha e o certificado enviados SAEM da frase antes de ela ser gravada na
+nota ou logada: a lib às vezes ecoa o que recebeu.
 """
 import requests
 from django.conf import settings
@@ -19,6 +24,16 @@ from apps.invoices.providers_erros import (
     FiscalRejection,
     FiscalUnavailable,
 )
+
+#: A providência de cada `motivo`, à frente da frase da lib.
+_PROVIDENCIAS = {
+    "acbrlib_ausente": "a ACBrLib não está instalada no servidor fiscal",
+    "sefaz_sem_comunicacao": "sem comunicação com a SEFAZ",
+    "comunicador_fora_do_ar": "o serviço fiscal (comunicador ACBrLib) não respondeu",
+    "senha_invalida": "a senha do certificado A1 não confere",
+    "certificado_vencido": "o certificado A1 está vencido",
+    "certificado_invalido": "o certificado A1 não pôde ser lido",
+}
 
 #: `erro` que o comunicador devolve, e a família de cada um.
 _FAMILIAS = {
@@ -55,11 +70,26 @@ def chamar(rota, corpo=None, *, metodo="POST"):
             "autorizada — ela será consultada antes de qualquer reenvio."
         ) from erro
     except requests.RequestException as erro:
-        raise FiscalUnavailable(f"ACBrLib: comunicador fora do ar ({erro}).") from erro
-    return _ler(resposta)
+        falha = FiscalUnavailable(
+            f"ACBrLib: {_PROVIDENCIAS['comunicador_fora_do_ar']} ({type(erro).__name__})."
+        )
+        falha.motivo = "comunicador_fora_do_ar"
+        raise falha from None
+    return _ler(resposta, _segredos(corpo))
 
 
-def _ler(resposta):
+def _segredos(corpo):
+    certificado = (corpo or {}).get("certificado") or {}
+    return [s for s in (certificado.get("senha"), certificado.get("pfx_base64")) if s]
+
+
+def _sem_segredo(texto, segredos):
+    for segredo in segredos:
+        texto = texto.replace(segredo, "***")
+    return texto
+
+
+def _ler(resposta, segredos=()):
     try:
         dados = resposta.json()
     except ValueError:
@@ -68,10 +98,16 @@ def _ler(resposta):
         raise FiscalConfigurationError(
             "ACBrLib: o comunicador recusou o token (ACBRLIB_TOKEN diferente nos dois lados)."
         )
-    if resposta.status_code in (502, 503, 504):
+    # 503 COM `erro` é o comunicador falando (SEFAZ fora); sem, é o proxy na
+    # frente dele.
+    if resposta.status_code in (502, 503, 504) and not dados.get("erro"):
         raise FiscalUnavailable(f"ACBrLib: comunicador indisponível (HTTP {resposta.status_code}).")
     if resposta.status_code >= 400 or dados.get("erro"):
         familia = _FAMILIAS.get(dados.get("erro"), FiscalAmbiguous)
-        mensagem = dados.get("mensagem") or f"HTTP {resposta.status_code}"
-        raise familia(f"ACBrLib: {mensagem}")
+        mensagem = _sem_segredo(dados.get("mensagem") or f"HTTP {resposta.status_code}", segredos)
+        motivo = dados.get("motivo") or ""
+        providencia = _PROVIDENCIAS.get(motivo)
+        falha = familia(f"ACBrLib: {providencia} — {mensagem}" if providencia else f"ACBrLib: {mensagem}")
+        falha.motivo = motivo
+        raise falha
     return dados

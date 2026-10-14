@@ -16,6 +16,7 @@ import requests
 
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.services import emit_fiscal_invoice, reprocess_pending_fiscal_invoices
+from apps.invoices.tests.certificado_de_teste import SENHA, pfx
 from apps.invoices.tests.test_acbrlib_provider import EMITENTE
 from apps.menu.models import Product
 from apps.orders.models import Order
@@ -37,7 +38,7 @@ def venda(settings, monkeypatch, account, restaurant, branch, manager_user):
     settings.ACBRLIB_URL = URL
     settings.ACBRLIB_TOKEN = os.environ.get("ACBRLIB_E2E_TOKEN", "")
     monkeypatch.setattr("apps.invoices.acbrlib.provider.segredos_de", lambda _c: SimpleNamespace(
-        certificate_base64="UEZY", certificate_password="1", csc_id="000001", csc_token="CSC"))
+        certificate_base64=pfx(), certificate_password=SENHA, csc_id="000001", csc_token="CSC"))
     FiscalConfig.objects.create(
         account=account, restaurant=restaurant, branch=branch, uf="SP", cnpj="11222333000181",
         provider=FiscalConfig.PROVIDER_ACBRLIB, environment=FiscalConfig.ENV_HOMOLOGATION,

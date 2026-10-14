@@ -17,6 +17,9 @@ class FiscalProviderError(RuntimeError):
     recusou em definitivo.
     """
 
+    #: Detalhe da família para o operador (`acbrlib/cliente.py`); vazio = a frase basta.
+    motivo = ""
+
 
 class FiscalRejection(FiscalProviderError):
     """Documento recusado: a SEFAZ negou, ou ele nem e valido para transmitir.

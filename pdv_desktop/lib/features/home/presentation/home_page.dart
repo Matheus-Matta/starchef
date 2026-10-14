@@ -65,11 +65,11 @@ import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
 import '../data/forma_vizinha.dart';
 import '../data/pdv_repository.dart';
-import 'pdv_cloud_banner.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_navigation_rail.dart';
 import 'pdv_operational_chrome.dart';
 import 'pdv_shortcut_bar.dart';
+import '../../cash/data/ultimo_documento_do_caixa.dart';
 import '../../cash/domain/cash_session_label.dart';
 import '../../cash/presentation/cash_auth_dialog.dart';
 import 'pdv_cash_center_dialog.dart';
@@ -79,8 +79,10 @@ import 'fiscal_refusal_visibility.dart';
 import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';
-import 'coupon_select.dart';
+import 'calculo_do_total.dart';
+import 'coupon_suggestions.dart';
 import 'payment_adjustments.dart';
+import 'payment_coupon_input.dart';
 import 'payment_input_style.dart';
 import 'payment_keypad.dart';
 import 'table_details_panel.dart';
@@ -1115,6 +1117,9 @@ class _HomePageState extends State<HomePage>
       await _cashMovement(action);
     }
     if (action == 'close') await _closeCash();
+    if (action == 'reprint_opening' || action == 'reprint_closing') {
+      await _reimprimirDoCaixa(abertura: action == 'reprint_opening');
+    }
   }
 
   Future<void> _openSettingsCenter() async {

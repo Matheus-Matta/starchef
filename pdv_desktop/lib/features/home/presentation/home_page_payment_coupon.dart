@@ -39,6 +39,16 @@ mixin _PaymentCouponSection on _HomePageShared {
 
   double get _couponDiscount => _number(activeOrder?['coupon_discount']);
 
+  /// O único cálculo do total da tela de pagamento (`calculo_do_total.dart`):
+  /// cupom, desconto, taxa e CPF/CNPJ passam todos por ele.
+  final calculoDoTotal = CalculoDoTotal();
+
+  /// "Calculando total...": um ajuste no ar, ou a prévia aberta na hora
+  /// (`previa_local.dart`) ainda sem a conta do servidor. Enquanto durar,
+  /// nem pagamento, nem conclusão, nem outro ajuste.
+  bool get _calculandoTotal =>
+      calculoDoTotal.emCurso || activeOrder?[previaLocalMarca] == true;
+
   /// Aplica, troca ou retira. `codigo` vazio retira.
   ///
   /// Não passa por `_work`: aquela trava existe para impedir duas operações de
@@ -47,67 +57,93 @@ mixin _PaymentCouponSection on _HomePageShared {
   /// com a tela ocupada — e uma desistência silenciosa aqui apagaria o gesto do
   /// operador sem dizer nada.
   Future<void> _aplicarCupom(String codigo) async {
-    if (couponBusy || activeOrder == null) return;
+    if (_calculandoTotal || activeOrder == null) return;
     setState(() {
       couponBusy = true;
       couponError = '';
     });
-    try {
-      // Venda simulada: o cupom entra no fechamento e o servidor recalcula,
-      // ainda sem gravar. Recusado, o erro vem igual.
-      final simulada = draft.simulada;
-      final fechamento = {...?draft.fechamento, 'coupon_code': codigo};
-      final atualizado = simulada
-          ? await OrderDraftMaterializer(
-              api,
-              accessToken: token,
-            ).simular(draft, restaurantId: restaurantId, fechamento: fechamento)
-          : await api.post(
-              '/orders/${activeOrder!['id']}/apply-coupon/',
-              body: {'code': codigo},
-              accessToken: token,
-            );
-      if (simulada) draft.fechamento = fechamento;
-      if (!mounted) return;
-      // O pedido volta com o total JÁ refeito, e é dele que o teclado desenha o
-      // restante e o troco. Recalcular no terminal faria a tela mostrar um
-      // número e a venda cobrar outro.
-      setState(() {
-        activeOrder = Map<String, dynamic>.from(atualizado);
-        couponCode.text = '${atualizado['coupon_code'] ?? ''}';
-        couponBusy = false;
-        _valorSugeridoDoNovoTotal();
-      });
-    } on ApiException catch (falha) {
-      if (!mounted) return;
-      // A RECUSA FICA NO CAMPO, e não no centro de erros: a frase do servidor é
-      // sobre o cupom ("Este CPF já usou este cupom") e quem precisa lê-la está
-      // olhando o campo que acabou de digitar.
-      setState(() {
-        couponError = falha.message;
-        couponBusy = false;
-      });
-    } catch (falha) {
-      if (!mounted) return;
-      setState(() {
-        couponError = '$falha';
-        couponBusy = false;
-      });
-    }
+    // Venda simulada: o cupom entra no fechamento e o servidor recalcula,
+    // ainda sem gravar. Recusado, o erro vem igual.
+    final simulada = draft.simulada;
+    final fechamento = {...?draft.fechamento, 'coupon_code': codigo};
+    await calculoDoTotal.rodar<Map<String, dynamic>>(
+      calcular: () async => Map<String, dynamic>.from(
+        simulada
+            ? await OrderDraftMaterializer(api, accessToken: token).simular(
+                draft,
+                restaurantId: restaurantId,
+                fechamento: fechamento,
+              )
+            : await api.post(
+                '/orders/${activeOrder!['id']}/apply-coupon/',
+                body: {'code': codigo},
+                accessToken: token,
+              ),
+      ),
+      aplicar: (atualizado) {
+        if (simulada) draft.fechamento = fechamento;
+        if (!mounted) return;
+        // O pedido volta com o total JÁ refeito, e é dele que o teclado
+        // desenha o restante e o troco. Recalcular no terminal faria a tela
+        // mostrar um número e a venda cobrar outro.
+        setState(() {
+          activeOrder = atualizado;
+          couponCode.text = '${atualizado['coupon_code'] ?? ''}';
+          couponBusy = false;
+          _valorSugeridoDoNovoTotal();
+        });
+      },
+      // A RECUSA FICA NO CAMPO, e não no centro de erros: a frase do servidor
+      // é sobre o cupom ("Este CPF já usou este cupom") e quem precisa lê-la
+      // está olhando o campo que acabou de digitar. O total fica o anterior.
+      falhar: (falha) {
+        if (!mounted) return;
+        setState(() {
+          couponError = falha is ApiException ? falha.message : '$falha';
+          couponBusy = false;
+        });
+      },
+    );
   }
 
-  /// O cupom no ALTO do resumo: um seletor com busca (`CouponSelect`).
+  /// O campo de cupom, no ALTO do resumo do pagamento: digitar, Aplicar ou
+  /// Trocar, Retirar, e os mais usados em botões logo abaixo.
   ///
-  /// Eram campo, botão e uma fileira de botões com os cupons soltos — três
-  /// controles para uma escolha, e a fileira empurrava o resumo da conta.
-  Widget _couponControl(BuildContext context) => CouponSelect(
-    api: api,
-    accessToken: token,
-    aplicado: _appliedCoupon,
-    busy: couponBusy,
-    erro: couponError,
-    onAplicar: _aplicarCupom,
-    onRemover: () => _aplicarCupom(''),
+  /// Voltou a ser campo + botões depois de um período como seletor com busca:
+  /// no caixa, o código é ditado ou lido do celular do cliente, e digitar
+  /// direto era mais rápido que abrir uma lista.
+  Widget _couponControl(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PaymentCouponInput(
+          controller: couponCode,
+          applied: _appliedCoupon,
+          // Trava também enquanto OUTRO ajuste recalcula o total: dois
+          // cálculos no ar, e o que chegasse por último ganharia.
+          busy: _calculandoTotal,
+          error: couponError,
+          onSubmit: _aplicarCupom,
+          onRemove: () {
+            couponCode.clear();
+            _aplicarCupom('');
+          },
+        ),
+        // Os mais usados como botões, e a busca enquanto digita. Com cupom
+        // aplicado somem: aí o gesto é trocar ou retirar, logo acima.
+        if (_appliedCoupon.isEmpty && !_calculandoTotal)
+          CouponSuggestions(
+            api: api,
+            accessToken: token,
+            controller: couponCode,
+            onPick: (codigo) {
+              couponCode.text = codigo;
+              _aplicarCupom(codigo);
+            },
+          ),
+      ],
+    ),
   );
 
   /// "Cupom NATAL10  - R$ 6,00" entre as parcelas do total.
