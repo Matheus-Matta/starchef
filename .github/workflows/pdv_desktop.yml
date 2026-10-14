@@ -49,6 +49,21 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
+        id: flutter_1
+        # O download do Flutter cai de vez em quando no runner (curl 92,
+        # HTTP/2 interrompido): derrubou o build Linux da v3.0.109. A
+        # segunda tentativa logo abaixo cobre isso sem refazer a tag.
+        continue-on-error: true
+        with:
+          # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
+          # novo, e isso já custou duas releases num dia: um lint novo
+          # reprovou a v3.0.19 e a máquina nova derrubou a v3.0.22 — as duas
+          # sem uma linha de código alterada. Subir o Flutter passa a ser um
+          # commit que alguém revisa, e não uma surpresa na hora de publicar.
+          channel: "stable"
+          flutter-version: "3.44.4"
+      - uses: subosito/flutter-action@v2
+        if: steps.flutter_1.outcome == 'failure'
         with:
           # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
           # novo, e isso já custou duas releases num dia: um lint novo
@@ -137,6 +152,21 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
+        id: flutter_2
+        # O download do Flutter cai de vez em quando no runner (curl 92,
+        # HTTP/2 interrompido): derrubou o build Linux da v3.0.109. A
+        # segunda tentativa logo abaixo cobre isso sem refazer a tag.
+        continue-on-error: true
+        with:
+          # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
+          # novo, e isso já custou duas releases num dia: um lint novo
+          # reprovou a v3.0.19 e a máquina nova derrubou a v3.0.22 — as duas
+          # sem uma linha de código alterada. Subir o Flutter passa a ser um
+          # commit que alguém revisa, e não uma surpresa na hora de publicar.
+          channel: "stable"
+          flutter-version: "3.44.4"
+      - uses: subosito/flutter-action@v2
+        if: steps.flutter_2.outcome == 'failure'
         with:
           # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
           # novo, e isso já custou duas releases num dia: um lint novo
@@ -240,6 +270,21 @@ jobs:
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev zip
 
       - uses: subosito/flutter-action@v2
+        id: flutter_3
+        # O download do Flutter cai de vez em quando no runner (curl 92,
+        # HTTP/2 interrompido): derrubou o build Linux da v3.0.109. A
+        # segunda tentativa logo abaixo cobre isso sem refazer a tag.
+        continue-on-error: true
+        with:
+          # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
+          # novo, e isso já custou duas releases num dia: um lint novo
+          # reprovou a v3.0.19 e a máquina nova derrubou a v3.0.22 — as duas
+          # sem uma linha de código alterada. Subir o Flutter passa a ser um
+          # commit que alguém revisa, e não uma surpresa na hora de publicar.
+          channel: "stable"
+          flutter-version: "3.44.4"
+      - uses: subosito/flutter-action@v2
+        if: steps.flutter_3.outcome == 'failure'
         with:
           # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
           # novo, e isso já custou duas releases num dia: um lint novo

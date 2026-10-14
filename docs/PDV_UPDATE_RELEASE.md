@@ -648,6 +648,16 @@ commit e crie uma nova tag.
 Cadastre `PDV_API_BASE_URL` em **Settings → Secrets and variables → Actions →
 Variables**, ou informe `api_base_url` no disparo manual.
 
+### Build falha em `subosito/flutter-action` com `curl: (92)`
+
+O download do Flutter caiu no meio (HTTP/2 interrompido no runner do GitHub).
+Derrubou o build Linux da v3.0.109. Desde a v3.0.110 cada instalação do
+Flutter nos dois workflows tem uma segunda tentativa automática
+(`continue-on-error` + o mesmo passo com `if: steps.<id>.outcome ==
+'failure'`). Se as duas falharem, use "Re-run failed jobs" na run — sem tag
+nova. O release fica sem os pacotes do desktop e o `latest-desktop.json`
+continua apontando para a versão anterior: nenhum terminal quebra.
+
 ### PDV mostra `Atualização não verificada`
 
 Verifique:
