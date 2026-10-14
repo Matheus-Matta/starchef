@@ -131,4 +131,11 @@ def _falta_alguma_coisa(config):
         or (config.provider_token or "").strip()
     )
     tem_csc = bool((config.csc_id or "").strip() and (config.csc_token or "").strip())
-    return not (tem_token and tem_csc)
+    # O certificado também: a loja com token e CSC gravados mas sem o .pfx
+    # neste disco (enviado em outro servidor, volume recriado) nunca pedia, e
+    # a nota da ACBrLib parava em "aguardando SEFAZ" sem o que assinar.
+    from apps.invoices.certificate_data import read_certificate_bytes
+
+    tem_certificado = bool(read_certificate_bytes(config)) and bool(
+        (config.certificate_password or "").strip())
+    return not (tem_token and tem_csc and tem_certificado)

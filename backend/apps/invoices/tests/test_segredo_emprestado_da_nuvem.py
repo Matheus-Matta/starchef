@@ -90,7 +90,11 @@ def test_a_loja_COMPLETA_nao_vai_a_nuvem(config, monkeypatch):
     config.csc_id = "000001"
     config.csc_token = "CSC-LOCAL"
     config.focus_token_homologation = "TOKEN-LOCAL"
-    config.save(update_fields=["csc_id", "csc_token", "focus_token_homologation", "updated_at"])
+    config.certificate_password = "senha-local"
+    config.save(update_fields=["csc_id", "csc_token", "focus_token_homologation",
+                               "certificate_password", "updated_at"])
+    # Completa = token, CSC E o certificado neste disco.
+    monkeypatch.setattr("apps.invoices.certificate_data.read_certificate_bytes", lambda _c: b"PFX")
 
     segredos_de(config)
 

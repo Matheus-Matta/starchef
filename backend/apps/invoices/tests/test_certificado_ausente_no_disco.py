@@ -34,3 +34,19 @@ def test_arquivo_ausente_e_tratado_como_sem_certificado():
 def test_sem_o_arquivo_aqui_vale_o_certificado_emprestado_da_nuvem():
     segredos = SegredosDeEmissao(_config(), emprestado={"certificate_base64": "UEZY"})
     assert segredos.certificate_base64 == "UEZY"
+
+
+def test_com_token_e_csc_mas_sem_certificado_aqui_pede_a_nuvem():
+    """A decisão de pedir emprestado olhava só token e CSC: a loja com os dois
+    gravados e sem o .pfx nunca pedia, e o fallback acima ficava sem o que usar."""
+    from apps.invoices.emission_secrets import _falta_alguma_coisa
+
+    config = _config()
+    config.provider_token = "tok"
+    config.focus_token_production = ""
+    config.focus_token_homologation = ""
+    config.csc_id = "000001"
+    config.csc_token = "CSC"
+    config.certificate_password = "senha"
+
+    assert _falta_alguma_coisa(config) is True
