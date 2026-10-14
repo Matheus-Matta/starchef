@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv_desktop/core/hardware/scale/scale_protocol.dart';
+import 'package:starchef_pdv_desktop/core/hardware/scale/scale_sample.dart';
 import 'package:starchef_pdv_desktop/core/hardware/scale/scale_transport.dart';
 import 'package:starchef_pdv_desktop/core/hardware/scale/serial_scale_reader.dart';
 import 'package:starchef_pdv_desktop/core/storage/app_paths.dart';
@@ -135,5 +136,29 @@ void main() {
       'reconexao_agendada',
       'parado',
     ]);
+  });
+
+  test('pedir o peso com a balanca em silencio NAO reabre a porta', () async {
+    // A Balança Rápida pede o peso SOZINHA (v3.0.88) quando a tela fica em
+    // 0 kg. Com a balança em silêncio ("sem resposta", porta aberta), o
+    // pedido fechava e reabria a porta a cada vez — o caminho da queda. Até
+    // a v3.0.87 só o botão pedia, e a porta nunca era reaberta à toa.
+    final transporte = TransporteLento(demora: Duration.zero);
+    final reader = SerialScaleReader(
+      portName: 'UNI6',
+      protocol: GenericNumericProtocol(),
+      transportFactory: () => transporte,
+      silenceTimeout: const Duration(milliseconds: 50),
+    );
+    addTearDown(reader.dispose);
+    await reader.start();
+    await Future<void>.delayed(const Duration(milliseconds: 1300));
+    expect(reader.status.state, ScaleLinkState.noResponse);
+
+    final pedido = await reader.requestWeight();
+
+    expect(pedido, ScaleWeightRequest.sent);
+    expect(transporte.aberturas, 1);
+    expect(transporte.fechamentos, 0);
   });
 }

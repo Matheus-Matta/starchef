@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -790,7 +791,15 @@ def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=Non
     batch_ids = list(a_liberar_aqui(due).values_list("id", flat=True)[:500])
     for batch_id in batch_ids:
         batch = OrderBatch.all_objects.select_related("account").get(pk=batch_id)
-        dispatch_kitchen_batch(batch, now=now)
+        # UMA rodada quebrada fica nela. Isto roda também dentro do
+        # `GET /print-jobs/`: uma exceção aqui derrubava a fila de impressão de
+        # todos os PDVs, em toda chamada, enquanto a rodada existisse.
+        try:
+            with transaction.atomic():
+                dispatch_kitchen_batch(batch, now=now)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception(
+                "Rodada %s não pôde ser liberada; as outras seguem.", batch_id)
     from apps.orders.command_kitchen import dispatch_due_command_batches
 
     command_count = dispatch_due_command_batches(
@@ -1394,7 +1403,11 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
 def sync_production_status(order):
     """Recalculate order.production_status based on active item statuses."""
     with tenant_context(order.account):
-        order = Order.objects.get(pk=order.pk)
+        # `all_objects`: o pedido pode ter sido apagado (pedido vazio
+        # descartado) com uma rodada ainda agendada. `objects` não o enxerga, e
+        # o `DoesNotExist` derrubava a fila de impressão inteira
+        # (test_rodada_de_pedido_apagado).
+        order = Order.all_objects.get(pk=order.pk)
         active_statuses = list(
             order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).values_list(
                 "status", flat=True

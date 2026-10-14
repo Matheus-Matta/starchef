@@ -483,9 +483,12 @@ class SerialScaleReader {
       // Já está abrindo: espera essa abertura, não começa outra (e não
       // derruba a trava que ela acabou de pegar).
       await emCurso;
-    } else if (_transport == null ||
-        _status.state != ScaleLinkState.connected) {
-      // Canal fechado, em erro ou sem resposta: reabrir é o primeiro socorro.
+    } else if (_transport == null) {
+      // Só com a porta FECHADA (caiu, cabo solto). "Sem resposta" é porta
+      // aberta com a balança em silêncio — a que só transmite quando o peso
+      // muda: basta mandar o pedido. Reabrir aqui, a cada pedido automático
+      // da tela (v3.0.88), era o caminho que derrubava a Balança Rápida no
+      // Linux; até a v3.0.87 só o botão pedia.
       _retryTimer?.cancel();
       _retryAttempt = 0;
       await _teardownTransport();

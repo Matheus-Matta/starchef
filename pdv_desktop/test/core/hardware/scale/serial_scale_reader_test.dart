@@ -288,7 +288,7 @@ void main() {
       expect(transport.written, isEmpty);
     });
 
-    test('reabre a porta quando o canal caiu antes de pedir', () async {
+    test('com a porta aberta e sem leitura, pede pela MESMA porta', () async {
       var opened = 0;
       final transports = <FakeTransport>[];
       final reader = SerialScaleReader(
@@ -305,14 +305,15 @@ void main() {
       await reader.start();
       expect(opened, 1);
 
-      // Sem nenhuma leitura, o estado ainda é "conectando": o pedido deve
-      // reabrir o canal em vez de assumir que está tudo bem.
+      // Sem leitura nenhuma a porta continua ABERTA: o pedido sai por ela.
+      // Reabrir aqui (o comportamento antigo) era o que derrubava a Balança
+      // Rápida no Linux, a cada pedido automático da tela.
       final result = await reader.requestWeight();
 
       expect(result, ScaleWeightRequest.sent);
-      expect(opened, 2);
-      expect(transports.first.closed, isTrue);
-      expect(transports.last.written.single, [0x05]);
+      expect(opened, 1);
+      expect(transports.single.closed, isFalse);
+      expect(transports.single.written.single, [0x05]);
     });
 
     test('a resposta ainda passa pela regra de estabilidade', () async {
