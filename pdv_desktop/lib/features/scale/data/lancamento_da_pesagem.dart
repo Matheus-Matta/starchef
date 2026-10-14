@@ -13,8 +13,9 @@ class LancamentoDaPesagem {
   final ApiClient api;
   final String accessToken;
 
-  /// Devolve o id do trabalho de impressão da etiqueta, ou `null` sem ele.
-  Future<String?> lancar({
+  /// Devolve o trabalho de impressão da etiqueta (já reservado para esta
+  /// estação), ou `null` sem ele.
+  Future<Map<String, dynamic>?> lancar({
     required String balanca,
     required String comanda,
     required double pesoKg,
@@ -34,12 +35,14 @@ class LancamentoDaPesagem {
         // Sem impressora vinculada não há ticket a emitir: pedir impressão
         // faria o servidor recusar o lançamento inteiro.
         'print': imprimir,
+        // A própria estação imprime (`etiqueta_da_pesagem.dart`): o trabalho
+        // nasce reservado para ela, e nenhum outro PC o pega.
+        'imprime_aqui': imprimir,
       },
       accessToken: accessToken,
     );
     final job = resultado['print_job'];
-    if (job is! Map) return null;
-    final id = '${job['id'] ?? ''}'.trim();
-    return id.isEmpty ? null : id;
+    if (job is! Map || '${job['id'] ?? ''}'.trim().isEmpty) return null;
+    return Map<String, dynamic>.from(job);
   }
 }

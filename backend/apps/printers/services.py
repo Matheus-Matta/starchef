@@ -1216,7 +1216,8 @@ def register_command_bill_print(*, command, items, total, user, printer=None, ma
         )
 
 
-def register_command_weigh_print(*, command, item, scale, user=None, offline_printed=False):
+def register_command_weigh_print(*, command, item, scale, user=None, offline_printed=False,
+                                  reservado_para=""):
     """A etiqueta de pesagem de um item anotado NA COMANDA.
 
     É o papel que o cliente leva ao caixa. O ticket do pedido é montado por um
@@ -1233,6 +1234,11 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
     impresso — senão o agente local imprimiria a mesma etiqueta de novo
     quando a fila sincronizasse, e o cliente levaria dois papéis do mesmo
     prato ao caixa.
+
+    ``reservado_para`` (o `X-Terminal-Id` da Balança Rápida): a própria
+    estação imprime. O job nasce RESERVADO para ela, fora da lista que os
+    agentes dos PDVs consultam — senão outro PC o reservava, tentava a porta
+    dele (sem a impressora USB/serial da balança) e a etiqueta não saía.
     """
     from apps.printers.command_receipt import TYPE_TABLE_BILL  # noqa: F401
 
@@ -1254,9 +1260,12 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
             branch=command.branch,
             printer=printer,
             job_type=PrintJob.TYPE_WEIGH,
-            status=PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_PENDING,
+            status=(PrintJob.STATUS_PRINTED if offline_printed
+                    else PrintJob.STATUS_CLAIMED if reservado_para
+                    else PrintJob.STATUS_PENDING),
             printed_at=timezone.now() if offline_printed else None,
             payload={
+                **({"claimed_by_terminal": reservado_para} if reservado_para else {}),
                 "text_content": "\n".join(linhas),
                 "command": str(command.id),
                 "command_number": command.number,

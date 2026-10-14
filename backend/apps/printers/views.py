@@ -470,6 +470,12 @@ class ScaleViewSet(BaseTenantViewSet):
                         scale=scale,
                         user=request.user,
                         offline_printed=bool(request.data.get("offline_printed")),
+                        # A Balança Rápida imprime a própria etiqueta: nasce
+                        # reservada para o terminal dela.
+                        reservado_para=(
+                            (request.headers.get("X-Terminal-Id") or "").strip()[:120]
+                            if request.data.get("imprime_aqui") else ""
+                        ),
                     )
                     if request.data.get("print", True)
                     else None

@@ -80,3 +80,63 @@ def test_o_que_a_tela_faz_com_o_trabalho_de_impressao(operador, estacao, account
                                       status=PrintJob.STATUS_RENDERED, payload={"text_content": "x"})
     assert operador.get(f"/api/v1/print-jobs/{job.pk}/").status_code == 200
     assert operador.post(f"/api/v1/print-jobs/{job.pk}/mark-printed/", {}, format="json").status_code == 200
+
+
+def test_a_etiqueta_nasce_reservada_para_a_estacao_que_imprime_ela_mesma(operador, estacao, account):
+    """A Balança Rápida imprime a própria etiqueta, e nenhum outro PC a pega.
+
+    Antes o trabalho nascia `pending` e QUALQUER PDV do restaurante podia
+    reservá-lo. Com a impressora USB/serial ligada no PC da balança, outro PC
+    reservava, tentava a porta dele (que não tem a impressora) e a etiqueta
+    não saía. Com `imprime_aqui`, ela nasce reservada para o terminal da
+    balança, fora da lista que os agentes dos PDVs consultam.
+    """
+    from apps.printers.models import PrintJob
+
+    balanca = estacao["balanca"]
+    lancamento = operador.post(
+        f"/api/v1/scales/{balanca.pk}/checkout-command/",
+        {"command_code": estacao["comanda"].code, "weight_kg": "0.450", "print": True,
+         "imprime_aqui": True},
+        format="json", HTTP_X_TERMINAL_ID="pc-balanca-1",
+    )
+    assert lancamento.status_code == 201, lancamento.data
+    job = lancamento.data["print_job"]
+    assert job["status"] == PrintJob.STATUS_CLAIMED
+    assert job["payload"]["claimed_by_terminal"] == "pc-balanca-1"
+
+    pendentes = operador.get("/api/v1/print-jobs/", {
+        "restaurant": str(estacao["restaurante"].pk),
+        "status__in": "scheduled,pending,rendered"})
+    assert job["id"] not in {j["id"] for j in pendentes.data["results"]}
+
+    impresso = operador.post(f"/api/v1/print-jobs/{job['id']}/mark-printed/", {}, format="json")
+    assert impresso.status_code == 200, impresso.data
+    with tenant_context(account):
+        assert PrintJob.objects.get(pk=job["id"]).status == PrintJob.STATUS_PRINTED
+
+
+def test_sem_imprime_aqui_a_etiqueta_segue_para_os_agentes(operador, estacao):
+    balanca = estacao["balanca"]
+    lancamento = operador.post(
+        f"/api/v1/scales/{balanca.pk}/checkout-command/",
+        {"command_code": estacao["comanda"].code, "weight_kg": "0.450", "print": True},
+        format="json",
+    )
+    assert lancamento.status_code == 201, lancamento.data
+    assert lancamento.data["print_job"]["status"] == "pending"
+
+
+def test_a_estacao_devolve_a_etiqueta_que_nao_conseguiu_imprimir(operador, estacao):
+    balanca = estacao["balanca"]
+    job = operador.post(
+        f"/api/v1/scales/{balanca.pk}/checkout-command/",
+        {"command_code": estacao["comanda"].code, "weight_kg": "0.450", "print": True,
+         "imprime_aqui": True},
+        format="json", HTTP_X_TERMINAL_ID="pc-balanca-1",
+    ).data["print_job"]
+
+    devolvida = operador.post(f"/api/v1/print-jobs/{job['id']}/release/", {}, format="json")
+
+    assert devolvida.status_code == 200, devolvida.data
+    assert devolvida.data["released"] is True

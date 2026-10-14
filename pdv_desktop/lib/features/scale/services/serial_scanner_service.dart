@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
-import '../../../core/hardware/serial_port_release.dart';
+import '../../../core/hardware/leitor_serial_isolado.dart';
 import '../data/scanner_binding_store.dart';
 
 class SerialScannerDevice {
@@ -75,10 +75,9 @@ class SerialScannerDevice {
 }
 
 class SerialScannerService {
-  SerialScannerService._({required this._port, required this._reader});
+  SerialScannerService._({required this._reader});
 
-  final SerialPort _port;
-  final SerialPortReader _reader;
+  final LeitorSerialIsolado _reader;
   final ScannerFrameDecoder _decoder = ScannerFrameDecoder();
   final StreamController<String> _codes = StreamController.broadcast();
   StreamSubscription<Uint8List>? _subscription;
@@ -101,13 +100,22 @@ class SerialScannerService {
         ..parity = SerialPortParity.none
         ..stopBits = 1;
       port.config = config;
-      final reader = SerialPortReader(port);
-      final service = SerialScannerService._(port: port, reader: reader);
-      service._subscription = reader.stream.listen((bytes) {
+      // O mesmo leitor da balança (`leitor_serial_isolado.dart`): o da
+      // biblioteca não parava o isolate e derrubava o app no Linux.
+      final reader = LeitorSerialIsolado(
+        endereco: port.address,
+        liberarPorta: () {
+          if (port.isOpen) port.close();
+          port.dispose();
+        },
+      );
+      final service = SerialScannerService._(reader: reader);
+      service._subscription = reader.dados.listen((bytes) {
         for (final code in service._decoder.add(bytes)) {
           service._codes.add(code);
         }
       }, onError: service._codes.addError);
+      await reader.iniciar();
       return service;
     } catch (_) {
       if (port.isOpen) port.close();
@@ -143,9 +151,8 @@ class SerialScannerService {
   Future<void> close() async {
     await _subscription?.cancel();
     _subscription = null;
-    _reader.close();
-    // Mesmo defeito da balança: liberar com o leitor ativo fechava a janela.
-    releaseReadPort(_port);
+    // Para o isolate e só então libera a porta (`leitor_serial_isolado.dart`).
+    await _reader.parar();
     await _codes.close();
   }
 }

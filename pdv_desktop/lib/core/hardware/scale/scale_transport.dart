@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
-import '../serial_port_release.dart';
+import '../leitor_serial_isolado.dart';
 
 /// Falha ao abrir o canal com a balança.
 class ScaleTransportException implements Exception {
@@ -51,7 +51,7 @@ class SerialScaleTransport implements ScaleTransport {
   final int? stopBits;
 
   SerialPort? _port;
-  SerialPortReader? _reader;
+  LeitorSerialIsolado? _reader;
   bool _writable = false;
 
   /// Portas seriais disponíveis no sistema.
@@ -107,10 +107,17 @@ class SerialScaleTransport implements ScaleTransport {
       } finally {
         config.dispose();
       }
-      final reader = SerialPortReader(port);
+      // O leitor próprio, e não a `SerialPortReader` da biblioteca: aquela
+      // não parava o isolate, que lia a porta já liberada e derrubava o app
+      // no Linux (`leitor_serial_isolado.dart`).
+      final reader = LeitorSerialIsolado(
+        endereco: port.address,
+        liberarPorta: () => _disposePort(port),
+      );
       _port = port;
       _reader = reader;
-      return reader.stream;
+      await reader.iniciar();
+      return reader.dados;
     } on ScaleTransportException {
       _disposePort(port);
       rethrow;
@@ -137,14 +144,12 @@ class SerialScaleTransport implements ScaleTransport {
 
   @override
   Future<void> close() async {
-    _reader?.close();
+    final reader = _reader;
     _reader = null;
     _writable = false;
-    final port = _port;
     _port = null;
-    // O leitor pode estar no meio de uma leitura nativa: liberar a porta
-    // agora derrubava o processo inteiro (ver `releaseReadPort`).
-    if (port != null) releaseReadPort(port);
+    // Para o isolate e SÓ ENTÃO fecha e libera a porta (`liberarPorta`).
+    await reader?.parar();
   }
 
   static void _disposePort(SerialPort port) {

@@ -55,9 +55,11 @@ void main() {
     expect(corpo['weight_kg'], '0.457');
     expect(corpo['tare_kg'], '0.000');
     expect(corpo['print'], isTrue);
+    // A etiqueta nasce reservada para esta estação, que a imprime ela mesma.
+    expect(corpo['imprime_aqui'], isTrue);
     expect(corpo['id'], isNotEmpty);
     expect(corpo.containsKey('scale_reading'), isFalse);
-    expect(job, 'job-1');
+    expect(job?['id'], 'job-1');
   });
 
   test('sem trabalho de impressao devolve null', () async {

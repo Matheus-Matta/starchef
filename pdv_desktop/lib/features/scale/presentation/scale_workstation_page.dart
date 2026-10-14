@@ -20,6 +20,7 @@ import '../../../core/widgets/shadcn_layout.dart';
 import '../../devices/domain/printer_endpoint.dart';
 import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
+import '../data/etiqueta_da_pesagem.dart';
 import '../data/lancamento_da_pesagem.dart';
 import '../data/scanner_binding_store.dart';
 import '../domain/hands_free_machine.dart';
@@ -816,7 +817,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     try {
       // UMA ida ao servidor: o lançamento leva o peso e cria a leitura junto
       // (`lancamento_da_pesagem.dart`). Antes eram duas, em sequência.
-      final printJobId =
+      final printJob =
           await LancamentoDaPesagem(
             widget.api,
             accessToken: widget.accessToken,
@@ -847,13 +848,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         'scale_checkout_ok',
         data: {'command': code, 'weight_kg': item.weightKg},
       );
-      setState(() => lastPrintJobId = printJobId);
-      // O item JÁ está na comanda: libera agora. A confirmação da impressora
-      // segue em segundo plano e avisa se falhar — esperar por ela aqui
-      // deixava a tela girando até 8 s por pesagem.
-      if (widget.preferences.autoPrint && printJobId != null) {
-        unawaited(_monitorPrintJob(printJobId));
-      }
+      setState(() => lastPrintJobId = printJob?['id'] as String?);
+      // O item JÁ está na comanda: libera agora. A etiqueta sai AQUI, em
+      // segundo plano (`etiqueta_da_pesagem.dart`), e avisa se falhar.
+      if (printJob != null) unawaited(_imprimirEtiqueta(printJob));
       machine.onLaunched();
       await Future<void>.delayed(const Duration(seconds: 2));
       if (!mounted || !started) return;
@@ -894,60 +892,41 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }
   }
 
-  /// Aguarda a confirmação do agente de impressão. Criar o PrintJob não
-  /// significa que a impressora recebeu o cupom; sem acompanhar o estado, uma
-  /// falha de rede ficava invisível e a tela dizia apenas “pedido concluído”.
-  Future<void> _monitorPrintJob(String jobId) async {
-    for (var attempt = 0; attempt < 16; attempt++) {
-      if (attempt > 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-      }
-      try {
-        final job = await widget.api.get(
-          '/print-jobs/$jobId/',
-          accessToken: widget.accessToken,
-        );
-        if (!mounted) return;
-        final status = '${job['status'] ?? ''}';
-        if (status == 'printed') {
-          return;
-        }
-        if (status == 'failed') {
-          final detail = '${job['error_message'] ?? ''}'.trim();
-          ErrorCenterScope.read(context).report(
-            AppError(
-              title: 'Pedido concluído, mas a impressão falhou',
-              message: detail.isEmpty
-                  ? 'A impressora não confirmou o recebimento da comanda.'
-                  : detail,
-              origin: AppErrorOrigin.peripheral,
-              recommendedAction:
-                  'Confira o IP, a porta e a energia da impressora e use Reimprimir.',
-              dedupeKey: 'scale-print-$jobId',
-            ),
-          );
-          return;
-        }
-      } on ApiException catch (error) {
-        AppLogger.instance.warning(
-          'scale_print_status_failed',
-          data: {'print_job': jobId, 'message': error.message},
-        );
-      }
-    }
-    if (!mounted) return;
-    ErrorCenterScope.read(context).report(
-      AppError(
-        title: 'Pedido concluído; impressão aguardando confirmação',
-        message:
-            'O trabalho foi criado, mas o agente de impressão ainda não confirmou a comanda.',
-        origin: AppErrorOrigin.peripheral,
-        severity: AppErrorSeverity.warning,
-        recommendedAction:
-            'Confira se o PDV principal está aberto e use Reimprimir se necessário.',
-        dedupeKey: 'scale-print-$jobId',
-      ),
+  /// Imprime a etiqueta NESTA estação e confirma no servidor.
+  ///
+  /// Antes esperava um PDV imprimir — e outro PC, sem a impressora USB/serial
+  /// da balança, reservava o trabalho e a etiqueta não saía.
+  Future<void> _imprimirEtiqueta(Map<String, dynamic> job) async {
+    final impressora = printers.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == '${job['printer']}',
+      orElse: () => null,
     );
+    try {
+      await EtiquetaDaPesagem(
+        widget.api,
+        accessToken: widget.accessToken,
+      ).imprimir(job: job, impressora: impressora);
+      AppLogger.instance.info('scale_ticket_printed', data: {'job': job['id']});
+    } on FalhaNaEtiqueta catch (falha) {
+      if (!mounted) return;
+      ErrorCenterScope.read(context).report(
+        AppError(
+          title: 'Lançado na comanda, mas a etiqueta não saiu',
+          message: falha.motivo,
+          origin: AppErrorOrigin.peripheral,
+          recommendedAction:
+              'Confira a impressora (papel, cabo, energia) e use Reimprimir.',
+          dedupeKey: 'scale-print-${job['id']}',
+        ),
+      );
+    } on ApiException catch (erro) {
+      // Saiu no papel, mas a confirmação não chegou ao servidor: a reserva
+      // expira e um PDV pode imprimir uma segunda via — só registra.
+      AppLogger.instance.warning(
+        'scale_ticket_confirm_failed',
+        data: {'job': job['id'], 'message': erro.message},
+      );
+    }
   }
 
   /// Reimprime a última etiqueta sem lançar nada de novo.
@@ -964,8 +943,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         body: const {},
         accessToken: widget.accessToken,
       );
+      // Reenfileirado ele volta à fila dos PDVs: reserva de novo para esta
+      // estação e imprime aqui.
+      final job = await EtiquetaDaPesagem(
+        widget.api,
+        accessToken: widget.accessToken,
+      ).reservar(jobId);
       if (!mounted) return;
-      await _monitorPrintJob(jobId);
+      await _imprimirEtiqueta(job);
       if (!mounted) return;
       AppLogger.instance.info('scale_reprint', data: {'print_job': jobId});
     } on ApiException catch (error) {
