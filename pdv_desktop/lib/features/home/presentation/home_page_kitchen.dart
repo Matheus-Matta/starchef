@@ -31,6 +31,7 @@ mixin _KitchenSection on _HomePageShared {
   Future<void> _goHome();
   List<Map<String, dynamic>> get products;
   Future<void> _refreshOrder();
+  Future<void> _carregarItensDaComanda(Map<String, dynamic> command);
 
   Future<void> _voidItem(Map<String, dynamic> item) async {
     // Linha de rascunho: nada foi lançado, nada foi produzido, e não há o que
@@ -38,12 +39,7 @@ mixin _KitchenSection on _HomePageShared {
     // existe nesta tela seria burocracia sobre coisa nenhuma.
     if (_draftIsLive) {
       if (item[OrderDraftCart.marcaDeJaLancado] == true) {
-        _error(
-          const ApiException(
-            'Este item já está lançado na comanda e não sai daqui. Para '
-            'cancelá-lo, abra o pedido dela.',
-          ),
-        );
+        await _removerItemDaComandaNoCaixa(item);
         return;
       }
       _removeDraftLine('${item['id']}');
@@ -102,6 +98,48 @@ mixin _KitchenSection on _HomePageShared {
     body: {'reason': reason, 'cash_password': ?cashPassword},
     accessToken: token,
   );
+
+  /// Item que a comanda trouxe para o carrinho, tirado na hora de cobrar.
+  ///
+  /// `checkout` diz ao servidor que é o CAIXA quem tira: com a sessão aberta,
+  /// ele passa por cima do prazo de cancelamento — o cliente está conferindo
+  /// a conta, e chamar alguém com a senha para tirar um refrigerante travava
+  /// a fila. Sem caixa aberto o servidor ainda recusa (409), e a senha libera.
+  Future<void> _removerItemDaComandaNoCaixa(Map<String, dynamic> item) async {
+    final comandaId = '${item['command'] ?? ''}';
+    final comanda = draft.commands.firstWhere(
+      (c) => '${c['id']}' == comandaId,
+      orElse: () => const {},
+    );
+    if (comanda.isEmpty) return;
+    final reason = await ItemVoidReasonDialog.show(
+      context,
+      itemName: '${item['product_name'] ?? 'Item da comanda'}',
+      title: 'Remover item da comanda ${comanda['number'] ?? ''}'.trim(),
+      confirmLabel: 'Remover item',
+      warning: '${item['status']}' == 'pending'
+          ? null
+          : 'Este item já foi para a produção. Uma nota de cancelamento '
+                'será impressa no setor que o recebeu.',
+    );
+    if (reason == null || !mounted) return;
+    Future<void> enviar([String? senha]) => api.delete(
+      '/commands/$comandaId/items/${item['id']}/void/',
+      body: {'reason': reason, 'checkout': true, 'cash_password': ?senha},
+      accessToken: token,
+    );
+    await _work(() async {
+      try {
+        await enviar();
+      } on ApiException catch (erro) {
+        if (erro.statusCode != 409) rethrow;
+        final liberado = await _autorizarCancelamentoDeItem(erro.message);
+        if (liberado == null) return;
+        await enviar(liberado);
+      }
+    });
+    if (mounted) await _carregarItensDaComanda(comanda);
+  }
 
   /// Pede a senha de ações do caixa para liberar um cancelamento barrado.
   ///

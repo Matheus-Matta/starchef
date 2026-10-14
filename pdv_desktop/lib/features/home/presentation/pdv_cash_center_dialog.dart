@@ -151,6 +151,25 @@ class PdvCashCenterDialog extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            AppResponsiveFields(
+              breakpoint: 420,
+              spacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  key: const Key('cash-reprint-supply'),
+                  onPressed: () => _select(context, 'reprint_supply'),
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Reimprimir suprimento'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('cash-reprint-withdrawal'),
+                  onPressed: () => _select(context, 'reprint_withdrawal'),
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Reimprimir sangria'),
+                ),
+              ],
+            ),
           ],
         ),
       ),

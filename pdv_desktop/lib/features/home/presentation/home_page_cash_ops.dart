@@ -37,6 +37,7 @@ mixin _CashOpsSection on _HomePageShared {
   Future<void> _goHome();
   Future<void> _load();
   Future<void> _refreshCashSession();
+  Future<void> _showCashDivergence();
   // Comprovantes no papel (`_CashPrintSection`): saem DEPOIS de a operação
   // estar registrada, e uma impressora fora do ar nunca a desfaz.
   Future<void> _printCashOpening(
@@ -193,7 +194,7 @@ mixin _CashOpsSection on _HomePageShared {
                 controller: reason,
                 maxLines: 2,
                 decoration: const InputDecoration(
-                  labelText: 'Motivo obrigatório',
+                  labelText: 'Motivo (opcional)',
                 ),
               ),
             ],
@@ -280,6 +281,15 @@ mixin _CashOpsSection on _HomePageShared {
           },
           onError: (error) {
             if (mounted) _error(error);
+          },
+          onCancel: () async {
+            await api.post(
+              '/cash-register/${movement['cash_register'] ?? cashSession!['id']}'
+              '/cancel-pending/',
+              body: {'movement': '${movement['id']}', ..._terminalIdentity},
+              accessToken: token,
+            );
+            if (mounted) setState(() => pendingCashMovement = null);
           },
         ),
       );
@@ -379,7 +389,14 @@ mixin _CashOpsSection on _HomePageShared {
         setState(() {});
         return cashSession;
       }, onError: (error) => _cashError(error, 'fechar o caixa'));
-      if (closed != null) await _printCashClosing(closed);
+      if (closed == null) return;
+      // Divergente, o fechamento ainda pode ser cancelado: o relatório só sai
+      // depois da senha, pelo diálogo da divergência.
+      if (hasCashDivergence) {
+        await _showCashDivergence();
+      } else {
+        await _printCashClosing(closed);
+      }
     }
   }
 
@@ -427,140 +444,4 @@ mixin _CashOpsSection on _HomePageShared {
       child: ListTile(leading: Icon(Icons.lock), title: Text('Fechar caixa')),
     ),
   ];
-}
-
-/// O formulário da autorização de sangria/suprimento.
-///
-/// Existe como widget com estado por um motivo só, e é o que evita a tela
-/// vermelha: os `TextEditingController` são criados no `initState` e
-/// descartados no `dispose`, que o Flutter chama depois que a rota do diálogo
-/// termina de sair. Quem cria e descarta de fora, em volta do
-/// `await showDialog`, descarta cedo demais.
-///
-/// Devolve a justificativa gerencial pelo `Navigator.pop`, ou `null` quando o
-/// operador minimiza sem autorizar.
-class _MovementApprovalForm extends StatefulWidget {
-  const _MovementApprovalForm({
-    required this.movement,
-    required this.onApprove,
-    required this.onError,
-  });
-
-  final Map<String, dynamic> movement;
-
-  /// Autoriza no servidor. Lança quando a senha é recusada.
-  final Future<void> Function(String password, String reason) onApprove;
-  final void Function(Object error) onError;
-
-  @override
-  State<_MovementApprovalForm> createState() => _MovementApprovalFormState();
-}
-
-class _MovementApprovalFormState extends State<_MovementApprovalForm> {
-  final _password = TextEditingController();
-  final _managerReason = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
-  bool _authorizing = false;
-
-  @override
-  void dispose() {
-    _password.dispose();
-    _managerReason.dispose();
-    super.dispose();
-  }
-
-  Future<void> _authorize() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _authorizing = true);
-    final justificativa = _managerReason.text.trim();
-    try {
-      await widget.onApprove(_password.text, justificativa);
-    } catch (error) {
-      if (!mounted) return;
-      widget.onError(error);
-      // O diálogo continua vivo: a recusa foi da senha ou do servidor, e o
-      // campo guarda o que foi digitado para o operador corrigir.
-      setState(() => _authorizing = false);
-      return;
-    }
-    if (!mounted) return;
-    Navigator.pop(context, justificativa);
-  }
-
-  @override
-  Widget build(BuildContext context) => AppDialog(
-    title: Text(
-      widget.movement['movement_type'] == 'withdrawal'
-          ? 'Autorizar sangria'
-          : 'Autorizar suprimento',
-    ),
-    content: SizedBox(
-      width: 480,
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Movimentação pendente de '
-                '${ValueFormatters.money(ValueFormatters.number(widget.movement['amount']).abs())}.',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text('Motivo: ${widget.movement['reason']}'),
-              if ('${widget.movement['destination'] ?? ''}'.isNotEmpty)
-                Text('Destino: ${widget.movement['destination']}'),
-              const Divider(height: 30),
-              TextFormField(
-                controller: _password,
-                autofocus: true,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Senha de ações do caixa',
-                  helperText: 'Definida no cadastro do restaurante.',
-                  prefixIcon: Icon(Icons.lock_outline),
-                ),
-                validator: (value) => value == null || value.isEmpty
-                    ? 'Informe a senha de ações do caixa.'
-                    : null,
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                controller: _managerReason,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Justificativa gerencial',
-                ),
-                validator: (value) => value == null || value.trim().isEmpty
-                    ? 'Informe a justificativa.'
-                    : null,
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-    actions: [
-      TextButton.icon(
-        onPressed: _authorizing ? null : () => Navigator.pop(context),
-        icon: const Icon(Icons.minimize),
-        label: const Text('Minimizar'),
-      ),
-      FilledButton.icon(
-        onPressed: _authorizing ? null : _authorize,
-        icon: _authorizing
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.verified_user_outlined),
-        label: const Text('Autorizar movimentação'),
-      ),
-    ],
-  );
 }

@@ -258,8 +258,10 @@ def create_cash_movement(
         # com valor ausente, viravam `Decimal("None")`. Erro de preenchimento é
         # 400 com a razão.
         amount = parse_money(amount, field="amount")
-        if amount <= 0 or not str(reason or "").strip():
-            raise ValidationError("Informe um valor maior que zero e o motivo.")
+        # O motivo é opcional: com fila no caixa, o operador digitava "." só
+        # para passar, e o campo obrigatório não registrava nada de útil.
+        if amount <= 0:
+            raise ValidationError("Informe um valor maior que zero.")
         needs_approval = movement_type in {CashMovement.TYPE_WITHDRAWAL, CashMovement.TYPE_SUPPLY}
         movement = CashMovement.objects.create(
             account=cash_register.account,
@@ -269,7 +271,7 @@ def create_cash_movement(
             operator=user,
             movement_type=movement_type,
             amount=-amount if movement_type == CashMovement.TYPE_WITHDRAWAL else amount,
-            reason=reason,
+            reason=str(reason or "").strip(),
             destination=destination,
             status="pending" if needs_approval else "approved",
             # De onde o lancamento partiu: o relatorio de caixa mostra o
@@ -342,6 +344,13 @@ def approve_cash_operation(
         cash_register = CashRegister.objects.select_for_update().get(pk=cash_register.pk)
         if movement:
             movement = CashMovement.objects.select_for_update().get(pk=movement.pk, cash_register=cash_register)
+            # Relido DEPOIS do lock: cancelada enquanto a senha era digitada,
+            # ela não pode voltar a valer por aprovação. Já aprovada é reenvio
+            # da mesma autorização, e responde igual.
+            if movement.status == "approved":
+                return movement
+            if movement.status != "pending":
+                raise ValidationError("Esta movimentação foi cancelada e não pode mais ser autorizada.")
             # A senha do restaurante já é a autorização — dispensa a segregação operador≠aprovador.
             if not authorized_by_password and movement.operator_id == user.id and not _can_self_approve(user):
                 raise ValidationError("O operador não pode aprovar a própria sangria.")

@@ -14,8 +14,14 @@ from apps.orders.models import CommandItem
 
 
 @transaction.atomic
-def void_command_item(item, *, user, reason, authorized=False, authorized_by=None, avisar_entregue=True):
+def void_command_item(
+    item, *, user, reason, authorized=False, authorized_by=None, avisar_entregue=True,
+    liberado_no_caixa=False,
+):
     """Cancela a anotação e imprime aviso se ela já foi produzida.
+
+    `liberado_no_caixa=True` é o caixa tirando o item na hora de cobrar (ver
+    `CommandViewSet.void_item`): passa por cima do prazo e fica registrado.
 
     `avisar_entregue=False` é o zeramento em lote: prato pronto ou entregue já
     saiu da cozinha, e um cupom de cancelamento por item, no fim do dia, só
@@ -43,7 +49,7 @@ def void_command_item(item, *, user, reason, authorized=False, authorized_by=Non
             item.refresh_from_db()
             within_grace = item.status == CommandItem.STATUS_QUEUED
 
-        assert_pode_cancelar(item, authorized=authorized)
+        assert_pode_cancelar(item, authorized=authorized or liberado_no_caixa)
         was_dispatched = item.status not in {
             CommandItem.STATUS_PENDING,
             CommandItem.STATUS_QUEUED,
@@ -81,6 +87,7 @@ def void_command_item(item, *, user, reason, authorized=False, authorized_by=Non
             reason=reason,
             metadata={
                 "event": "command_item_voided",
+                **({"released_at_checkout": True} if liberado_no_caixa else {}),
                 **({"authorized_by": str(authorized_by.pk)} if authorized_by else {}),
             },
         )

@@ -283,6 +283,28 @@ class CashRegisterViewSet(BaseTenantViewSet):
     def supply(self, request, pk=None):
         return self._movement(request, CashMovement.TYPE_SUPPLY, "source")
 
+    @action(detail=True, methods=["post"], url_path="cancel-pending")
+    def cancel_pending(self, request, pk=None):
+        """Desiste do fechamento divergente ou da movimentação pendente."""
+        from apps.payments.cash_pending_cancel import NadaPendente, cancel_pending_cash_operation
+
+        cash_register = self.get_object()
+        try:
+            result = cancel_pending_cash_operation(
+                cash_register=cash_register,
+                user=request.user,
+                movement_id=request.data.get("movement") or None,
+                terminal=terminal_from_request(request, restaurant=cash_register.restaurant),
+                installation_id=installation_id_from_request(request),
+            )
+        except (CashSessionConflict, CashSessionForbidden) as exc:
+            return cash_session_error_response(exc)
+        except NadaPendente as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_409_CONFLICT)
+        if isinstance(result, CashMovement):
+            return Response(CashMovementSerializer(result).data)
+        return Response(self.get_serializer(result).data)
+
     @action(detail=True, methods=["get"], url_path="print-document")
     def print_document(self, request, pk=None):
         """Comprovante do caixa em texto, pronto para a impressora do terminal.

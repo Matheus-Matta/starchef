@@ -40,10 +40,10 @@ class CartItemCard extends StatelessWidget {
   /// pedido fechado ou produto vendido por peso.
   final ValueChanged<int>? onQuantityDelta;
 
-  /// Item de COMANDA não se apaga aqui: ele não é deste carrinho, é uma
-  /// anotação que já existe no cartão. Um X daria a impressão de apagar o
-  /// consumo — o caminho certo é retirar a comanda inteira, no diálogo.
-  bool get _podeRemover => canRemove && numeroDaComandaDoItem(item) == null;
+  /// Item de COMANDA também sai daqui: é o caixa conferindo a conta com o
+  /// cliente na frente ("esse refri não é meu"). O X não apaga a anotação em
+  /// silêncio — pede o motivo e cancela no servidor, que registra quem tirou.
+  bool get _podeRemover => canRemove;
 
   @override
   Widget build(BuildContext context) {

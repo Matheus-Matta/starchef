@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
 import 'package:starchef_pdv_desktop/features/orders/data/order_draft_cart.dart';
+import 'package:starchef_pdv_desktop/features/orders/presentation/cart_item_card.dart';
 import 'package:starchef_pdv_desktop/features/orders/presentation/order_cart_panel.dart';
 
 /// Numa conta com quatro comandas, o carrinho é uma lista só.
@@ -10,9 +11,9 @@ import 'package:starchef_pdv_desktop/features/orders/presentation/order_cart_pan
 /// Sem dizer de qual cartão é cada linha, ninguém sabe o que pertence a quem —
 /// e a conferência em voz alta com o cliente ("quanto é a minha?") não fecha.
 ///
-/// E a anotação da comanda não se apaga daqui: ela não é deste carrinho, é
-/// consumo que já existe no cartão. Um X daria a impressão de apagar o
-/// consumo; o caminho certo é retirar a comanda inteira, no diálogo.
+/// E a anotação da comanda SAI daqui: é o caixa conferindo a conta com o
+/// cliente na frente. Antes o X não existia, e tirar um item que o cliente
+/// não pediu exigia abrir o pedido da comanda ou chamar alguém com a senha.
 void main() {
   Map<String, dynamic> itemNovo() => {
     'id': 'l-1',
@@ -32,7 +33,10 @@ void main() {
 
   // `ShadCard` exige o tema do shadcn acima dele — a mesma moldura que os
   // outros testes de widget deste projeto usam.
-  Widget carrinho(List<Map<String, dynamic>> itens) => MaterialApp(
+  Widget carrinho(
+    List<Map<String, dynamic>> itens, {
+    ValueChanged<Map<String, dynamic>>? aoRemover,
+  }) => MaterialApp(
     home: ShadTheme(
       data: AppTheme.shadLight(),
       child: Scaffold(
@@ -46,7 +50,7 @@ void main() {
             printing: false,
             items: itens,
             money: (v) => 'R\$ $v',
-            onVoidItem: (_) {},
+            onVoidItem: aoRemover ?? (_) {},
             onFinish: () {},
             onSendToKitchen: () {},
             onPrint: () {},
@@ -70,9 +74,21 @@ void main() {
     expect(find.textContaining('Comanda'), findsNothing);
   });
 
-  testWidgets('item de comanda NAO oferece o botao de remover', (tester) async {
-    await tester.pumpWidget(carrinho([itemDeComanda()]));
+  testWidgets('item de comanda oferece o botao de remover no caixa', (
+    tester,
+  ) async {
+    Map<String, dynamic>? removido;
+    await tester.pumpWidget(
+      carrinho([itemDeComanda()], aoRemover: (item) => removido = item),
+    );
 
-    expect(find.byTooltip('Remover item'), findsNothing);
+    final botao = find.descendant(
+      of: find.byType(CartItemCard),
+      matching: find.widgetWithIcon(IconButton, Icons.close_rounded),
+    );
+    expect(botao, findsOneWidget);
+    tester.widget<IconButton>(botao).onPressed!();
+
+    expect(removido?['id'], 'c-1');
   });
 }

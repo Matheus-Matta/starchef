@@ -713,6 +713,29 @@ aprovação do caixa sobe como prova HMAC (`cash_password_proof`) e o
 cancelamento de um pedido que o servidor já conhece continua exigindo rede —
 é o servidor quem apaga consumo lançado, e a senha nunca entra na fila.
 
+**Desistir em vez de autorizar.** O diálogo da divergência do FECHAMENTO tem
+"Cancelar fechamento", e o da sangria/suprimento pendente tem "Cancelar
+sangria/suprimento". Os dois chamam `POST /cash-register/{id}/cancel-pending/`
+(com `movement` para a movimentação) e não pedem senha: não liberam dinheiro,
+só desfazem o gesto — o fechamento volta a ser caixa aberto (contagem, autor
+e lançamento de fechamento apagados) e a movimentação vira `cancelled`, fora
+do saldo e sem poder ser aprovada depois. Sem nada pendente a rota responde
+409. A divergência de ABERTURA não tem essa saída: não há "antes" para onde
+voltar. O relatório de fechamento divergente só imprime DEPOIS da senha —
+antes dela o fechamento ainda pode ser cancelado.
+
+O motivo da sangria/suprimento é opcional (o valor continua obrigatório), e o
+centro de caixa reimprime a última sangria e o último suprimento APROVADOS da
+estação (`GET /cash-movements/`), sem abrir a gaveta.
+
+**Item da comanda sai no caixa.** No rascunho do balcão, o item que a comanda
+trouxe tem o X: o PDV cancela a anotação em
+`DELETE /commands/{id}/items/{id}/void/` com `checkout: true`. O servidor passa
+por cima do prazo de cancelamento (`item_cancel_window_seconds`) só quando
+quem pede tem caixa ABERTO no restaurante, e grava `released_at_checkout` na
+auditoria. O app do garçom não manda o sinal, então o salão segue preso ao
+prazo.
+
 **Sem sessão, a janela fecha direto.** Antes existia aqui um verificador
 PBKDF2 embutido no binário, igual em toda instalação — um segredo que basta
 extrair de um executável para valer em todos os terminais, e que ainda podia

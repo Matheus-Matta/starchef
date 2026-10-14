@@ -450,6 +450,15 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         authorized, authorizer, _how = _can_authorize_cancellation(
             request, command.restaurant, command.account_id
         )
+        # O caixa, cobrando com o cliente na frente, tira o item sem a senha:
+        # o prazo é para o salão não sumir com prato feito, não para travar a
+        # conferência da conta. O sinal sozinho não vale — qualquer cliente o
+        # manda; quem libera é o caixa ABERTO de quem pede.
+        from apps.payments.services import get_open_cash_register
+
+        no_caixa = bool(request.data.get("checkout")) and (
+            get_open_cash_register(command.restaurant, user=request.user) is not None
+        )
         try:
             void_command_item(
                 item,
@@ -457,6 +466,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 reason=request.data.get("reason") or "",
                 authorized=authorized,
                 authorized_by=authorizer,
+                liberado_no_caixa=no_caixa,
             )
         except CancelamentoBloqueado as exc:
             from apps.core.exceptions import CancelBlocked

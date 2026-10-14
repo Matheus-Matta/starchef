@@ -31,6 +31,8 @@ ROTAS_DO_PDV = [
     ("POST", "/cash-register/{id}/close/"),
     ("POST", "/cash-register/{id}/supply/"),
     ("POST", "/cash-register/{id}/withdrawal/"),
+    ("POST", "/cash-register/{id}/cancel-pending/"),
+    ("GET", "/cash-movements/"),
     ("GET", "/cash-register/{id}/print-document/"),
     ("GET", "/cash-stations/"),
     ("GET", "/commands/"),

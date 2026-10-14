@@ -81,4 +81,39 @@ void main() {
     expect(await busca.ultimaAbertura(estacao: ''), isNull);
     expect(chamadas, isEmpty);
   });
+  test(
+    'a ultima sangria e a aprovada mais recente da estacao, pelo lancamento',
+    () async {
+      final busca = UltimoDocumentoDoCaixa(
+        api([
+          {'id': 'm1', 'movement_type': 'withdrawal'},
+        ]),
+        accessToken: 't',
+      );
+
+      final movimento = await busca.ultimaMovimentacao(
+        estacao: 'st-1',
+        tipo: 'withdrawal',
+      );
+
+      expect(movimento?['id'], 'm1');
+      final query = chamadas.single.queryParameters;
+      expect(chamadas.single.path, endsWith('/cash-movements/'));
+      expect(query['cash_station'], 'st-1');
+      expect(query['movement_type'], 'withdrawal');
+      // Pendente ainda não tem comprovante: ele sai na autorização.
+      expect(query['status'], 'approved');
+      expect(query['ordering'], '-created_at');
+      expect(query['page_size'], '1');
+    },
+  );
+
+  test('sem sangria registrada devolve null, para a tela avisar', () async {
+    final busca = UltimoDocumentoDoCaixa(api(const []), accessToken: 't');
+
+    expect(
+      await busca.ultimaMovimentacao(estacao: 'st-1', tipo: 'supply'),
+      isNull,
+    );
+  });
 }

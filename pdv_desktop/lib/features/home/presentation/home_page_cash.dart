@@ -41,6 +41,10 @@ mixin _CashSection on _HomePageShared {
   Future<void> _goHome();
   Future<void> _load();
   Future<void> _printCashOpeningDivergence(Map<String, dynamic> session);
+  Future<void> _printCashClosing(
+    Map<String, dynamic> session, {
+    bool abrirGaveta,
+  });
 
   /// Divergência no fechamento: só a senha de ações do caixa libera.
   ///
@@ -52,6 +56,7 @@ mixin _CashSection on _HomePageShared {
   Future<void> _showCashDivergence() async {
     if (!mounted || !hasCashDivergence || divergenceDialogOpen) return;
     final pendingOperation = '${cashSession?['pending_operation'] ?? ''}';
+    final sessionId = '${cashSession?['id'] ?? ''}';
     divergenceDialogOpen = true;
     Map<String, dynamic>? aprovada;
     try {
@@ -76,6 +81,13 @@ mixin _CashSection on _HomePageShared {
               if (mounted) _error(error);
             },
             onLogout: () => widget.controller.logout(),
+            onCancelClosing: pendingOperation == 'closing'
+                ? () => api.post(
+                    '/cash-register/$sessionId/cancel-pending/',
+                    body: {..._terminalIdentity},
+                    accessToken: token,
+                  )
+                : null,
           ),
         ),
       );
@@ -85,8 +97,19 @@ mixin _CashSection on _HomePageShared {
 
     if (aprovada == null || !mounted) return;
     cashSession = aprovada;
+    final reaberto = '${aprovada['status']}' == 'open';
     if (pendingOperation == 'opening') {
       await _printCashOpeningDivergence(aprovada);
+    } else if (pendingOperation == 'closing' && reaberto) {
+      showAppToast(
+        context,
+        'Fechamento cancelado. O caixa continua aberto.',
+        severity: AppErrorSeverity.info,
+      );
+    } else if (pendingOperation == 'closing') {
+      // O relatório sai DEPOIS da senha: antes dela o fechamento ainda pode
+      // ser cancelado, e o papel assinado mostraria um caixa que não fechou.
+      await _printCashClosing(aprovada);
     }
     // FORA do diálogo: `_load` leva segundos e pode falhar. Dentro do callback
     // do botão, ele corria depois de o `showDialog` já ter retornado.
@@ -123,169 +146,5 @@ mixin _CashSection on _HomePageShared {
         ? 'sobra'
         : 'sem diferença';
     return '${_money(difference.abs())} ($description)';
-  }
-}
-
-/// O formulário da aprovação de divergência de caixa.
-///
-/// Mesmo motivo de `_MovementApprovalForm`: os controladores vivem no `State`
-/// e são descartados quando a rota do diálogo termina de sair — não quando o
-/// `await showDialog` retorna, que é cedo demais.
-///
-/// Devolve a sessão de caixa já aprovada, ou `null` se nada foi autorizado.
-class _CashDivergenceForm extends StatefulWidget {
-  const _CashDivergenceForm({
-    required this.session,
-    required this.expected,
-    required this.counted,
-    required this.difference,
-    required this.buildValue,
-    required this.onApprove,
-    required this.onError,
-    required this.onLogout,
-  });
-
-  final Map<String, dynamic>? session;
-  final String expected;
-  final String counted;
-  final String difference;
-  final Widget Function(String label, String value, {bool emphasized})
-  buildValue;
-  final Future<Map<String, dynamic>> Function(String password, String reason)
-  onApprove;
-  final void Function(Object error) onError;
-  final Future<void> Function() onLogout;
-
-  @override
-  State<_CashDivergenceForm> createState() => _CashDivergenceFormState();
-}
-
-class _CashDivergenceFormState extends State<_CashDivergenceForm> {
-  final _password = TextEditingController();
-  final _reason = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
-  bool _authorizing = false;
-
-  @override
-  void dispose() {
-    _password.dispose();
-    _reason.dispose();
-    super.dispose();
-  }
-
-  Future<void> _authorize() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _authorizing = true);
-    final Map<String, dynamic> aprovada;
-    try {
-      aprovada = await widget.onApprove(_password.text, _reason.text.trim());
-    } catch (error) {
-      if (!mounted) return;
-      widget.onError(error);
-      // O diálogo segue vivo: a senha foi recusada e o operador corrige o que
-      // digitou, sem redigitar tudo.
-      setState(() => _authorizing = false);
-      return;
-    }
-    if (!mounted) return;
-    Navigator.pop(context, aprovada);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final notes = '${widget.session?['notes'] ?? ''}'.trim();
-    final opening = widget.session?['pending_operation'] == 'opening';
-    return AppDialog(
-      title: const Row(
-        children: [
-          Icon(Icons.warning_amber_rounded, color: Colors.orange),
-          SizedBox(width: 10),
-          Expanded(child: Text('Divergência no caixa')),
-        ],
-      ),
-      content: SizedBox(
-        width: 520,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'O PDV permanecerá bloqueado até que a divergência seja '
-                  'autorizada com a senha de ações do caixa.',
-                ),
-                const SizedBox(height: 18),
-                widget.buildValue('Valor esperado', widget.expected),
-                widget.buildValue('Valor contado', widget.counted),
-                widget.buildValue(
-                  'Diferença',
-                  widget.difference,
-                  emphasized: true,
-                ),
-                if (notes.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text('Observação: $notes'),
-                ],
-                const Divider(height: 32),
-                TextFormField(
-                  controller: _password,
-                  autofocus: true,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Senha de ações do caixa',
-                    helperText: 'Definida no cadastro do restaurante.',
-                    prefixIcon: Icon(Icons.lock_outline),
-                  ),
-                  validator: (value) => value == null || value.isEmpty
-                      ? 'Informe a senha de ações do caixa.'
-                      : null,
-                ),
-                const SizedBox(height: 14),
-                TextFormField(
-                  controller: _reason,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Justificativa gerencial',
-                    helperText:
-                        'Explique por que a divergência está sendo aprovada.',
-                  ),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Informe a justificativa.'
-                      : null,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton.icon(
-          onPressed: _authorizing
-              ? null
-              : () async {
-                  Navigator.pop(context);
-                  await widget.onLogout();
-                },
-          icon: const Icon(Icons.logout),
-          label: const Text('Sair do sistema'),
-        ),
-        FilledButton.icon(
-          onPressed: _authorizing ? null : _authorize,
-          icon: _authorizing
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.verified_user_outlined),
-          label: Text(
-            opening
-                ? 'Autorizar abertura divergente'
-                : 'Aprovar e concluir fechamento',
-          ),
-        ),
-      ],
-    );
   }
 }

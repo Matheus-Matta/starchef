@@ -56,4 +56,21 @@ void main() {
       'reprint_opening',
     );
   });
+  testWidgets('reimprime a ultima sangria', (tester) async {
+    expect(
+      await escolher(tester, sessao: null, chave: 'cash-reprint-withdrawal'),
+      'reprint_withdrawal',
+    );
+  });
+
+  testWidgets('reimprime o ultimo suprimento', (tester) async {
+    expect(
+      await escolher(
+        tester,
+        sessao: {'id': 's1', 'station': 'Caixa 01'},
+        chave: 'cash-reprint-supply',
+      ),
+      'reprint_supply',
+    );
+  });
 }

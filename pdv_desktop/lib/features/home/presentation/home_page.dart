@@ -100,6 +100,8 @@ import '../../orders/presentation/command_attach_dialog.dart';
 
 part 'home_page_cash.dart';
 part 'home_page_cash_ops.dart';
+part 'home_page_cash_divergence_form.dart';
+part 'home_page_cash_movement_form.dart';
 part 'home_page_cash_print.dart';
 part 'home_page_cash_print_send.dart';
 part 'home_page_commands.dart';
@@ -1119,6 +1121,11 @@ class _HomePageState extends State<HomePage>
     if (action == 'close') await _closeCash();
     if (action == 'reprint_opening' || action == 'reprint_closing') {
       await _reimprimirDoCaixa(abertura: action == 'reprint_opening');
+    }
+    if (action == 'reprint_supply' || action == 'reprint_withdrawal') {
+      await _reimprimirMovimentacao(
+        action == 'reprint_withdrawal' ? 'withdrawal' : 'supply',
+      );
     }
   }
 

@@ -139,6 +139,43 @@ mixin _CashPrintSection on _HomePageShared {
     }
   }
 
+  /// "Reimprimir sangria/suprimento": o último APROVADO desta estação, com a
+  /// mesma autorização do papel original e sem abrir a gaveta.
+  Future<void> _reimprimirMovimentacao(String tipo) async {
+    final sangria = tipo == 'withdrawal';
+    try {
+      final movimento = await UltimoDocumentoDoCaixa(
+        api,
+        accessToken: token,
+      ).ultimaMovimentacao(estacao: _estacaoDoTerminal, tipo: tipo);
+      if (!mounted) return;
+      if (movimento == null) {
+        showAppToast(
+          context,
+          sangria
+              ? 'Nenhuma sangria registrada nesta estação.'
+              : 'Nenhum suprimento registrado nesta estação.',
+          severity: AppErrorSeverity.warning,
+        );
+        return;
+      }
+      final porSenha = '${movimento['authorization']}' == 'cash_password';
+      await _printCashMovement(
+        movimento,
+        {
+          'id': movimento['cash_register'],
+          'cash_station_name': movimento['cash_station_name'],
+        },
+        authorizedBy: porSenha
+            ? 'Senha de ações do caixa'
+            : '${movimento['authorized_by_name'] ?? ''}',
+        managerReason: '${movimento['manager_reason'] ?? ''}',
+      );
+    } catch (erro) {
+      if (mounted) _error(erro, title: 'Não foi possível reimprimir');
+    }
+  }
+
   /// A estação deste terminal: a do caixa aberto ou, fechado, a primeira a
   /// que o operador está vinculado — a mesma que a abertura escolheria.
   String get _estacaoDoTerminal {
