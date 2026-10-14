@@ -9,7 +9,7 @@ from apps.menu.models import ProductAddon, ProductVariation
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
 from apps.printers.models import Printer, PrintJob
-from apps.printers.services import _order_context_lines, register_print_job
+from apps.printers.services import _order_context_lines, html_do_trabalho, register_print_job
 from apps.restaurants.models import TableSector
 
 
@@ -138,7 +138,9 @@ def test_receipt_detalha_variacao_no_produto_e_adicional_com_valor(
     assert addon_line.endswith("R$ 8.00")
     assert "2 x Bacon" not in text
     assert "R$ 64.00" in text
-    assert f"{product.name} - Grande" in job.html_content
+    # O HTML (só pré-visualização) é montado quando pedido: quem imprime lê o
+    # texto acima (`html_do_trabalho`).
+    assert f"{product.name} - Grande" in html_do_trabalho(job)
 
 
 @pytest.mark.django_db
