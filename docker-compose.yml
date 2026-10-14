@@ -13,7 +13,8 @@
 # "Full (strict)": api.starchef.com.br → backend, app.starchef.com.br →
 # frontend. A configuração e o certificado de origem moram em /opt/nginx
 # (NGINX_DIR), copiados de nginx/ — ver nginx/README.md.
-# Backend e frontend continuam publicados só em loopback, para diagnóstico.
+# Backend e frontend são publicados só em loopback (127.0.0.1:8000 e :8080):
+# é por essas portas que o nginx, na rede do host, chega a eles.
 #
 # Log rotation evita que os logs dos containers ocupem todo o disco.
 #
@@ -312,15 +313,14 @@ services:
       - apps_net
 
   nginx:
-    # 1.28: o `resolve` no upstream (open source desde 1.27.3) relê o IP do
-    # backend recriado por um `up -d`; sem ele o proxy respondia 502.
     image: nginx:1.28.0-alpine
     restart: unless-stopped
     mem_limit: ${NGINX_MEM_LIMIT:-128m}
     logging: *default-logging
-    ports:
-      - "80:80"
-      - "443:443"
+    # Na rede do HOST: escuta 80/443 direto e chega ao backend e ao frontend
+    # pelas portas que eles publicam em 127.0.0.1 (8000 e 8080), sem nome de
+    # container. Ver nginx/nginx.conf.
+    network_mode: host
     volumes:
       - ${NGINX_DIR:-/opt/nginx}/nginx.conf:/etc/nginx/nginx.conf:ro
       - ${NGINX_DIR:-/opt/nginx}/certs:/etc/nginx/certs:ro
@@ -334,8 +334,6 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
-    networks:
-      - apps_net
 
 volumes:
   redis_data:

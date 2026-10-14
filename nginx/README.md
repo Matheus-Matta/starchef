@@ -5,8 +5,8 @@ O serviço `nginx` do `docker-compose.yml` é a única porta pública da nuvem
 
 | Domínio | Vai para |
 | --- | --- |
-| `api.starchef.com.br` | `backend:8000` — `/api`, `/ws`, `/admin`, `/static`, `/media`, `/health` |
-| `app.starchef.com.br` | `frontend:8080` — o painel |
+| `api.starchef.com.br` | `127.0.0.1:8000` (backend) — `/api`, `/ws`, `/admin`, `/static`, `/media`, `/health` |
+| `app.starchef.com.br` | `127.0.0.1:8080` (frontend) — o painel |
 | qualquer outro host | recusado (444), sem resposta |
 
 Esta pasta é a `/opt/nginx` do servidor (mude com `NGINX_DIR` no `.env`),
@@ -59,9 +59,14 @@ docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload
 
 ## Por que cada coisa
 
-- **`resolve` no upstream + `resolver 127.0.0.11`:** um `docker compose up -d`
-  que recria o backend troca o IP dele. Um nginx que resolveu o nome só no
-  boot respondia 502 até ser reiniciado também.
+- **Porta local, nunca nome de container:** o nginx roda com
+  `network_mode: host` e vai a `127.0.0.1:8000` e `127.0.0.1:8080`, as portas
+  que backend e frontend publicam em loopback. Pelo nome ele dependia do DNS
+  do Docker: com o frontend parado, "frontend could not be resolved" e o
+  painel em 502; e na `apps_net`, compartilhada com outros apps, outro
+  serviço com o mesmo nome capturaria o tráfego. Recriar um container não
+  muda a porta, então não há IP para reler. Se mudar `BACKEND_PORT` ou
+  `FRONTEND_PORT` no `.env`, mude aqui também.
 - **`X-Forwarded-Proto https` fixo:** o backend confia nele
   (`SECURE_PROXY_SSL_HEADER`). Como a Cloudflare só chega por 443, ele não
   depende do que o cliente mandou.
@@ -85,6 +90,6 @@ ssl_client_certificate /etc/nginx/certs/cloudflare-origin-pull.pem;
 ssl_verify_client on;
 ```
 
-As portas de `backend` (8000) e `frontend` (8080) continuam publicadas só em
-loopback (`127.0.0.1`), para diagnóstico no próprio servidor. Nunca as abra
+As portas de `backend` (8000) e `frontend` (8080) são publicadas só em
+loopback (`127.0.0.1`): é por elas que o nginx chega aos dois. Nunca as abra
 para fora: o backend confia nos cabeçalhos `X-Forwarded-*` de quem se conecta.
