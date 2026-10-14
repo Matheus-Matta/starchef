@@ -90,3 +90,24 @@ def test_justificativa_curta_e_completada_ate_o_minimo(ambiente, monkeypatch):  
 
     assert len(comunicador.chamadas[-1][1]["justificativa"]) >= 15
 
+
+def test_falha_inesperada_no_cancelamento_vira_mensagem_e_nao_erro_interno(
+    ambiente, monkeypatch,  # noqa: F811
+):
+    """Uma exceção que não é do emissor (bug, biblioteca) virava 500: o painel
+    mostrava só "erro interno" e o pedido não cancelava, sem pista do porquê.
+    Agora é uma recusa com o motivo, e o pedido continua inteiro."""
+    nota = _emitida(ambiente, monkeypatch, Comunicador())
+
+    def quebrar(*_a, **_k):
+        raise RuntimeError("biblioteca quebrou")
+
+    monkeypatch.setattr("apps.invoices.acbrlib.provider.AcbrLibProvider.cancel", quebrar)
+
+    with pytest.raises(ValidationError, match="biblioteca quebrou"):
+        cancel_order(ambiente.pedido, ambiente.user, "Cliente desistiu da compra")
+
+    nota.refresh_from_db()
+    ambiente.pedido.refresh_from_db()
+    assert nota.status == Invoice.STATUS_ISSUED
+    assert ambiente.pedido.status != Order.STATUS_CANCELLED

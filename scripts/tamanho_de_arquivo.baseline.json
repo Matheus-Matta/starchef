@@ -37,7 +37,7 @@
     "backend/apps/invoices/models.py": 431,
     "backend/apps/invoices/providers.py": 394,
     "backend/apps/invoices/serializers.py": 383,
-    "backend/apps/invoices/services.py": 1644,
+    "backend/apps/invoices/services.py": 1650,
     "backend/apps/invoices/tests/test_auto_issue_on_payment.py": 493,
     "backend/apps/invoices/tests/test_cancel_and_webhook.py": 269,
     "backend/apps/invoices/tests/test_fiscal_config_provisioning.py": 242,

@@ -807,6 +807,12 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
                     ) from exc
                 except FiscalProviderError as exc:
                     raise ValidationError(str(exc)) from exc
+                except Exception as exc:  # noqa: BLE001 — virava 500 sem motivo no painel
+                    logging.getLogger(__name__).exception(
+                        "Falha inesperada ao cancelar a nota %s", locked.pk)
+                    raise ValidationError(
+                        f"Nao foi possivel cancelar a nota fiscal: {exc}"
+                    ) from exc
                 transmitted_event = True
             else:
                 # Nada foi autorizado: o cancelamento e local, e dizer isso e

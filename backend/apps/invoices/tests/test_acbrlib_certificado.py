@@ -69,3 +69,26 @@ def test_nenhuma_mensagem_nem_log_carrega_o_segredo(caplog):
         for segredo in (kwargs["senha"], kwargs["pfx_base64"][:20]):
             assert segredo not in str(erro)
             assert segredo not in caplog.text
+
+
+def test_formato_que_a_biblioteca_nao_le_nao_derruba_a_emissao(monkeypatch, caplog):
+    """A1 em criptografia antiga (RC2/3DES) é comum, e a ACBrLib o lê.
+
+    A `cryptography` levanta `UnsupportedAlgorithm` (não `ValueError`) para
+    ele. Sem tratar, a exceção atravessava o cancelamento e a emissão e virava
+    "erro interno" (500) — por uma conferência que é só uma ajuda. Aqui ela
+    desiste em silêncio para o operador e deixa a ACBrLib decidir.
+    """
+    from cryptography.exceptions import UnsupportedAlgorithm
+
+    def recusar(*_a, **_k):
+        raise UnsupportedAlgorithm("RC2 não suportado")
+
+    monkeypatch.setattr("apps.invoices.acbrlib.certificado.load_key_and_certificates", recusar)
+    caplog.set_level(logging.WARNING)
+    conteudo = pfx(vence=AGORA + datetime.timedelta(days=200), senha="outra-senha-unica")
+
+    conferir_certificado(conteudo, "outra-senha-unica", cnpj_emitente=CNPJ, agora=AGORA)
+
+    assert "não conferido" in caplog.text
+    assert "outra-senha-unica" not in caplog.text

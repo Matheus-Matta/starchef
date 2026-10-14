@@ -14,12 +14,15 @@ import base64
 import binascii
 import datetime
 import hashlib
+import logging
 import re
 
 from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
 from cryptography.x509.oid import NameOID
 
 from apps.invoices.providers_erros import FiscalConfigurationError
+
+logger = logging.getLogger(__name__)
 
 
 class CertificadoRecusado(FiscalConfigurationError):
@@ -43,6 +46,8 @@ def conferir_certificado(pfx_base64, senha, *, cnpj_emitente, agora=None):
         if len(_LIDOS) >= 32:
             _LIDOS.clear()
         _LIDOS[chave] = _ler(pfx_base64, senha or "")
+    if _LIDOS[chave] is None:
+        return  # formato que a biblioteca não lê: a ACBrLib decide (ver `_ler`)
     vence_em, cnpj = _LIDOS[chave]
     agora = agora or datetime.datetime.now(datetime.timezone.utc)
     if vence_em <= agora:
@@ -70,7 +75,8 @@ def _impressao(pfx_base64, senha):
 
 
 def _ler(pfx_base64, senha):
-    """(validade, CNPJ) do A1, ou `CertificadoRecusado` dizendo por quê."""
+    """(validade, CNPJ) do A1, `CertificadoRecusado` dizendo por quê, ou
+    `None` quando a biblioteca não lê o formato (não é motivo de recusa)."""
     try:
         conteudo = base64.b64decode(pfx_base64, validate=False)
     except (binascii.Error, ValueError):
@@ -91,6 +97,14 @@ def _ler(pfx_base64, senha):
             "certificado_invalido",
             "o arquivo cadastrado não é um .pfx válido (corrompido ou de outro formato).",
         ) from None
+    except Exception as erro:  # noqa: BLE001 — ver abaixo
+        # A1 em criptografia antiga (RC2/3DES) é comum, e a ACBrLib o lê; a
+        # `cryptography` levanta `UnsupportedAlgorithm` para ele. Esta
+        # conferência é só ajuda: travar aqui virava "erro interno" no
+        # cancelamento e na emissão de um certificado que funciona.
+        logger.warning("Certificado A1 não conferido no backend (%s); segue para a ACBrLib.",
+                       type(erro).__name__)
+        return None
     if cert is None:
         raise CertificadoRecusado("certificado_invalido", "o .pfx não contém certificado.")
     nome = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
