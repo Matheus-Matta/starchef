@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../core/data/local_id.dart';
 import '../../../core/errors/app_error_host.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/formatters/value_formatters.dart';
@@ -21,6 +20,7 @@ import '../../../core/widgets/shadcn_layout.dart';
 import '../../devices/domain/printer_endpoint.dart';
 import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
+import '../data/lancamento_da_pesagem.dart';
 import '../data/scanner_binding_store.dart';
 import '../domain/hands_free_machine.dart';
 import '../services/serial_scanner_service.dart';
@@ -814,87 +814,45 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final code = machine.commandCode;
     if (item == null || code == null || scaleId == null) return;
     try {
-      // A leitura é um registro do servidor. Com a rede fora ela não existe —
-      // e não pode existir: registrar um peso "de antes" mais tarde criaria
-      // uma leitura que nunca aconteceu naquele instante. O peso bruto segue
-      // na própria operação de fechamento, e o backend materializa a leitura
-      // no replay.
-      Map<String, dynamic>? reading;
-      try {
-        reading = await widget.api.post(
-          '/scales/readings/',
-          body: {
-            'scale': scaleId,
-            'weight_kg': item.weightKg.toStringAsFixed(3),
-            'tare_kg': '0.000',
-            'is_stable': true,
-            'source': 'agent',
-            // Esta leitura é desta estação: o backend não dispara o lançamento
-            // automático da balança nela (consumia a leitura antes do checkout).
-            'for_checkout': true,
-          },
-          accessToken: widget.accessToken,
-        );
-      } on ApiException catch (error) {
-        // Qualquer recusa serve: sem rede, ou num Caixa Secundário (onde esta
-        // rota não existe — ele não fala com a nuvem). O peso segue no corpo
-        // do fechamento e o backend materializa a leitura no replay, que é o
-        // caminho já usado quando a internet cai.
-        AppLogger.instance.info(
-          'pesagem_sem_leitura_no_servidor',
-          data: {'motivo': error.message},
-        );
-      }
-      final result = await widget.api.post(
-        '/scales/$scaleId/checkout-command/',
-        body: {
-          // O UUID desta pesagem: se a loja gravar e cair antes de responder,
-          // o desvio para a nuvem é a MESMA pesagem (`pesagem_por_uuid.py`).
-          'id': LocalId.uuid(),
-          'command_code': code,
-          if (reading != null)
-            'scale_reading': reading['id']
-          else
-            'weight_kg': item.weightKg.toStringAsFixed(3),
-          'extras': machine.extras.entries
-              .where((entry) => entry.value > 0)
-              .map((entry) {
-                final config = extraConfigs[entry.key];
-                return {
-                  'product': entry.key,
-                  'quantity': entry.value,
-                  if (config?.variationId != null)
-                    'variations': [config!.variationId],
-                  if (config?.addonIds.isNotEmpty == true)
-                    'addons': config!.addonIds,
-                  if (config?.customerNote.isNotEmpty == true)
-                    'customer_note': config!.customerNote,
-                };
-              })
-              .toList(),
-          // Sem impressora vinculada não há ticket a emitir: pedir impressão
-          // aqui faria o servidor recusar o lançamento inteiro
-          // (`_resolve_weigh_printer` exige a impressora da balança).
-          'print': _printsTicketHere,
-        },
-        accessToken: widget.accessToken,
-      );
+      // UMA ida ao servidor: o lançamento leva o peso e cria a leitura junto
+      // (`lancamento_da_pesagem.dart`). Antes eram duas, em sequência.
+      final printJobId =
+          await LancamentoDaPesagem(
+            widget.api,
+            accessToken: widget.accessToken,
+          ).lancar(
+            balanca: scaleId!,
+            comanda: code,
+            pesoKg: item.weightKg,
+            extras: machine.extras.entries
+                .where((entry) => entry.value > 0)
+                .map((entry) {
+                  final config = extraConfigs[entry.key];
+                  return <String, dynamic>{
+                    'product': entry.key,
+                    'quantity': entry.value,
+                    if (config?.variationId != null)
+                      'variations': [config!.variationId],
+                    if (config?.addonIds.isNotEmpty == true)
+                      'addons': config!.addonIds,
+                    if (config?.customerNote.isNotEmpty == true)
+                      'customer_note': config!.customerNote,
+                  };
+                })
+                .toList(),
+            imprimir: _printsTicketHere,
+          );
       if (!mounted) return;
       AppLogger.instance.info(
         'scale_checkout_ok',
         data: {'command': code, 'weight_kg': item.weightKg},
       );
-      final printJob = result['print_job'];
-      setState(() {
-        lastPrintJobId = printJob is Map
-            ? '${printJob['id'] ?? ''}'.trim().isEmpty
-                  ? null
-                  : '${printJob['id']}'
-            : null;
-      });
-      if (widget.preferences.autoPrint && lastPrintJobId != null) {
-        await _monitorPrintJob(lastPrintJobId!);
-        if (!mounted) return;
+      setState(() => lastPrintJobId = printJobId);
+      // O item JÁ está na comanda: libera agora. A confirmação da impressora
+      // segue em segundo plano e avisa se falhar — esperar por ela aqui
+      // deixava a tela girando até 8 s por pesagem.
+      if (widget.preferences.autoPrint && printJobId != null) {
+        unawaited(_monitorPrintJob(printJobId));
       }
       machine.onLaunched();
       await Future<void>.delayed(const Duration(seconds: 2));
