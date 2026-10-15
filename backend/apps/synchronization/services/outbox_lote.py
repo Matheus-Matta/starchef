@@ -115,8 +115,10 @@ def _montar(origem, pendentes):
 
 def _persistir(origem, eventos):
     from apps.synchronization.models import SyncEvent
-    from apps.synchronization.services import crypto, outbox
+    from apps.synchronization.services import crypto, outbox, prioridade
 
+    for destino, _conta, entrada, _payload, _operacao in eventos:
+        prioridade.avisar_no_commit(entrada.entity_type, destino)
     try:
         with transaction.atomic():
             sequencias = _reservar(origem, len(eventos))

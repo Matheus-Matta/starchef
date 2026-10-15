@@ -1,6 +1,7 @@
 """Builds the complete auditable statement of one cash-register session."""
 
 from apps.orders.models import Order
+from apps.payments.cash_session_totals import totais_por_forma
 from apps.payments.serializers import CashRegisterSerializer
 from apps.payments.terminals import operator_label
 
@@ -50,6 +51,7 @@ def cash_session_statement(session, *, context=None):
     )
     return {
         "session": session_data,
+        **totais_por_forma(session_data["sales"]),
         "orders": [
             {
                 "id": str(order.pk),

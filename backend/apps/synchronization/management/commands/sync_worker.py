@@ -25,7 +25,10 @@ class Command(BaseCommand):
     help = "Mantém a conexão de sincronização da loja com a nuvem."
 
     def add_arguments(self, parser):
-        parser.add_argument("--interval", type=float, default=2.0,
+        # 0,5 s e não 2: a anotação da comanda lançada na loja precisa estar na
+        # nuvem antes de o caixa (que pode estar lá) ler o cartão. Varrer a
+        # outbox vazia é uma consulta num índice parcial minúsculo.
+        parser.add_argument("--interval", type=float, default=0.5,
                             help="segundos entre varreduras da outbox quando ela está vazia")
         parser.add_argument("--heartbeat", type=float, default=20.0,
                             help="segundos entre heartbeats")

@@ -155,6 +155,9 @@ def _criar_evento(origem, destino, account_id, entry, payload, operation, run):
 def _gravar_evento(origem, destino, account_id, entry, payload, operation, run):
     from apps.synchronization.models import SyncEvent
 
+    from apps.synchronization.services import prioridade
+
+    prioridade.avisar_no_commit(entry.entity_type, destino)
     with transaction.atomic():
         sequencia = origem.next_sequence()
         return SyncEvent.objects.create(

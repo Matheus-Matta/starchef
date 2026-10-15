@@ -226,6 +226,47 @@ teste que falha sem a correção.
 | Loja de pé e sem internet: cobrou o cartão; um caixa ainda na janela da nuvem cobrou de novo (a nuvem não via o pulso da loja) | R$ 1.495,07 cobrados em dobro em 10 min de caos | fechar comanda tenta a loja ANTES, mesmo na janela (`CloudFallback.irDiretoParaANuvem`) |
 | A adoção apagava os itens do pedido de um lado para dar lugar aos do outro | pedido pago sem item: o dinheiro em dobro sumia da vista | dinheiro (pedido, item, pagamento, caixa) nunca é adotado: vira conflito aberto para estorno (`adoption.ENTIDADES_DE_DINHEIRO`) |
 
+## A comanda fura a fila
+
+O garçom lança no celular e o caixa lê o cartão segundos depois, muitas vezes
+em servidores diferentes. Duas esperas separavam um do outro, e as duas saíram
+(`services/prioridade.py`, `test_comanda_tem_prioridade.py`):
+
+- **Aviso no commit.** A nuvem avisava a loja só no aviso periódico (10 s).
+  Agora uma transação que grava evento da comanda (`command`, `command_batch`,
+  `command_item`, `command_item_addon`, `command_log`) avisa a loja de destino
+  no COMMIT — uma vez por destino e por transação. O evento continua nascendo
+  na transação; `on_commit` é só para o AVISO, e perdê-lo custa esperar o
+  periódico, que segue de pé.
+- **Fila acumulada.** Depois de uma queda, o que é da comanda vai no primeiro
+  lote, na frente de cadastro e estoque. Furar a ordem é seguro porque o
+  destino espera o pai que ainda não chegou e aplica na hora em que ele chega.
+- **Loja → nuvem.** O worker da loja varre a outbox vazia a cada 0,5 s (era
+  2 s): `SYNC_INTERVAL` no `.env` da loja. Loja instalada antes disto tem
+  `SYNC_INTERVAL=2` gravado no `.env` — troque para `0.5`.
+
+Prioridade para tudo é prioridade para nada: só a comanda entra.
+
+## O histórico do caixa: onde parou (`sync_caixa`)
+
+O valor final do caixa chega numa linha só (a sessão). O histórico —
+abertura, venda em dinheiro, troco, suprimento, sangria, fechamento — são
+linhas à parte, cada uma com o seu evento; um evento preso some do extrato do
+outro lado sem mudar o total.
+
+```
+python manage.py sync_caixa --dias 7              # onde parou, neste servidor
+python manage.py sync_caixa --dias 30 --reenviar  # na LOJA: manda de novo
+python manage.py sync_caixa --sessao <uuid> --reenviar
+```
+
+Sem opção, só lê: eventos do caixa do período por estado, os parados com o
+motivo, conflitos e descartados. Rode nos dois lados — a loja mostra o que não
+saiu, a nuvem o que chegou e não entrou. `--reenviar` gera de novo, na ordem
+das dependências, a sessão, os pedidos e itens dos recebimentos, os
+recebimentos e os movimentos; o que a nuvem já tem chega com a mesma versão e
+é ignorado.
+
 ## O lote viaja comprimido
 
 O payload sai cifrado (AES-GCM) e dado cifrado não comprime — nem pela

@@ -232,7 +232,7 @@ services:
     # `up -d`.
     command: >
       sh -c 'if [ "$${SYNC_ENABLED:-false}" = "true" ]; then
-               exec python manage.py sync_worker --interval $${SYNC_INTERVAL:-2} --heartbeat $${SYNC_HEARTBEAT:-20};
+               exec python manage.py sync_worker --interval $${SYNC_INTERVAL:-0.5} --heartbeat $${SYNC_HEARTBEAT:-20};
              else
                echo "Sincronização com a nuvem DESLIGADA (SYNC_ENABLED=false). Esta loja opera sozinha.";
                exec sleep infinity;

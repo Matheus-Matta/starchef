@@ -20,6 +20,8 @@
 
       <CashSessionSummary :session="session" />
 
+      <CashSessionPaymentTotals :rows="statement.payment_totals || []" :total="statement.payments_total" :count="statement.payments_count || 0" />
+
       <Card v-if="occurrences.length" title="Ocorrências e falhas" subtitle="Pendências, cancelamentos e itens que exigem conferência">
         <ul class="cash-statement__issues"><li v-for="issue in occurrences" :key="issue.key"><Tag :value="issue.kind" :severity="issue.tone" /><span>{{ issue.text }}</span></li></ul>
       </Card>
@@ -58,6 +60,7 @@ import Button from "primevue/button";
 import Tag from "primevue/tag";
 
 import CashMovementDetailsDialog from "../components/cash/CashMovementDetailsDialog.vue";
+import CashSessionPaymentTotals from "../components/cash/CashSessionPaymentTotals.vue";
 import CashSessionSummary from "../components/cash/CashSessionSummary.vue";
 import SalesDiscrepancyDialog from "../components/cash/SalesDiscrepancyDialog.vue";
 import SalesDiscrepancyList from "../components/cash/SalesDiscrepancyList.vue";

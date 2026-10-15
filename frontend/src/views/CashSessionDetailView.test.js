@@ -30,6 +30,12 @@ const statement = {
     movements: [{ id: "m1", movement_type: "withdrawal", amount: "20.00", status: "cancelled", reason: "Falha no malote" }],
     sales: [{ id: "p1", order_sequence: 42, payment_method_name: "Dinheiro", amount: "80.00" }],
   },
+  payment_totals: [
+    { payment_method: "pm-pix", payment_method_name: "PIX", count: 2, amount: "120.00", change: "0.00" },
+    { payment_method: "pm-din", payment_method_name: "Dinheiro", count: 1, amount: "80.00", change: "20.00" },
+  ],
+  payments_total: "200.00",
+  payments_count: 3,
   orders: [{ sequence: 42, reference: "Mesa 3", items: [{ id: "i1", product_name: "Prato executivo", quantity: 1, unit_price: "80.00", total_price: "80.00", status: "delivered", addons: [] }] }],
 };
 
@@ -61,5 +67,23 @@ describe("CashSessionDetailView", () => {
     await wrapper.findAll("button").find((button) => button.text().includes("Imprimir")).trigger("click");
     expect(mocks.download).toHaveBeenCalledWith(statement);
     expect(mocks.print).toHaveBeenCalledWith(statement);
+  });
+
+  it("mostra o total de cada forma de pagamento e o total geral", async () => {
+    const wrapper = mount(CashSessionDetailView, {
+      global: {
+        plugins: [PrimeVue],
+        stubs: { CashSessionSummary: true, ReportDataTable: true, CashMovementDetailsDialog: true },
+      },
+    });
+    await flushPromises();
+
+    const quadro = wrapper.find(".payment-totals");
+    expect(quadro.exists()).toBe(true);
+    const texto = quadro.text().replace(/\s+/g, " ");
+    expect(texto).toContain("PIX");
+    expect(texto).toMatch(/R\$\s?120,00/);
+    expect(texto).toContain("Total geral");
+    expect(texto).toMatch(/R\$\s?200,00/);
   });
 });

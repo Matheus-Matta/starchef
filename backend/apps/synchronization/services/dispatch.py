@@ -13,7 +13,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.synchronization.constants import Direction, EventStatus
-from apps.synchronization.services import crypto, retry
+from apps.synchronization.services import crypto, prioridade, retry
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,8 @@ def limites():
 def collect_batch(source_node, target_node=None):
     """Próximo lote pronto para sair, respeitando quantidade e bytes.
 
-    A ordem é sempre a da sequência: aplicar o item antes do pedido quebraria
-    a chave estrangeira do outro lado.
+    A ordem é a da sequência — com uma exceção: o que é da comanda vai na
+    frente (`prioridade.py`), e o destino espera o pai que ainda não chegou.
     """
     from apps.synchronization.models import SyncEvent
 
@@ -47,7 +47,7 @@ def collect_batch(source_node, target_node=None):
         consulta = SyncEvent.objects.pending_outbound(source_node)
 
     lote, bytes_acumulados = [], 0
-    for evento in consulta[: max_eventos * 2]:
+    for evento in prioridade.primeiro_o_urgente(consulta, max_eventos * 2):
         tamanho = len(crypto.canonical_json(evento.payload))
         if lote and (len(lote) >= max_eventos or bytes_acumulados + tamanho > max_bytes):
             break
