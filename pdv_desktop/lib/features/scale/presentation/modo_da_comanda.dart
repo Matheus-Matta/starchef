@@ -79,10 +79,19 @@ class EscolherProdutoSwitch extends StatelessWidget {
 
 /// O painel da comanda no modo automático, enquanto espera o prato.
 class ComandaAutomaticaAguardando extends StatelessWidget {
-  const ComandaAutomaticaAguardando({super.key, this.ultima});
+  const ComandaAutomaticaAguardando({
+    super.key,
+    this.ultima,
+    this.pedirComanda = false,
+    this.onAlternarPedirComanda,
+  });
 
   /// Última comanda lançada por esta estação (só informativo).
   final String? ultima;
+
+  /// Esta passagem vai pedir o cartão (cliente com o segundo prato).
+  final bool pedirComanda;
+  final VoidCallback? onAlternarPedirComanda;
 
   @override
   Widget build(BuildContext context) {
@@ -106,6 +115,20 @@ class ComandaAutomaticaAguardando extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
           ],
+          const SizedBox(height: 14),
+          // O segundo prato do mesmo cliente vai para a comanda dele: esta
+          // passagem pede o cartão depois do peso (e do produto).
+          pedirComanda
+              ? FilledButton.icon(
+                  onPressed: onAlternarPedirComanda,
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Esta passagem pede a comanda (F2)'),
+                )
+              : OutlinedButton.icon(
+                  onPressed: onAlternarPedirComanda,
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Pedir a comanda nesta passagem (F2)'),
+                ),
         ],
       ),
     );

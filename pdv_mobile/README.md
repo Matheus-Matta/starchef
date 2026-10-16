@@ -13,6 +13,25 @@ sem dependência de um Caixa Principal na rede local.
   token de um ambiente seja enviado a outro.
 - Alterações feitas sem conexão ficam na fila local e são reenviadas à mesma
   API com uma chave de idempotência.
+- A rodada da comanda (itens + enviar à cozinha) vai para a fila e sobe em
+  segundo plano: a tela volta ao início na hora. A fila tenta 4 vezes; o que
+  não sair fica em "não enviados" (ícone de nuvem no topo) para reenviar.
+- Servidor da loja instável cai rápido para a nuvem: uma sonda ao `/health/`
+  sem resposta, ou tempo esgotado (8 s) na loja, já desvia — e o app fica 5
+  minutos na nuvem. A nuvem espera até 25 s. Escrita com tempo esgotado só
+  é repetida na nuvem quando leva `id` (UUID do aparelho); sem isso, espera
+  na fila.
+
+## Tela inicial
+
+Só comandas: todas, livres e em uso, com valor e quantidade de itens, 20 por
+vez (carrega mais ao rolar). A busca pelo número fica fixa no topo. Tocar no
+cartão abre a comanda com o cardápio já aberto. Não existe mais "Novo pedido".
+
+Cada cartão em uso mostra O QUE a comanda tem: "3x X-Burger · 0,35 kg
+Picanha · +2" (até 4 produtos, o mesmo produto somado). O resumo vem pronto do
+servidor (`?preview=1` na lista e em `/commands/{id}/items/`,
+`backend/apps/restaurants/command_preview.py`), sem abrir cartão por cartão.
 
 ## Impressão pelo telefone
 

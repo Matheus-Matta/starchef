@@ -74,6 +74,19 @@ void main() {
       expect(CloudFallback().deveTentar('POST', '/orders/', tempoEsgotado), isFalse);
     });
 
+    test('escrita com identidade desvia mesmo com tempo esgotado', () {
+      // O corpo leva o UUID do aparelho: as duas pontas gravam a mesma linha.
+      expect(
+        CloudFallback().deveTentar(
+          'POST',
+          '/commands/c/items/',
+          tempoEsgotado,
+          comIdentidade: true,
+        ),
+        isTrue,
+      );
+    });
+
     test('leitura desvia mesmo com tempo esgotado', () {
       // Ler duas vezes não duplica nada.
       expect(CloudFallback().deveTentar('GET', '/orders/', tempoEsgotado), isTrue);

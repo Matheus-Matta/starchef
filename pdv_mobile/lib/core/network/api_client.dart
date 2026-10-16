@@ -24,7 +24,14 @@ class ApiClient {
   }) : _http = httpClient ?? http.Client(),
        cloudFallback = cloudFallback ?? CloudFallback();
 
-  static const _timeout = Duration(seconds: 15);
+  /// A loja está na rede do salão e responde em milissegundos: se passar de
+  /// 8 s, ela está instável, e o terminal cai para a nuvem
+  /// (`cloud_fallback.dart`) em vez de deixar o garçom esperando.
+  static const timeoutLoja = Duration(seconds: 8);
+
+  /// A nuvem vem pela internet, que oscila mais: ganha mais paciência, porque
+  /// ela é o último recurso — desistir dela é ficar sem servidor nenhum.
+  static const timeoutNuvem = Duration(seconds: 25);
   final String Function() baseUrlProvider;
 
   /// A nuvem como SEGUNDO servidor, quando o backend da loja não responde.

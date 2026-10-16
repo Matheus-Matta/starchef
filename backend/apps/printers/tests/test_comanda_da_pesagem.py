@@ -12,7 +12,7 @@ import pytest
 
 from apps.core.tenant import tenant_context
 from apps.menu.models import Product, ProductCategory
-from apps.printers.comanda_da_pesagem import LARGURA, texto_da_comanda_da_pesagem
+from apps.printers.comanda_da_pesagem import LARGURA, QUADRADOS, texto_da_comanda_da_pesagem
 
 pytestmark = pytest.mark.django_db
 
@@ -70,7 +70,7 @@ def test_nome_comprido_e_cortado_e_os_quadrados_ficam_alinhados(account, restaur
     restaurant.save(update_fields=["linhas_da_comanda"])
 
     linhas = _papel(account, restaurant).splitlines()
-    itens = [linha for linha in linhas if linha.endswith("[ ][ ][ ]")]
+    itens = [linha for linha in linhas if linha.endswith(QUADRADOS)]
 
     assert len(itens) == 3
     assert all(len(linha) == LARGURA for linha in itens)
@@ -93,7 +93,7 @@ def test_produto_desativado_some_do_papel_sem_derrubar_a_pesagem(account, restau
 
     papel = _papel(account, restaurant)
 
-    assert "[ ]" not in papel
+    assert QUADRADOS not in papel
     assert "Suco antigo" not in papel
 
 
@@ -107,9 +107,37 @@ def test_titulo_livre_sai_na_ordem_com_os_produtos(account, restaurant, produtos
     ]
     restaurant.save(update_fields=["linhas_da_comanda"])
 
-    itens = [linha for linha in _papel(account, restaurant).splitlines() if linha.endswith("[ ][ ][ ]")]
+    itens = [linha for linha in _papel(account, restaurant).splitlines() if linha.endswith(QUADRADOS)]
 
     assert itens[0].startswith("Coca-Cola ")
     assert itens[1].startswith("Água ")
     assert itens[2].startswith("_" * 20)
     assert all(len(linha) == LARGURA for linha in itens)
+
+
+def test_largura_do_recibo_de_venda_e_espaco_entre_os_itens(account, restaurant, produtos):
+    """42 colunas, como o recibo de venda; uma linha vazia entre os itens.
+
+    Em 32 colunas a comanda saía estreita no rolo de 80 mm, e os itens
+    colados uns nos outros não davam espaço para escrever.
+    """
+    from apps.printers.services import LARGURA_CUPOM
+
+    agua = produtos("Água")
+    restaurant.linhas_da_comanda = [
+        {"tipo": "produto", "produto": str(agua.pk)},
+        {"tipo": "texto", "nome": "Coca-Cola"},
+        {"tipo": "branco"},
+    ]
+    restaurant.save(update_fields=["linhas_da_comanda"])
+
+    linhas = _papel(account, restaurant).splitlines()
+    primeira = next(i for i, linha in enumerate(linhas) if linha.endswith(QUADRADOS))
+
+    assert LARGURA == LARGURA_CUPOM
+    assert all(len(linha) <= LARGURA for linha in linhas)
+    assert linhas[primeira].startswith("Água")
+    assert linhas[primeira + 1] == ""
+    assert linhas[primeira + 2].startswith("Coca-Cola")
+    assert linhas[primeira + 3] == ""
+    assert linhas[primeira + 4].startswith("_" * 20)

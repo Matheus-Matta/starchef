@@ -839,7 +839,14 @@ pula para a seguinte. As regras:
 pedido aberto. Todas em uso responde **409** (estado, não entrada errada); a
 pesagem fica preservada na estação e o botão **Tentar de novo** relança a mesma.
 Cancelar com o prato na balança retém aquele peso até ele sair, para não lançar
-o mesmo prato de novo. `FilaDaComanda` não sincroniza: cada servidor anda a
+o mesmo prato de novo.
+
+**Pedir a comanda nesta passagem** (botão no painel da comanda, ou F2): o
+cliente que volta com o segundo prato quer tudo na MESMA comanda. Ligado, esta
+passagem segue o fluxo manual — peso, produto (se a escolha estiver ligada) e
+então o cartão — e lança na comanda lida. Vale uma passagem só: lançada ou
+cancelada, a estação volta ao automático (`pedirComandaNestaPassagem`, zerado
+em `_resetOperation`). `FilaDaComanda` não sincroniza: cada servidor anda a
 própria fila, e quem impede a repetição é a conferência de "livre" sob lock.
 
 ### Abertura e passagem rápidas (Balança Rápida)
@@ -878,6 +885,7 @@ Com a estação ligada e nenhum modal aberto:
 | --- | --- |
 | **Esc** | cancela a passagem em andamento (esperando a comanda, ou depois de uma falha) |
 | **Tab** | abre as **últimas passagens** |
+| **F2** | no modo comanda automática: **esta passagem pede a comanda** (liga/desliga) |
 
 Dentro dos modais (escolha do produto e últimas passagens): **↑ ↓** andam,
 **Enter** confirma (no histórico, reimprime), **Esc** fecha. As setas só são
@@ -910,21 +918,25 @@ vinculado nesse modo.
 
 ### Comanda da pesagem (Balança Rápida)
 
-Quando a balança pesa para uma COMANDA, o papel é texto de 32 colunas montado
-em `backend/apps/printers/comanda_da_pesagem.py`:
+Quando a balança pesa para uma COMANDA, o papel é texto de 42 colunas — a
+largura do recibo de venda (`LARGURA_CUPOM`) — montado em
+`backend/apps/printers/comanda_da_pesagem.py`, com uma linha vazia entre os
+itens para sobrar espaço de escrever:
 
 ```text
 COMANDA 17
---------------------------------
+------------------------------------------
 PRODUTO: Self-service Almoco
-PRECO KG:               R$ 69,90
-PESO:                   0,452 kg
-VALOR:                  R$ 31,59
---------------------------------
-Coca-Cola     ________ [ ][ ][ ]
-Agua sem gas  ________ [ ][ ][ ]
-______________________ [ ][ ][ ]
---------------------------------
+PRECO KG:                         R$ 69,90
+PESO:                             0,452 kg
+VALOR:                            R$ 31,59
+------------------------------------------
+Agua sem gas   ____________ [  ] [  ] [  ]
+
+Coca-Cola      ____________ [  ] [  ] [  ]
+
+___________________________ [  ] [  ] [  ]
+------------------------------------------
 Leve esta comanda ao caixa.
 ```
 
@@ -936,7 +948,7 @@ Abaixo do cabeçalho saem as **linhas de item** do restaurante
   "Sobremesa"), de 1 a 40 caracteres;
 * uma linha **em branco** — só traço e quadrados, para escrever à mão.
 
-Produto e título saem na ordem configurada, com o nome cortado em 13
+Produto e título saem na ordem configurada, com o nome cortado em 14
 caracteres, um traço para escrever e três quadrados; as em branco saem sempre
 no fim. Sem nenhuma linha configurada, o papel sai só com a pesagem. Produto
 desativado ou apagado some do papel sem derrubar a pesagem.

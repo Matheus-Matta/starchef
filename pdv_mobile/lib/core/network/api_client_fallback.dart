@@ -8,9 +8,10 @@ part of 'api_client.dart';
 extension ApiClientFallback on ApiClient {
   /// Tenta a loja; se ela estiver CONFIRMADAMENTE fora, repete na nuvem.
   ///
-  /// Mesmas regras do PDV desktop, e de propósito: os dois terminais falam com
-  /// os mesmos dois backends, e duas políticas diferentes de desvio seriam
-  /// duas chances diferentes de duplicar a mesma venda.
+  /// Mais rápido que o PDV desktop para desistir da loja (uma sonda, tempo
+  /// esgotado já é queda): o celular anda pelo salão e o Wi-Fi oscila. A
+  /// regra que impede duplicar é a MESMA — sem identidade, escrita que pode
+  /// ter sido executada não é repetida em outro banco.
   Future<Map<String, dynamic>> _comPlanoB(
     String method,
     String path, {
@@ -19,6 +20,9 @@ extension ApiClientFallback on ApiClient {
     String? accessToken,
     String? idempotencyKey,
   }) async {
+    // Escrita com `id` (UUID do aparelho) pode ir à nuvem mesmo depois de um
+    // tempo esgotado na loja: as duas pontas gravam a MESMA linha.
+    final comIdentidade = '${body?['id'] ?? ''}'.isNotEmpty;
     // Vencidos os 5 minutos na nuvem, um ping decide se o terminal volta.
     await cloudFallback.conferirSeVenceu(_lojaResponde);
     if (cloudFallback.irDiretoParaANuvem(path)) {
@@ -55,6 +59,9 @@ extension ApiClientFallback on ApiClient {
         body: body,
         accessToken: accessToken,
         idempotencyKey: idempotencyKey,
+        // Com identidade, a resposta perdida não é repetida na loja (mais 8 s
+        // parado): vai direto para a nuvem, que grava a mesma linha.
+        repetirNaLoja: !(comIdentidade && cloudFallback.enabled),
       );
       cloudFallback.localRespondeu();
       lastServerOrigin = ServerOrigin.loja;
@@ -75,8 +82,24 @@ extension ApiClientFallback on ApiClient {
         lastServerOrigin = ServerOrigin.nuvem;
         return resposta;
       }
-      if (!cloudFallback.deveTentar(method, path, erro)) rethrow;
-      final fora = await cloudFallback.confirmarQuedaDoLocal(_lojaResponde);
+      final pode = cloudFallback.deveTentar(
+        method,
+        path,
+        erro,
+        comIdentidade: comIdentidade,
+      );
+      if (!pode) {
+        // Escrita sem identidade que esgotou o tempo fica na fila — mas a
+        // loja lenta já conta como fora, e o reenvio vai para a nuvem.
+        if (erro.reachedServer && !cloudFallback.nuncaDesvia(path)) {
+          await cloudFallback.confirmarQuedaDoLocal(_lojaResponde, lenta: true);
+        }
+        rethrow;
+      }
+      final fora = await cloudFallback.confirmarQuedaDoLocal(
+        _lojaResponde,
+        lenta: erro.reachedServer,
+      );
       if (!fora) rethrow;
       try {
         final resposta = await _naNuvem(
@@ -102,14 +125,15 @@ extension ApiClientFallback on ApiClient {
     }
   }
 
-  /// A loja está de pé? 5 s: curto, a pergunta é "tem alguém aí?", mas
-  /// não tanto que uma loja ocupada pareça fora.
+  /// A loja está de pé? 3 s: na rede do salão o `/health/` volta em
+  /// milissegundos; demorar mais que isso já é a instabilidade que manda o
+  /// garçom para a nuvem.
   Future<bool> _lojaResponde() async {
     try {
       final uri = Uri.parse(
         '${baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '')}/health/',
       );
-      final resposta = await _http.get(uri).timeout(const Duration(seconds: 5));
+      final resposta = await _http.get(uri).timeout(const Duration(seconds: 3));
       return resposta.statusCode >= 200 && resposta.statusCode < 500;
     } catch (_) {
       return false;

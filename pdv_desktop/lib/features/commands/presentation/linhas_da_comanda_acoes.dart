@@ -81,7 +81,7 @@ class _TituloDialogState extends State<_TituloDialog> {
         maxLength: maximoDoTituloDaLinha,
         decoration: const InputDecoration(
           labelText: 'Ex.: Coca-Cola, Sobremesa',
-          helperText: 'No papel aparecem os primeiros 13 caracteres.',
+          helperText: 'No papel aparecem os primeiros 14 caracteres.',
         ),
         onSubmitted: (_) => _confirmar(),
       ),

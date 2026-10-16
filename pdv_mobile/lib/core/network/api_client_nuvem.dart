@@ -83,7 +83,7 @@ extension ApiClientNuvem on ApiClient {
       pedido.body = jsonEncode(body);
     }
     try {
-      final transmitida = await _http.send(pedido).timeout(ApiClient._timeout);
+      final transmitida = await _http.send(pedido).timeout(ApiClient.timeoutNuvem);
       final resposta = await http.Response.fromStream(transmitida);
       return decodeApiResponse(resposta.statusCode, resposta.body);
     } on ApiException {

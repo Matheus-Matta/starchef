@@ -57,6 +57,26 @@ class PendingMutation {
         lastError: lastError,
       );
 
+  /// Mais uma tentativa que não chegou ao servidor, com o motivo.
+  PendingMutation comTentativa(String erro) =>
+      _copia(attempts: attempts + 1, lastError: erro);
+
+  PendingMutation semTentativas() => _copia(attempts: 0, lastError: null);
+
+  PendingMutation _copia({required int attempts, required String? lastError}) =>
+      PendingMutation(
+        operationId: operationId,
+        method: method,
+        path: path,
+        body: body,
+        kind: kind,
+        summary: summary,
+        createdAt: createdAt,
+        placeholderOrderId: placeholderOrderId,
+        attempts: attempts,
+        lastError: lastError,
+      );
+
   Map<String, dynamic> toJson() => {
     'operation_id': operationId,
     'method': method,

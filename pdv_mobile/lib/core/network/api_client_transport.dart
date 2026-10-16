@@ -14,11 +14,12 @@ extension ApiClientTransport on ApiClient {
     Map<String, dynamic>? body,
     String? accessToken,
     String? idempotencyKey,
+    bool repetirNaLoja = true,
   }) async {
     final explicitToken = accessToken != null;
     try {
       return await _repetirSeAPerdeu(
-        idempotencyKey,
+        repetirNaLoja ? idempotencyKey : null,
         () => _send(
           method,
           path,
@@ -91,7 +92,7 @@ extension ApiClientTransport on ApiClient {
       request.body = jsonEncode(body);
     }
     try {
-      final streamed = await _http.send(request).timeout(ApiClient._timeout);
+      final streamed = await _http.send(request).timeout(ApiClient.timeoutLoja);
       final response = await http.Response.fromStream(streamed);
       return decodeApiResponse(response.statusCode, response.body);
     } on TimeoutException {

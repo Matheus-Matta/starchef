@@ -189,17 +189,14 @@ class CommandSerializer(TenantModelSerializer):
     code = serializers.CharField(required=False, allow_blank=True, max_length=40)
     current_table_number = serializers.CharField(source="current_table.number", read_only=True, default=None)
 
-    # QUANTAS anotações pendentes o cartão tem, e quanto elas somam.
-    #
-    # Vem na listagem de propósito: sem isto, a tela precisaria abrir cada
-    # cartão para saber se ele está em uso — duzentas chamadas para desenhar
-    # uma grade. "Em uso" é ter item pendente, não um campo de estado.
+    # QUANTAS anotações pendentes e quanto somam, na listagem: sem isto a tela
+    # abriria cada cartão para saber se está em uso ("em uso" = ter pendente).
     pending_items = serializers.SerializerMethodField()
     pending_total = serializers.SerializerMethodField()
+    # O que o cartão tem, de passagem — só com `?preview=1` (command_preview.py).
+    pending_preview = serializers.SerializerMethodField()
 
-    # `status` deixou de ser coluna e virou cálculo (ver `Command.status`), mas
-    # continua saindo na API com o mesmo nome e os mesmos valores: o PDV, o app
-    # do garçom e o painel já leem este campo.
+    # `status` virou cálculo (`Command.status`); sai igual, PDV e app o leem.
     status = serializers.CharField(read_only=True)
 
     def get_pending_items(self, obj):
@@ -213,6 +210,9 @@ class CommandSerializer(TenantModelSerializer):
             .exclude(status__in=["cancelled", "comped"])
             .count()
         )
+
+    def get_pending_preview(self, obj):
+        return self.context.get("resumo_dos_itens", {}).get(str(obj.pk))
 
     def get_pending_total(self, obj):
         anotado = getattr(obj, "pendente_total", None)

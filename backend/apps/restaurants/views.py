@@ -12,6 +12,7 @@ from apps.orders.command_billing import em_uso_subquery
 from apps.core.modules import MODULE_ENTREGA
 from apps.core.viewsets import BaseTenantViewSet
 from apps.realtime.events import broadcast_resource_event
+from apps.restaurants.command_preview import ResumoDosItensMixin, resumo_dos_itens
 from apps.restaurants.models import Branch, Command, DeliveryZone, Deliveryman, Restaurant, Table, TableSector
 from apps.restaurants.serializers import (
     BranchSerializer,
@@ -306,7 +307,7 @@ class CommandFilterSet(django_filters.FilterSet):
         return anotado.filter(tem_pendente=value == Command.STATUS_OCCUPIED)
 
 
-class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
+class CommandViewSet(ResumoDosItensMixin, ScannableCodesMixin, BaseTenantViewSet):
     """Cadastro de comandas reutilizáveis (padrão self-service / Graal)."""
 
     serializer_class = CommandSerializer
@@ -317,8 +318,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     queryset = Command.objects.select_related("restaurant", "branch", "current_table").all()
     filterset_class = CommandFilterSet
     search_fields = ["number", "code", "customer_name"]
-    # `status` saiu da ordenação: não há coluna para o banco ordenar. Quem
-    # quer os ocupados primeiro filtra por `status=occupied`.
+    # `status` não ordena (não é coluna): filtre por `status=occupied`.
     ordering_fields = ["number", "updated_at"]
     MAX_BULK_COMMANDS = 200
 
@@ -360,9 +360,11 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         itens = (
             history_items_of_command(command.pk) if historico else open_items_of_command(command.pk)
         )
+        # O cartão relido sai com o MESMO resumo da grade (`?preview=1`).
+        contexto = {**self.get_serializer_context(), "resumo_dos_itens": resumo_dos_itens([command.pk])}
         return Response(
             {
-                "command": self.get_serializer(command).data,
+                "command": self.get_serializer(command, context=contexto).data,
                 "history": historico,
                 "items": CommandItemSerializer(itens, many=True).data,
             }

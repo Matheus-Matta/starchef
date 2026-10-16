@@ -110,6 +110,24 @@ class HandsFreeMachine extends ChangeNotifier {
   bool _comandaAutomatica = false;
   bool get comandaAutomatica => _comandaAutomatica;
 
+  /// Na comanda automática, ESTA passagem pede o cartão (o cliente com dois
+  /// pratos: o segundo vai para a comanda do primeiro). Vale uma passagem só:
+  /// lançada ou cancelada, volta ao automático.
+  bool _pedirComandaNestaPassagem = false;
+  bool get pedirComandaNestaPassagem => _pedirComandaNestaPassagem;
+  bool get automaticaNestaPassagem =>
+      _comandaAutomatica && !_pedirComandaNestaPassagem;
+
+  /// Liga/desliga o "pedir a comanda" — só antes do lançamento, no automático.
+  void alternarPedirComanda() {
+    final antesDoLancamento =
+        _state == HandsFreeState.waitingWeight ||
+        _state == HandsFreeState.choosingProduct;
+    if (!_comandaAutomatica || !antesDoLancamento) return;
+    _pedirComandaNestaPassagem = !_pedirComandaNestaPassagem;
+    notifyListeners();
+  }
+
   /// Escolher o produto a cada pesagem, ignorando o vinculado à balança.
   bool _escolherProduto = false;
   bool get escolherProduto => _escolherProduto;
@@ -298,7 +316,7 @@ class HandsFreeMachine extends ChangeNotifier {
     final code = rawCode.trim();
     // No modo automático quem escolhe a comanda é o servidor: um cartão lido
     // aqui não tem para onde ir.
-    if (code.isEmpty || _comandaAutomatica) {
+    if (code.isEmpty || automaticaNestaPassagem) {
       return const [HandsFreeEffect.alertSound];
     }
     if (!canAcceptCommand) {
@@ -371,7 +389,7 @@ class HandsFreeMachine extends ChangeNotifier {
 
   /// Depois do peso (e do produto): lança direto ou espera o cartão.
   List<HandsFreeEffect> _seguirParaComanda(DateTime now) {
-    if (_comandaAutomatica) {
+    if (automaticaNestaPassagem) {
       _state = HandsFreeState.launching;
       return const [HandsFreeEffect.launchIntoCommand];
     }
@@ -383,7 +401,7 @@ class HandsFreeMachine extends ChangeNotifier {
   /// Modo automático: lança de novo a pesagem que falhou (ex.: nenhuma
   /// comanda livre). A mesma pesagem, sem pesar outra vez.
   List<HandsFreeEffect> tentarDeNovo() {
-    if (!_comandaAutomatica ||
+    if (!automaticaNestaPassagem ||
         _state != HandsFreeState.failed ||
         _weighedItem == null) {
       return const [];
@@ -475,6 +493,7 @@ class HandsFreeMachine extends ChangeNotifier {
     _retiradoDepoisDaPesagem = false;
     _amostraRetida = null;
     _ultimaDoLancamento = null;
+    _pedirComandaNestaPassagem = false;
     _buscaDePeso.recomecar();
   }
 }

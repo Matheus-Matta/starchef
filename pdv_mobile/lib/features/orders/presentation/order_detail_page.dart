@@ -31,12 +31,6 @@ part 'order_detail_items_list.dart';
 /// anotações pendentes para um pedido. Isso cai sozinho — comanda não chega a
 /// `awaiting_payment`.
 ///
-/// O aparelho também opera como **caixa secundário** (§8, §9): fecha a conta e
-/// registra recebimentos. Ele nunca fala com a nuvem — entrega a operação ao
-/// backend, que grava no SQLite dele e sincroniza depois. O que
-/// continua sendo só do caixa físico é o que depende de hardware: gaveta,
-/// impressora fiscal e o dinheiro em espécie fora de uma sessão aberta.
-///
 /// Aqui só existe tela. As regras estão no [OrderDetailPresenter], as
 /// perguntas em `order_dialogs.dart` e as linhas em `order_item_tiles.dart`.
 class OrderDetailPage extends StatefulWidget {
@@ -46,7 +40,12 @@ class OrderDetailPage extends StatefulWidget {
     required this.subject,
     this.initialOrder,
     this.canReceivePayment = false,
+    this.abrirCardapio = false,
   });
+
+  /// Abre o cardápio assim que a comanda carrega — o toque no cartão da tela
+  /// inicial já é o "quero lançar".
+  final bool abrirCardapio;
 
   final OrdersRepository repository;
 
@@ -74,12 +73,8 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     initialOrder: widget.initialOrder,
   );
 
-  /// A sugestão de mesa já apareceu nesta abertura do pedido.
-  ///
-  /// Por ABERTURA, de propósito: vinculada a mesa, o pedido deixa de estar sem
-  /// mesa e a sugestão não tem mais motivo; se o garçom dispensou e voltar
-  /// depois com o pedido ainda sem mesa, ela aparece de novo — que é
-  /// exatamente quando ela ainda é útil.
+  /// A primeira carga já foi tratada (mesa e cardápio) nesta ABERTURA: quem
+  /// dispensou a mesa e voltar depois vê a sugestão de novo.
   bool _suggestedTable = false;
 
   @override
@@ -89,29 +84,30 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     _presenter.start();
   }
 
-  /// Pedido sem mesa: oferece vincular assim que a tela abre.
+  /// Na primeira carga: oferece a mesa (se faltar) e abre o cardápio.
   ///
-  /// A mesa é o que liga a comanda ao salão — sem ela ninguém sabe para onde
-  /// levar o pedido. Entrar no pedido e não ser lembrado disso fazia a
-  /// correção depender de o garçom lembrar sozinho, no meio do atendimento.
-  ///
-  /// Não bloqueia: dá para seguir sem mesa (o cliente pode estar em pé), e a
-  /// vinculação continua disponível no mesmo botão de sempre.
+  /// A mesa é o que liga a comanda ao salão; não bloqueia (o cliente pode
+  /// estar em pé). Vem ANTES do cardápio para as duas folhas não abrirem uma
+  /// por cima da outra.
   void _maybeSuggestTable() {
-    if (_suggestedTable || !mounted) return;
-    if (!shouldSuggestTable(
+    if (_suggestedTable || !mounted || _presenter.order == null) return;
+    _suggestedTable = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _aoAbrir());
+  }
+
+  Future<void> _aoAbrir() async {
+    if (!mounted) return;
+    if (shouldSuggestTable(
       _presenter.order,
       perguntar: widget.repository.askTable,
     )) {
-      return;
-    }
-    _suggestedTable = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
       final vincular = await confirmLinkTableSuggestion(context);
-      if (vincular != true || !mounted) return;
-      _report(await manageOrderTable(context, _presenter, skipAsk: true));
-    });
+      if (!mounted) return;
+      if (vincular == true) {
+        _report(await manageOrderTable(context, _presenter, skipAsk: true));
+      }
+    }
+    if (widget.abrirCardapio && mounted) await _addItem();
   }
 
   @override

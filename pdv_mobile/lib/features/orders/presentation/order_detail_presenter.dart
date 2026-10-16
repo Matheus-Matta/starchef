@@ -306,14 +306,15 @@ class OrderDetailPresenter extends ChangeNotifier {
     _notify();
   }
 
-  /// Manda tudo o que está esperando e pede a impressão da comanda.
+  /// Manda a rodada — EM SEGUNDO PLANO.
   ///
-  /// Os itens sobem um a um (é assim que o backend e o backend os
-  /// aceitam) e só então vem o envio à produção, que é o que imprime. Um item
-  /// recusado não impede os outros: ele fica na lista de erros, com o motivo,
-  /// para o garçom reenviar ou remover.
-  /// A última rodada saiu (ou ficou salva para sair sem rede): a tela pode
-  /// voltar ao início. Com recusa, o garçom fica no pedido para resolver.
+  /// Os itens e o "enviar à cozinha" entram na fila do aparelho
+  /// (`orders_rodada.dart`) e a tela volta ao início na hora: o garçom não
+  /// espera o servidor. A fila sobe em ordem, tenta 4 vezes e, se não sair,
+  /// deixa a operação em "não enviados" com o motivo.
+  ///
+  /// A comanda só é impressa uma vez, no fim da rodada: uma impressão por
+  /// item encheria a cozinha de papel para a mesma mesa.
   bool get roundSent => _roundSent;
   bool _roundSent = false;
 
@@ -323,45 +324,24 @@ class OrderDetailPresenter extends ChangeNotifier {
     final pending = draftItems;
     _working = true;
     _notify();
-    var sent = 0;
-    var queued = 0;
     try {
+      await repository.enfileirarRodada(
+        subject: subject,
+        itens: pending,
+        // O CÓDIGO VIAJA COM O ITEM, e não com a sessão: a operação
+        // enfileirada pode subir depois que quem lançou saiu do turno.
+        metafields: operatorCodes.corpoDe(subject.id),
+      );
+      // Só depois de salvo na fila: tirar antes perderia o item se o app
+      // fechasse no meio.
       for (final draft in pending) {
-        try {
-          await repository.addSubjectItem(
-            to: subject,
-            productId: draft.productId,
-            productName: draft.productName,
-            quantity: draft.quantity,
-            variationId: draft.variationId,
-            addonIds: draft.addonIds,
-            customerNote: draft.note,
-            // O CÓDIGO VIAJA COM O ITEM, e não com a sessão: a operação
-            // enfileirada sobe horas depois, quando quem lançou pode nem estar
-            // mais no turno.
-            metafields: operatorCodes.corpoDe(subject.id),
-          );
-          sent++;
-        } on MutationQueued {
-          // Salvo no aparelho: sai quando o backend responder.
-          queued++;
-        }
         await drafts.remove(draft.id);
       }
-      // A comanda só é impressa uma vez, no fim: uma impressão por item
-      // encheria a cozinha de papel para a mesma rodada.
-      Object? confirmed;
-      try {
-        confirmed = await repository.sendSubjectToKitchen(subject);
-      } on MutationQueued {
-        queued++;
-      }
-      if (!_adoptIfOrder(confirmed)) await load();
       _roundSent = true;
-      return queued == 0
-          ? 'Pedido enviado para produção e impressão.'
-          : 'Sem conexão: $sent de ${pending.length} itens foram entregues. '
-                'O resto sai quando o backend responder.';
+      return pending.isEmpty
+          ? 'Enviando para a produção…'
+          : 'Enviando ${pending.length} '
+                '${pending.length == 1 ? 'item' : 'itens'} para a produção…';
     } catch (error) {
       return describeFailure(error);
     } finally {

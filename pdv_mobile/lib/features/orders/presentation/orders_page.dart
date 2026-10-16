@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/config/api_settings.dart';
 import '../../../core/sync/backend_gateway.dart';
@@ -14,8 +13,8 @@ import '../../settings/presentation/api_settings_page.dart';
 import '../data/orders_repository.dart';
 import 'ask_table_toggle.dart';
 import 'orders_page_navigation.dart';
-import 'order_card.dart';
-import 'orders_presenter.dart';
+import 'comandas_grade.dart';
+import 'comandas_presenter.dart';
 import 'pending_sheet.dart';
 import 'cloud_mode_banner.dart';
 import 'stale_data_banner.dart';
@@ -23,7 +22,10 @@ import 'sync_banner.dart';
 
 part 'orders_page_components.dart';
 
-/// Tela inicial: comandas em uso e pedidos abertos no salão.
+/// Tela inicial: TODAS as comandas, para o garçom tocar e lançar.
+///
+/// O app serve só para lançar em comanda: não há mais "Novo pedido". Tocar no
+/// cartão abre o cardápio direto — é o caminho mais curto até o item.
 class OrdersPage extends StatefulWidget {
   const OrdersPage({
     super.key,
@@ -47,9 +49,9 @@ class _OrdersPageState extends State<OrdersPage>
   @override
   OrdersRepository get repository => widget.repository;
   @override
-  OrdersPresenter get presenter => _presenter;
+  ComandasPresenter get presenter => _presenter;
 
-  late final _presenter = OrdersPresenter(repository: widget.repository);
+  late final _presenter = ComandasPresenter(repository: widget.repository);
 
   BackendGateway get _gateway => widget.repository.gateway;
   @override
@@ -64,8 +66,6 @@ class _OrdersPageState extends State<OrdersPage>
     super.dispose();
   }
 
-  /// A lista de clientes. Ao voltar, a lista do salão é relida: o garçom pode
-  /// ter cadastrado alguém que já entra no próximo pedido.
   Future<void> _openApiSettings() async {
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
@@ -94,7 +94,7 @@ class _OrdersPageState extends State<OrdersPage>
       widget.printAgent,
     ]),
     builder: (context, _) => AppPageScaffold(
-      title: 'Salão',
+      title: 'Comandas',
       actions: [
         _PendingCounter(
           gateway: _gateway,
@@ -129,64 +129,11 @@ class _OrdersPageState extends State<OrdersPage>
           onOpenFailed: () => showPendingSheet(context, _gateway),
         ),
       ],
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: openNewFlowResult,
-        icon: const Icon(Icons.add),
-        label: const Text('Novo pedido'),
+      body: ComandasGrade(
+        presenter: _presenter,
+        gateway: _gateway,
+        onOpen: openCommand,
       ),
-      body: RefreshIndicator(onRefresh: _presenter.load, child: _body()),
     ),
   );
-
-  Widget _body() {
-    final creating = _presenter.creatingOrders.length;
-    if (!_presenter.isEmpty) {
-      return _HomeList(
-        orders: _presenter.orders,
-        commands: _presenter.commands,
-        repository: widget.repository,
-        onOpenOrder: openOrder,
-        onOpenCommand: openCommand,
-      );
-    }
-    if (_presenter.loading && creating == 0) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_presenter.error != null && creating == 0) {
-      return AppEmptyState(
-        scrollable: true,
-        icon: Icons.wifi_off,
-        title: 'Não foi possível carregar',
-        description: _presenter.error!,
-        action: ShadButton.outline(
-          onPressed: _presenter.load,
-          child: const Text('Tentar de novo'),
-        ),
-      );
-    }
-    // Com pedidos ainda a caminho, dizer "nenhum pedido aberto" faria o garçom
-    // achar que o que ele acabou de lançar se perdeu.
-    if (creating > 0) {
-      return AppEmptyState(
-        scrollable: true,
-        icon: Icons.cloud_upload_outlined,
-        title: 'Pedido a caminho do servidor',
-        description:
-            '$creating pedido(s) lançado(s) neste aparelho ainda não foram '
-            'confirmados pelo backend.',
-        action: ShadButton.outline(
-          onPressed: () => showPendingSheet(context, _gateway),
-          child: const Text('Ver envios pendentes'),
-        ),
-      );
-    }
-    return const AppEmptyState(
-      scrollable: true,
-      icon: Icons.receipt_long_outlined,
-      title: 'Salão vazio',
-      description:
-          'Nenhuma comanda em uso e nenhum pedido aberto. Toque em "Novo '
-          'pedido" para começar a atender uma mesa.',
-    );
-  }
 }

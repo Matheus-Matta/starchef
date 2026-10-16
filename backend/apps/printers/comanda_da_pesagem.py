@@ -1,39 +1,45 @@
 """O texto da comanda que sai na pesagem da Balança Rápida.
 
-Cabeçalho com o que foi pesado (produto, preço do kg, peso, valor) e, abaixo,
+Cabeçalho com o que foi pesado (produto, preço do kg, peso e valor) e, abaixo,
 as linhas que o atendente marca à mão — a lista do restaurante
 (`Restaurant.linhas_da_comanda`)::
 
     COMANDA 17
-    --------------------------------
+    ------------------------------------------
     PRODUTO: Self-service Almoco
-    PRECO KG:               R$ 69,90
-    PESO:                   0,452 kg
-    VALOR:                  R$ 31,59
-    --------------------------------
-    Coca-Cola La. ________ [ ][ ][ ]
-    Agua sem gas  ________ [ ][ ][ ]
-    ______________________ [ ][ ][ ]
+    PRECO KG:                         R$ 69,90
+    PESO:                             0,452 kg
+    VALOR:                            R$ 31,59
+    ------------------------------------------
+    Agua sem gas   ____________ [  ] [  ] [  ]
 
-A largura é FIXA em 32 colunas, a que cabe no rolo de 58 mm e no de 80 mm. O
-nome comprido é cortado, nunca quebrado: uma linha que vira duas desalinha os
-quadrados de todas as de baixo.
+    Coca-Cola      ____________ [  ] [  ] [  ]
+
+    ___________________________ [  ] [  ] [  ]
+
+A largura é a do RECIBO DE VENDA (`LARGURA_CUPOM`, 42 colunas): em 32 a
+comanda saía estreita no rolo de 80 mm. Entre um item e outro vai uma linha
+vazia — colados, não sobrava espaço para escrever. O nome comprido é cortado,
+nunca quebrado: uma linha que vira duas desalinha os quadrados de todas as de
+baixo.
 """
 from decimal import Decimal
 
 from apps.restaurants.linhas_da_comanda import TIPO_BRANCO, TIPO_PRODUTO, TIPO_TEXTO
 
-LARGURA = 32
-QUADRADOS = "[ ][ ][ ]"
-# Nome + espaço + linha para escrever + espaço + quadrados = 32.
-LARGURA_DO_NOME = 13
+#: A mesma largura do recibo de venda (`services.LARGURA_CUPOM`), repetida
+#: aqui porque `services` importa este módulo; o teste confere as duas.
+LARGURA = 42
+QUADRADOS = "[  ] [  ] [  ]"
+# Nome + espaço + linha para escrever + espaço + quadrados = 42.
+LARGURA_DO_NOME = 14
 LINHA_PARA_ESCREVER = "_" * (LARGURA - LARGURA_DO_NOME - len(QUADRADOS) - 2)
 LINHA_EM_BRANCO = "_" * (LARGURA - len(QUADRADOS) - 1)
 
 
 def _cortar(texto, largura):
     texto = " ".join(str(texto or "").split())
-    return texto if len(texto) <= largura else texto[: largura - 1] + "."
+    return texto if len(texto) <= largura else texto[: largura - 1].rstrip() + "."
 
 
 def _reais(valor):
@@ -76,7 +82,9 @@ def _linhas_de_item(restaurant):
         if titulo
     ]
     brancos = sum(1 for linha in configuradas if linha.get("tipo") == TIPO_BRANCO)
-    return itens + [f"{LINHA_EM_BRANCO} {QUADRADOS}"] * brancos
+    todas = itens + [f"{LINHA_EM_BRANCO} {QUADRADOS}"] * brancos
+    # Uma linha vazia ENTRE os itens: espaço para escrever e para a mão.
+    return [linha for item in todas for linha in (item, "")][:-1]
 
 
 def texto_da_comanda_da_pesagem(*, command, item):

@@ -73,7 +73,14 @@ extension OrdersQueries on OrdersRepository {
     ),
   );
 
-  Future<ResourcePage> commands({int page = 1, String search = ''}) async {
+  /// [preview]: cada comanda vem com o resumo do que tem (`pending_preview`),
+  /// para a grade mostrar sem abrir cartão por cartão.
+  Future<ResourcePage> commands({
+    int page = 1,
+    String search = '',
+    int pageSize = _pageSize,
+    bool preview = false,
+  }) async {
     final response = await read(
       '/commands/',
       query: {
@@ -81,8 +88,9 @@ extension OrdersQueries on OrdersRepository {
         'is_active': true,
         'ordering': 'number',
         'page': page,
-        'page_size': _pageSize,
+        'page_size': pageSize,
         if (search.trim().isNotEmpty) 'search': search.trim(),
+        if (preview) 'preview': 1,
       },
     );
     return ResourcePage.from(response);

@@ -61,6 +61,11 @@ class _PdvMobileAppState extends State<PdvMobileApp>
       ),
     );
     _printAgent = MobilePrintAgent(api: _api);
+    // A rodada sobe em segundo plano: é a fila, e não a tela, quem sabe a hora
+    // em que o servidor criou a impressão.
+    _gateway.onSent = (mutation) {
+      if (mutation.kind == 'send_to_kitchen') unawaited(_printAgent.runNow());
+    };
     _controller.addListener(_syncSessionServices);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_bootstrap());

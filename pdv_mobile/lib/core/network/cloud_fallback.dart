@@ -24,21 +24,21 @@ export 'server_origin.dart';
 /// a nuvem por causa de uma rota com bug — e lá ele encontraria o mesmo bug,
 /// porque é o mesmo código.
 ///
-/// E não basta a falha: antes de desviar, o terminal CONFIRMA que a loja está
-/// fora, batendo no `/health/` dela. Um pacote perdido ou um reinício de dois
-/// segundos do serviço não podem mudar o servidor do terminal inteiro.
+/// ## Loja instável: cai rápido
 ///
-/// ## A escrita cai, com UMA exceção: tempo esgotado
+/// O garçom anda pelo salão e o Wi-Fi oscila. Esperar três sondas (até ~20 s)
+/// antes de desviar deixava o app parado no meio do atendimento; agora UMA
+/// sonda sem resposta basta, e **tempo esgotado na loja já é queda** — loja que
+/// não responde em 8 s (`ApiClient.timeoutLoja`) não serve para lançar. Caiu,
+/// fica 5 minutos na nuvem ([VereditoDaLoja]).
 ///
-/// A deduplicação de escrita (`Idempotency-Key`) vive no banco de CADA
-/// backend: a nuvem nunca viu a chave que a loja consumiu. Então repetir na
-/// nuvem uma escrita que a loja JÁ GRAVOU executa de novo — o cliente paga
-/// duas vezes, e o estorno vira uma venda que existe em dois bancos.
+/// ## Escrita com tempo esgotado: só com identidade
 ///
-/// Conexão recusada é segura: ninguém recebeu nada, e não há o que duplicar.
-/// **Tempo esgotado não é**: o servidor pode ter gravado e só a resposta ter se
-/// perdido. Essa escrita NÃO cai — ela espera na fila offline, que reenvia
-/// para a mesma loja com a mesma chave, e lá a deduplicação funciona.
+/// A `Idempotency-Key` vive no banco de CADA backend: repetir na nuvem uma
+/// escrita que a loja JÁ GRAVOU executaria de novo. Conexão recusada é segura
+/// (ninguém recebeu nada). Tempo esgotado só desvia quando o corpo leva `id`
+/// (UUID do aparelho — anotação de comanda, recebimento): os dois servidores
+/// gravam a MESMA linha e a sincronização junta. Sem `id`, espera na fila.
 ///
 /// ## Os dois emissores
 ///
@@ -55,7 +55,7 @@ class CloudFallback {
     String? baseUrl,
     this.enabled = true,
     VereditoDaLoja? veredito,
-    this.sondasAntesDeDesviar = 3,
+    this.sondasAntesDeDesviar = 1,
     this.intervaloEntreSondas = const Duration(seconds: 2),
   }) : baseUrl = baseUrl ?? enderecoDaNuvem,
        veredito = veredito ?? VereditoDaLoja();
@@ -74,26 +74,14 @@ class CloudFallback {
   /// fechada, exigência do cliente). O padrão é ligado.
   final bool enabled;
 
-  /// O que NUNCA desvia, nem com a loja comprovadamente fora.
+  /// O que NUNCA desvia, nem com a loja comprovadamente fora — a resposta
+  /// certa é ESPERAR a loja voltar.
   ///
-  /// Nem todo risco se resolve com faixa de numeração. Estes dois não se
-  /// resolvem com nada deste lado — a resposta certa é a operação ESPERAR a
-  /// loja voltar:
-  ///
-  /// **Fiscal.** O número da nota (`nNF`) é sequencial dentro de uma SÉRIE, e
-  /// a série é justamente o mecanismo legal para separar pontos de emissão.
-  /// Dois nós emitindo na mesma série produzem duas notas com o mesmo número
-  /// — a SEFAZ rejeita a segunda, ou pior, aceita, e a loja fica com duas
-  /// notas idênticas para desfazer no contador. Emitir da nuvem exigiria uma
-  /// série própria, cadastrada e habilitada na SEFAZ; enquanto isso não
-  /// existir, a emissão é da loja.
-  ///
-  /// **Caixa.** Abrir ou fechar sessão na nuvem enquanto a loja tem a dela
-  /// gera duas sessões para o mesmo turno. A conferência do dia passa a ter
-  /// dois saldos de abertura, e nenhum relatório consegue dizer qual vale.
-  ///
-  /// A comparação é por PREFIXO: uma rota nova debaixo de `/invoices/` nasce
-  /// protegida, em vez de precisar ser lembrada aqui.
+  /// **Fiscal:** o número da nota é sequencial dentro da SÉRIE; dois nós na
+  /// mesma série emitem duas notas com o mesmo número. **Caixa:** sessão
+  /// aberta na nuvem com a loja tendo a dela dá dois saldos para o mesmo
+  /// turno. A comparação é por PREFIXO: rota nova debaixo de `/invoices/`
+  /// nasce protegida.
   static const caminhosQueNuncaDesviam = [
     '/invoices/',
     '/cash-register/',
@@ -144,30 +132,38 @@ class CloudFallback {
 
   Future<void>? _conferindo;
 
-  /// Esta falha justifica tentar a nuvem?
-  ///
-  /// Leitura cai sempre que o backend não respondeu. Escrita cai também, MENOS
-  /// quando a requisição pode ter sido executada (`reachedServer`) — aí ela
-  /// espera na fila, porque repetir num outro banco cobraria duas vezes.
-  bool deveTentar(String method, String path, ApiException erro) {
+  /// Esta falha justifica tentar a nuvem? Escrita que pode ter sido executada
+  /// (`reachedServer`) só cai com [comIdentidade] — ver o topo da classe.
+  bool deveTentar(
+    String method,
+    String path,
+    ApiException erro, {
+    bool comIdentidade = false,
+  }) {
     if (!enabled) return false;
     if (!_naoChegouAoBackend(erro)) return false;
     // Fiscal e caixa não desviam NEM para leitura: ler o próximo número da
     // nota na nuvem já daria ao terminal um número que a loja vai reemitir.
     if (nuncaDesvia(path)) return false;
-    if (_ehLeitura(method)) return true;
+    if (_ehLeitura(method) || comIdentidade) return true;
     return !erro.reachedServer;
   }
 
   /// Esta rota está na lista do que nunca sai da loja?
   bool nuncaDesvia(String path) => caminhosQueNuncaDesviam.any(path.startsWith);
 
-  /// A loja está REALMENTE fora, ou foi uma falha isolada? Desviar na
-  /// primeira falha trocava o terminal de servidor por um soluço da rede: são
-  /// várias sondas seguidas ao `/health/` (`sondas_da_loja.dart`). Confirmado,
-  /// o veredito vale por [VereditoDaLoja.janela] e as seguintes vão direto.
-  Future<bool> confirmarQuedaDoLocal(Future<bool> Function() sonda) async {
+  /// A loja está fora? [lenta] (tempo esgotado) já é queda, sem sonda; senão
+  /// [sondasAntesDeDesviar] sondas ao `/health/`. Confirmado, vale por
+  /// [VereditoDaLoja.janela] e as seguintes vão direto.
+  Future<bool> confirmarQuedaDoLocal(
+    Future<bool> Function() sonda, {
+    bool lenta = false,
+  }) async {
     if (localForaDoAr) return true;
+    if (lenta && enabled) {
+      veredito.marcarForaDoAr();
+      return true;
+    }
     final vivo = await lojaRespondeuAlguma(
       sonda,
       vezes: sondasAntesDeDesviar,

@@ -75,4 +75,54 @@ void main() {
 
     expect(efeitos, isNot(contains(HandsFreeEffect.launchIntoCommand)));
   });
+
+  group('pedir a comanda nesta passagem (2 pratos, a mesma comanda)', () {
+    test('ligado, o peso espera o cartão em vez de lançar', () {
+      machine.alternarPedirComanda();
+
+      final efeitos = machine.onSample(amostra(0.380), pricePerKg: 60);
+
+      expect(machine.state, HandsFreeState.waitingCommand);
+      expect(efeitos, isNot(contains(HandsFreeEffect.launchIntoCommand)));
+      expect(machine.automaticaNestaPassagem, isFalse);
+      expect(
+        machine.onCommandRead('17'),
+        contains(HandsFreeEffect.launchIntoCommand),
+      );
+      expect(machine.commandCode, '17');
+    });
+
+    test('vale UMA passagem: lançada, a próxima volta ao automático', () {
+      machine.alternarPedirComanda();
+      machine.onSample(amostra(0.380), pricePerKg: 60);
+      machine.onCommandRead('17');
+      machine.onLaunched();
+      machine.readyForNext();
+
+      expect(machine.pedirComandaNestaPassagem, isFalse);
+      machine.onSample(amostra(0), pricePerKg: 60);
+      final efeitos = machine.onSample(amostra(0.5), pricePerKg: 60);
+      expect(efeitos, contains(HandsFreeEffect.launchIntoCommand));
+    });
+
+    test('desligar de novo antes do peso volta ao automático', () {
+      machine.alternarPedirComanda();
+      machine.alternarPedirComanda();
+
+      final efeitos = machine.onSample(amostra(0.380), pricePerKg: 60);
+
+      expect(efeitos, contains(HandsFreeEffect.launchIntoCommand));
+    });
+
+    test('fora do automático o botão não faz nada', () {
+      final manual = HandsFreeMachine(
+        commandTimeout: const Duration(seconds: 30),
+      )..start();
+      addTearDown(manual.dispose);
+
+      manual.alternarPedirComanda();
+
+      expect(manual.pedirComandaNestaPassagem, isFalse);
+    });
+  });
 }

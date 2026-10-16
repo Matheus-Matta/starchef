@@ -892,7 +892,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// a cada pesagem: assim uma operação cancelada não deixa leituras órfãs.
   Future<void> _launchIntoCommand() async {
     final item = machine.weighedItem;
-    final automatica = machine.comandaAutomatica;
+    final automatica = machine.automaticaNestaPassagem;
     final code = machine.commandCode;
     if (item == null || (code == null && !automatica) || scaleId == null) {
       return;
@@ -1036,7 +1036,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   /// Atalhos da estação, só com a tela da balança NA FRENTE (nenhum modal):
-  /// Esc cancela a passagem em andamento, Tab abre as últimas passagens. As
+  /// Esc cancela a passagem em andamento, Tab abre as últimas passagens, F2
+  /// (no automático) faz esta passagem pedir a comanda. As
   /// setas não são capturadas aqui — só dentro dos modais de produto e de
   /// histórico, que tratam as próprias teclas.
   bool _atalhoDaEstacao(KeyEvent event) {
@@ -1045,6 +1046,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.tab) {
       unawaited(_abrirHistorico());
+      return true;
+    }
+    // F2: no automático, esta passagem pede a comanda (o segundo prato).
+    if (key == LogicalKeyboardKey.f2 && machine.comandaAutomatica) {
+      machine.alternarPedirComanda();
       return true;
     }
     if (key == LogicalKeyboardKey.escape && _acceptsCommandInput) {
@@ -2103,7 +2109,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           status: 'Escolha o produto: ↑ ↓ e Enter.',
           statusIcon: const Icon(Icons.list_alt, size: 56),
         );
-      case HandsFreeState.failed when machine.comandaAutomatica:
+      case HandsFreeState.failed when machine.automaticaNestaPassagem:
         return ScaleCommandHighlight(
           totalLabel: ValueFormatters.money(_cartTotal()),
           status: machine.failureMessage ?? 'A pesagem não foi lançada.',
@@ -2126,6 +2132,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         return machine.comandaAutomatica
             ? ComandaAutomaticaAguardando(
                 ultima: widget.preferences.ultimaComandaAutomatica,
+                pedirComanda: machine.pedirComandaNestaPassagem,
+                onAlternarPedirComanda: machine.alternarPedirComanda,
               )
             : _commandPlaceholder();
     }
@@ -2173,7 +2181,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   List<Widget> _commandActions() => [
-    if (machine.comandaAutomatica)
+    if (machine.automaticaNestaPassagem)
       FilledButton.icon(
         onPressed: () => _runEffects(machine.tentarDeNovo()),
         icon: const Icon(Icons.refresh),
