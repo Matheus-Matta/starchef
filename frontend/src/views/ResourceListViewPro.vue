@@ -342,6 +342,7 @@
       />
       <OrderBulkDeleteDialog v-model:visible="orderDeleteVisible" :selection="selection" @completed="onInvoiceBulkCompleted" />
       <CommandBulkResetDialog v-model:visible="commandResetVisible" :selection="selection" @completed="onInvoiceBulkCompleted" />
+      <CommandLinesDialog v-if="commandLinesVisible" v-model:visible="commandLinesVisible" />
 
       <DataTable
         v-model:selection="selection"
@@ -2467,6 +2468,7 @@ import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.
 import OrderBulkCancelDialog from "../components/data/OrderBulkCancelDialog.vue";
 import OrderBulkDeleteDialog from "../components/data/OrderBulkDeleteDialog.vue";
 import CommandBulkResetDialog from "../components/data/CommandBulkResetDialog.vue";
+import CommandLinesDialog from "../components/data/CommandLinesDialog.vue";
 import InboundHelpButton from "../components/inbound/InboundHelpButton.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
@@ -2809,6 +2811,7 @@ function runPrimary() {
 
 // ── Ações do cabeçalho (config `pro.headerActions`) ───────────────────
 const headerActions = computed(() => proCfg.value.headerActions || []);
+const commandLinesVisible = ref(false);
 const syncingSefaz = ref(false);
 const dfeSyncInfo = ref(null);
 const dfeSyncLoading = ref(false);
@@ -2922,6 +2925,7 @@ function runHeaderAction(headerAction) {
     router.push({ name: headerAction.routeName, query: headerAction.query || {} });
   }
   else if (headerAction.type === "sync-sefaz") triggerSefazSync();
+  else if (headerAction.type === "command-lines") commandLinesVisible.value = true;
   else if (headerAction.type === "upload-xml") openUploadXmlDialog();
 }
 

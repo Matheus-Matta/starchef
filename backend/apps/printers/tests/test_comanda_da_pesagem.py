@@ -95,3 +95,21 @@ def test_produto_desativado_some_do_papel_sem_derrubar_a_pesagem(account, restau
 
     assert "[ ]" not in papel
     assert "Suco antigo" not in papel
+
+
+def test_titulo_livre_sai_na_ordem_com_os_produtos(account, restaurant, produtos):
+    """Produto e título livre na ordem configurada; em branco no fim."""
+    agua = produtos("Água")
+    restaurant.linhas_da_comanda = [
+        {"tipo": "branco"},
+        {"tipo": "texto", "nome": "Coca-Cola"},
+        {"tipo": "produto", "produto": str(agua.pk)},
+    ]
+    restaurant.save(update_fields=["linhas_da_comanda"])
+
+    itens = [linha for linha in _papel(account, restaurant).splitlines() if linha.endswith("[ ][ ][ ]")]
+
+    assert itens[0].startswith("Coca-Cola ")
+    assert itens[1].startswith("Água ")
+    assert itens[2].startswith("_" * 20)
+    assert all(len(linha) == LARGURA for linha in itens)

@@ -921,7 +921,7 @@ PRECO KG:               R$ 69,90
 PESO:                   0,452 kg
 VALOR:                  R$ 31,59
 --------------------------------
-Coca-Cola La. ________ [ ][ ][ ]
+Coca-Cola     ________ [ ][ ][ ]
 Agua sem gas  ________ [ ][ ][ ]
 ______________________ [ ][ ][ ]
 --------------------------------
@@ -929,16 +929,25 @@ Leve esta comanda ao caixa.
 ```
 
 Abaixo do cabeçalho saem as **linhas de item** do restaurante
-(`Restaurant.linhas_da_comanda`), que o atendente marca à mão: cada linha é um
-produto (nome cortado em 13 caracteres, um traço para escrever e três
-quadrados) ou uma linha em branco (só traço e quadrados). As em branco saem
-sempre no fim. Sem nenhuma linha configurada, o papel sai só com a pesagem.
-Produto desativado ou apagado some do papel sem derrubar a pesagem.
+(`Restaurant.linhas_da_comanda`), que o atendente marca à mão. Cada linha é:
 
-A lista é editada no PDV, em **Comandas → Linhas da comanda**, e gravada por
+* um **produto** do cardápio — o nome vem do cadastro;
+* um **título** livre — um nome digitado, sem produto ("Coca-Cola",
+  "Sobremesa"), de 1 a 40 caracteres;
+* uma linha **em branco** — só traço e quadrados, para escrever à mão.
+
+Produto e título saem na ordem configurada, com o nome cortado em 13
+caracteres, um traço para escrever e três quadrados; as em branco saem sempre
+no fim. Sem nenhuma linha configurada, o papel sai só com a pesagem. Produto
+desativado ou apagado some do papel sem derrubar a pesagem.
+
+A lista é editada em dois lugares, com o mesmo resultado: no **PDV**, em
+**Comandas → Linhas da comanda**, e no **painel web**, na tela **Comandas →
+Linhas da comanda** (`CommandLinesDialog.vue`). Os dois gravam por
 `PATCH /restaurants/<id>/` (`{"linhas_da_comanda": [{"tipo": "produto",
-"produto": "<uuid>"}, {"tipo": "branco"}]}`, máximo 20). Vale para todas as
-balanças do restaurante e sincroniza loja ⇄ nuvem com o cadastro.
+"produto": "<uuid>"}, {"tipo": "texto", "nome": "Coca-Cola"}, {"tipo":
+"branco"}]}`, máximo 20). Vale para todas as balanças do restaurante e
+sincroniza loja ⇄ nuvem com o cadastro.
 
 ## Caixa Secundário e aplicativos: fila e cópia local próprias
 

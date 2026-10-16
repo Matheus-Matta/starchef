@@ -1,7 +1,8 @@
 """As linhas de item que a comanda da pesagem imprime abaixo do cabeçalho.
 
 É a lista do restaurante (bebidas, sobremesa...) que o atendente marca à mão
-no papel. Cada linha é um PRODUTO do cardápio ou uma linha EM BRANCO, para
+no papel. Cada linha é um PRODUTO do cardápio, um TÍTULO livre (um nome
+digitado, sem produto: "Coca-Cola", "Sobremesa") ou uma linha EM BRANCO, para
 escrever o que não está na lista. As em branco saem sempre no fim.
 
 Fica no restaurante, e não no terminal: todas as balanças da casa imprimem o
@@ -9,7 +10,8 @@ mesmo papel, e a lista sincroniza loja ⇄ nuvem junto com o resto do cadastro.
 
 Formato gravado (o mesmo que a API recebe e devolve):
 
-    [{"tipo": "produto", "produto": "<uuid>"}, {"tipo": "branco"}]
+    [{"tipo": "produto", "produto": "<uuid>"},
+     {"tipo": "texto", "nome": "Coca-Cola"}, {"tipo": "branco"}]
 """
 import uuid
 
@@ -17,6 +19,11 @@ from rest_framework import serializers
 
 TIPO_PRODUTO = "produto"
 TIPO_BRANCO = "branco"
+TIPO_TEXTO = "texto"
+
+#: O título é cortado no papel (13 colunas), mas guardar um nome inteiro de
+#: até 40 deixa o mesmo cadastro servir a uma impressora mais larga.
+MAXIMO_DO_TITULO = 40
 
 # Teto de papel, não de regra: cada linha é uma linha impressa, e uma comanda
 # de meio metro ninguém usa.
@@ -39,9 +46,17 @@ def validar_linhas_da_comanda(valor):
         if tipo == TIPO_BRANCO:
             linhas.append({"tipo": TIPO_BRANCO})
             continue
+        if tipo == TIPO_TEXTO:
+            nome = " ".join(str(linha.get("nome") or "").split())
+            if not nome or len(nome) > MAXIMO_DO_TITULO:
+                raise serializers.ValidationError(
+                    f"O título da linha precisa ter de 1 a {MAXIMO_DO_TITULO} caracteres."
+                )
+            linhas.append({"tipo": TIPO_TEXTO, "nome": nome})
+            continue
         if tipo != TIPO_PRODUTO:
             raise serializers.ValidationError(
-                "Cada linha é um produto ou uma linha em branco."
+                "Cada linha é um produto, um título ou uma linha em branco."
             )
         try:
             produto = str(uuid.UUID(str(linha.get("produto"))))

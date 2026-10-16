@@ -4,6 +4,7 @@ import '../../../core/network/api_exception.dart';
 import '../data/command_repository.dart';
 import '../data/linhas_da_comanda.dart';
 import 'escolher_produto_da_linha_dialog.dart';
+import 'linhas_da_comanda_acoes.dart';
 import 'linha_da_comanda_tile.dart';
 
 /// Abre o editor. Salvar fecha o diálogo; erro de gravação aparece dentro dele.
@@ -87,6 +88,12 @@ class _LinhasDaComandaDialogState extends State<LinhasDaComandaDialog> {
     if (id != null && mounted) _mudar([..._linhas, LinhaDaComanda.produto(id)]);
   }
 
+  Future<void> _adicionarTitulo() async {
+    final nome = await pedirTituloDaLinha(context);
+    if (nome == null || !mounted) return;
+    _mudar([..._linhas, LinhaDaComanda.titulo(nome)]);
+  }
+
   void _mover(int de, int para) {
     final linhas = [..._linhas];
     linhas.insert(para, linhas.removeAt(de));
@@ -114,7 +121,9 @@ class _LinhasDaComandaDialogState extends State<LinhasDaComandaDialog> {
     return LinhaDaComandaTile(
       nome: linha.emBranco
           ? null
-          : (_nomes[linha.produtoId] ?? 'Produto fora do cardápio (não sai)'),
+          : linha.titulo ??
+                _nomes[linha.produtoId] ??
+                'Produto fora do cardápio (não sai)',
       onSubir: !linha.emBranco && i > 0 ? () => _mover(i, i - 1) : null,
       onDescer: !linha.emBranco && i < produtos - 1
           ? () => _mover(i, i + 1)
@@ -140,25 +149,12 @@ class _LinhasDaComandaDialogState extends State<LinhasDaComandaDialog> {
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                FilledButton.tonalIcon(
-                  onPressed: _carregando || _cheia ? null : _adicionarItem,
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Adicionar item'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _carregando || _cheia
-                      ? null
-                      : () => _mudar([
-                          ..._linhas,
-                          const LinhaDaComanda.emBranco(),
-                        ]),
-                  icon: const Icon(Icons.edit_note_rounded),
-                  label: const Text('Adicionar linha em branco'),
-                ),
-              ],
+            AcoesDasLinhas(
+              onItem: _carregando || _cheia ? null : _adicionarItem,
+              onTitulo: _carregando || _cheia ? null : _adicionarTitulo,
+              onEmBranco: _carregando || _cheia
+                  ? null
+                  : () => _mudar([..._linhas, const LinhaDaComanda.emBranco()]),
             ),
             const Divider(height: 24),
             Expanded(

@@ -217,7 +217,11 @@ export const resources = [
     pro: {
       bulkDeleteEndpoint: "/commands/bulk-delete/",
       bulkUpdateEndpoint: "/commands/bulk-update/",
-      headerActions: [{ key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-create", bulkType: "commands" }],
+      headerActions: [
+        { key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-create", bulkType: "commands" },
+        // O que a comanda da Balança Rápida imprime abaixo do peso (CommandLinesDialog).
+        { key: "lines", label: "Linhas da comanda", icon: "pi pi-list", type: "command-lines" },
+      ],
       bulkActions: [
         { key: "print-codes", label: "Imprimir etiquetas", icon: "pi pi-print", type: "print-codes" },
         // Zerar ≠ Excluir: retira o que está aberto e libera o cartão, mas a

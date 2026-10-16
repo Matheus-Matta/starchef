@@ -19,12 +19,15 @@ void main() {
     () {
       final lidas = [
         {'tipo': 'produto', 'produto': 'p1'},
+        {'tipo': 'texto', 'nome': 'Coca-Cola'},
         {'tipo': 'branco'},
         {'tipo': 'bebida'},
+        {'tipo': 'texto', 'nome': '  '},
       ].map(LinhaDaComanda.fromJson).whereType<LinhaDaComanda>().toList();
 
       expect(lidas.map((l) => l.toJson()), [
         {'tipo': 'produto', 'produto': 'p1'},
+        {'tipo': 'texto', 'nome': 'Coca-Cola'},
         {'tipo': 'branco'},
       ]);
     },

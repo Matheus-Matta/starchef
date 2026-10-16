@@ -21,7 +21,7 @@ quadrados de todas as de baixo.
 """
 from decimal import Decimal
 
-from apps.restaurants.linhas_da_comanda import TIPO_BRANCO, TIPO_PRODUTO
+from apps.restaurants.linhas_da_comanda import TIPO_BRANCO, TIPO_PRODUTO, TIPO_TEXTO
 
 LARGURA = 32
 QUADRADOS = "[ ][ ][ ]"
@@ -50,7 +50,7 @@ def _campo(rotulo, valor):
 
 
 def _linhas_de_item(restaurant):
-    """Produtos na ordem configurada; as linhas em branco sempre no fim.
+    """Produtos e títulos na ordem configurada; as em branco sempre no fim.
 
     Produto apagado ou desativado depois de entrar na lista some do papel em
     silêncio: a pesagem não pode falhar por causa de um cadastro de bebida.
@@ -59,18 +59,24 @@ def _linhas_de_item(restaurant):
 
     configuradas = list(getattr(restaurant, "linhas_da_comanda", None) or [])
     ids = [linha.get("produto") for linha in configuradas if linha.get("tipo") == TIPO_PRODUTO]
-    nomes = dict(
-        Product.objects.filter(pk__in=ids, restaurant=restaurant, is_active=True)
+    nomes = {
+        str(pk): nome
+        for pk, nome in Product.objects.filter(pk__in=ids, restaurant=restaurant, is_active=True)
         .values_list("pk", "name")
-    )
-    nomes = {str(pk): nome for pk, nome in nomes.items()}
-    produtos = [
-        f"{_cortar(nomes[pid], LARGURA_DO_NOME).ljust(LARGURA_DO_NOME)} {LINHA_PARA_ESCREVER} {QUADRADOS}"
-        for pid in ids
-        if pid in nomes
+    }
+    titulos = []
+    for linha in configuradas:
+        if linha.get("tipo") == TIPO_TEXTO:
+            titulos.append(linha.get("nome"))
+        elif linha.get("tipo") == TIPO_PRODUTO and linha.get("produto") in nomes:
+            titulos.append(nomes[linha["produto"]])
+    itens = [
+        f"{_cortar(titulo, LARGURA_DO_NOME).ljust(LARGURA_DO_NOME)} {LINHA_PARA_ESCREVER} {QUADRADOS}"
+        for titulo in titulos
+        if titulo
     ]
     brancos = sum(1 for linha in configuradas if linha.get("tipo") == TIPO_BRANCO)
-    return produtos + [f"{LINHA_EM_BRANCO} {QUADRADOS}"] * brancos
+    return itens + [f"{LINHA_EM_BRANCO} {QUADRADOS}"] * brancos
 
 
 def texto_da_comanda_da_pesagem(*, command, item):

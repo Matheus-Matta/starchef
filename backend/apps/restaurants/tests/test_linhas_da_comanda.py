@@ -57,3 +57,27 @@ def test_as_linhas_da_comanda_viajam_no_payload_da_sincronizacao(restaurant):
     payload = serialize(restaurant, registry.require("restaurant"))
 
     assert payload["linhas_da_comanda"] == [{"tipo": "branco"}]
+
+
+def test_titulo_livre_e_gravado_sem_ser_produto(admin_client, restaurant):
+    """"Coca-Cola" digitado, sem escolher produto do cardápio."""
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {"linhas_da_comanda": [{"tipo": "texto", "nome": "  Coca-Cola  "}]},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    restaurant.refresh_from_db()
+    assert restaurant.linhas_da_comanda == [{"tipo": "texto", "nome": "Coca-Cola"}]
+
+
+@pytest.mark.parametrize("nome", ["", "   ", "x" * 41, None])
+def test_titulo_vazio_ou_comprido_demais_e_recusado(admin_client, restaurant, nome):
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {"linhas_da_comanda": [{"tipo": "texto", "nome": nome}]},
+        format="json",
+    )
+
+    assert response.status_code == 400
