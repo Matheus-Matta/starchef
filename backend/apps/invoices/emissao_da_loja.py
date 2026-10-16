@@ -88,7 +88,15 @@ def serie_desta_emissao(order, config):
 
 
 def avancar_contador(config, campo, numero):
-    setattr(config, campo, numero + 1)
+    """O contador só anda para FRENTE, comparado com o que está no banco.
+
+    A nota refeita em outro número (`numero_ja_usado.py`) já avançou o
+    contador; a emissão que a chamou avançava de novo com o número antigo,
+    lido antes, e o contador voltava para trás.
+    """
+    no_banco = (type(config)._base_manager.filter(pk=config.pk)
+                .values_list(campo, flat=True).first()) or 0
+    setattr(config, campo, max(no_banco, numero + 1))
     config.save(update_fields=[campo, "updated_at"])
 
 

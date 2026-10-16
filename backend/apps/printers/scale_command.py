@@ -101,14 +101,22 @@ def consume_command_binding(scale, *, now=None):
 
 
 @transaction.atomic
-def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, send=True, item_id=None):
+def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, send=True, item_id=None,
+                       product=None):
     """Anota a pesagem NA COMANDA. Nenhum pedido é aberto.
 
     Antes, a primeira pesagem abria um pedido para o cartão — e era esse gesto
     que prendia a comanda a um pedido que talvez ninguém fosse pagar. Agora o
     peso vira uma anotação como qualquer outra, e o pedido só nasce no caixa.
+
+    `product` é o produto por quilo escolhido NA estação ("Escolher o produto
+    a cada pesagem"); sem ele vale o vinculado à balança.
     """
     from apps.orders.command_items import launch_item
+
+    product = product or scale.product
+    if product is None:
+        raise ValidationError("Escolha o produto por quilo: a balança não tem um vinculado.")
 
     command = Command.objects.select_for_update().get(pk=command.pk)
     if scale_reading.order_item_id or scale_reading.command_item_id:
@@ -116,11 +124,11 @@ def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, se
 
     item = launch_item(
         command=command,
-        product=scale.product,
+        product=product,
         user=user,
         item_id=item_id,
         quantity=scale_reading.net_weight_kg,
-        unit_price=scale.product.current_price,
+        unit_price=product.current_price,
     )
     # A leitura fica CONSUMIDA. Sem isto, a mesma pesagem poderia virar uma
     # segunda anotação — o cliente pagando duas vezes pelo mesmo corte.
@@ -148,3 +156,24 @@ def send_weighing_to_production(*, command, items, user, client_batch_serial=Non
     from apps.orders.command_kitchen import send_command_to_kitchen
 
     return send_command_to_kitchen(command, user, only=items, client_batch_serial=client_batch_serial)
+
+
+def produto_por_quilo(scale, product_id):
+    """O produto escolhido na estação, conferido; `None` = o da balança.
+
+    O preço sai daqui, do servidor: o PDV manda só QUAL produto. Recusa o que
+    não é vendido por quilo — uma bebida "pesada" cobraria 0,450 unidade.
+    """
+    from apps.menu.models import Product
+
+    if product_id in (None, ""):
+        return None
+    try:
+        product = Product.objects.filter(
+            restaurants=scale.restaurant, pk=product_id, account=scale.account, is_active=True
+        ).first()
+    except (ValueError, ValidationError):
+        product = None
+    if product is None or not product.is_weighed:
+        raise ValidationError("Produto por quilo inexistente neste restaurante.")
+    return product

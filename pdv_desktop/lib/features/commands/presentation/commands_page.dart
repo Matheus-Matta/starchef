@@ -10,6 +10,7 @@ import 'commands_loading.dart';
 import 'commands_labels.dart';
 import 'commands_receipt.dart';
 import 'commands_table_actions.dart';
+import 'linhas_da_comanda_dialog.dart';
 
 /// As comandas em DUAS telas: o salão e o cartão aberto.
 ///
@@ -206,6 +207,14 @@ class _CommandsPageState extends State<CommandsPage>
         widget.imprimirNoTerminal == null || imprimindoEtiquetas
         ? null
         : imprimirEtiquetas,
+    onLinhasDaComanda: widget.restaurantId == null
+        ? null
+        : () => abrirLinhasDaComanda(
+            context,
+            widget.repository,
+            restaurantId: widget.restaurantId!,
+            produtos: widget.products,
+          ),
   );
 
   /// A segunda: o cartão aberto, no desenho da venda.

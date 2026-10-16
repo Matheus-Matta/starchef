@@ -73,13 +73,7 @@ class DocumentoFiscal(DocumentoRegras):
         discounts_by_item = self._allocate_discount(items, invoice.discount_total)
         expenses_by_item = self._allocate_total(items, other_expenses)
         payments = self._build_payments(invoice)
-        change_total = sum(
-            (
-                payment.change_amount
-                for payment in invoice.order.payments.filter(status="approved", payment_method__method_type="cash")
-            ),
-            start=0,
-        )
+        change_total = self._troco(payments, invoice.total_amount)
         payload = {
             "natureza_operacao": "Venda ao consumidor",
             "data_emissao": invoice.fiscal_payload.get("emission"),

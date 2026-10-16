@@ -21,11 +21,16 @@ import '../../devices/domain/printer_endpoint.dart';
 import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
 import '../data/etiqueta_da_pesagem.dart';
+import '../data/historico_de_passagens.dart';
 import '../data/lancamento_da_pesagem.dart';
+import '../data/lista_da_estacao.dart';
 import '../data/scanner_binding_store.dart';
 import '../domain/hands_free_machine.dart';
 import '../services/serial_scanner_service.dart';
+import 'escolher_produto_por_quilo_dialog.dart';
+import 'historico_de_passagens_dialog.dart';
 import 'manual_weight_dialog.dart';
+import 'modo_da_comanda.dart';
 import 'retained_weight_notice.dart';
 import 'scale_command_highlight.dart';
 
@@ -131,8 +136,32 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       .cast<Map<String, dynamic>?>()
       .firstWhere((item) => '${item?['id']}' == scaleId, orElse: () => null);
 
+  /// "Escolher o produto a cada pesagem": a preferência antes de iniciar, o
+  /// modo da máquina depois (ele só muda ao reiniciar a estação).
+  bool get escolhendoProduto => started
+      ? machine.escolherProduto
+      : widget.preferences.escolherProdutoNaBalanca;
+
+  /// Os produtos por quilo, os únicos que a pergunta "qual produto?" mostra.
+  List<Map<String, dynamic>> get kgProducts =>
+      widget.products
+          .where(
+            (item) =>
+                item['is_active'] != false &&
+                (item['pricing_unit'] == 'kg' || item['is_weighed'] == true),
+          )
+          .toList()
+        ..sort(
+          (a, b) => '${a['name']}'.toLowerCase().compareTo(
+            '${b['name']}'.toLowerCase(),
+          ),
+        );
+
   Map<String, dynamic>? get weighedProduct {
-    final productId = '${selectedScale?['product'] ?? ''}';
+    // Escolhendo, o produto é o do prato atual — nunca o da balança.
+    final productId = escolhendoProduto
+        ? machine.weighedItem?.productId ?? ''
+        : '${selectedScale?['product'] ?? ''}';
     return widget.products.cast<Map<String, dynamic>?>().firstWhere(
       (item) => '${item?['id']}' == productId,
       orElse: () => null,
@@ -257,6 +286,17 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 
   String get configuredPort => scaleDevice?.port ?? '';
 
+  /// Quanto o "Pedido lançado" fica na tela antes de liberar o próximo prato.
+  ///
+  /// Eram 2 s fixos, e a balança não pesava nada nesse tempo: numa fila de
+  /// self-service, cada cliente esperava o aviso do anterior sumir. O prato
+  /// que acabou de ser lançado e continua na balança não é cobrado de novo
+  /// (`readyForNext` o retém até sair), então o aviso só precisa ser lido.
+  static const _avisoDeLancado = Duration(milliseconds: 700);
+
+  ListaDaEstacao get _listas =>
+      ListaDaEstacao(widget.api, accessToken: widget.accessToken);
+
   HandsFreeMachine _buildMachine() => HandsFreeMachine(
     commandTimeout: Duration(seconds: commandTimeoutSeconds),
   );
@@ -362,6 +402,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   };
 
   bool _handleFallbackKeyboard(KeyEvent event) {
+    if (_atalhoDaEstacao(event)) return true;
     if (event is! KeyDownEvent ||
         !_acceptsCommandInput ||
         commandFocusNode.hasFocus) {
@@ -451,21 +492,21 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       errorMessage = null;
     });
     try {
-      final response = await widget.api.get(
+      // A porta vem do cadastro da balança, como qualquer outro detalhe de
+      // protocolo (baud rate, protocolo, timeout): é o cadastro que descreve
+      // o equipamento. O cache só adianta a abertura: o servidor relê em
+      // segundo plano e a versão nova substitui (`lista_da_estacao.dart`).
+      final values = await _listas.ler(
         '/scales/',
         query: {
           'restaurant': widget.restaurantId,
           'is_active': true,
           'page_size': 100,
         },
-        accessToken: widget.accessToken,
+        aoAtualizar: (nova) {
+          if (mounted) setState(() => scales = nova);
+        },
       );
-      // A porta vem do cadastro da balança, como qualquer outro detalhe de
-      // protocolo (baud rate, protocolo, timeout): é o cadastro que descreve
-      // o equipamento, não uma cópia local que envelhece.
-      final values = (response['results'] as List? ?? const [])
-          .cast<Map<String, dynamic>>()
-          .toList();
       if (!mounted) return;
       // A balança que estava em uso neste terminal volta escolhida (e
       // ligada, logo abaixo): recriar a estação não pode largar o operador
@@ -510,18 +551,17 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     if (widget.restaurantId == null) return;
     setState(() => loadingPrinters = true);
     try {
-      final response = await widget.api.get(
+      final values = await _listas.ler(
         '/printers/',
         query: {
           'restaurant': widget.restaurantId,
           'is_active': true,
           'page_size': 100,
         },
-        accessToken: widget.accessToken,
+        aoAtualizar: (nova) {
+          if (mounted) setState(() => printers = nova);
+        },
       );
-      final values = (response['results'] as List? ?? const [])
-          .cast<Map<String, dynamic>>()
-          .toList();
       if (mounted) setState(() => printers = values);
     } on ApiException catch (error) {
       if (mounted) {
@@ -597,10 +637,15 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     // A impressora é opcional: sem ela a estação pesa e lança o pedido
     // normalmente, só não emite o ticket. Exigi-la aqui impedia de operar um
     // terminal que ainda não tem impressora vinculada.
-    if (scaleId == null || weighedProduct == null) {
+    final semProduto = escolhendoProduto
+        ? kgProducts.isEmpty
+        : weighedProduct == null;
+    if (scaleId == null || semProduto) {
       setState(() {
         errorMessage = scaleId == null
             ? 'Selecione uma balança.'
+            : escolhendoProduto
+            ? 'Nenhum produto por quilo cadastrado para escolher.'
             : 'A balança precisa ter um produto por kg configurado.';
       });
       return;
@@ -620,7 +665,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       _reportarFalha(error, stack, 'Abrir a balança');
     }
     if (!mounted) return;
-    machine.start();
+    machine.start(
+      comandaAutomatica: widget.preferences.comandaAutomatica,
+      escolherProduto: widget.preferences.escolherProdutoNaBalanca,
+    );
     clock?.cancel();
     clock = Timer.periodic(const Duration(seconds: 1), (_) => _onClockTick());
   }
@@ -775,6 +823,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           }
         case HandsFreeEffect.launchIntoCommand:
           unawaited(_launchIntoCommand());
+        case HandsFreeEffect.chooseProduct:
+          unawaited(_perguntarProduto());
         case HandsFreeEffect.operationCancelled:
           commandController.clear();
           extraConfigs.clear();
@@ -801,6 +851,36 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }
   }
 
+  /// "Qual produto?" depois do peso. Esc (ou fechar) cancela a pesagem, e o
+  /// prato fica retido até sair da balança.
+  Future<void> _perguntarProduto() async {
+    final item = machine.weighedItem;
+    if (item == null) return;
+    final escolhido = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => EscolherProdutoPorQuiloDialog(
+        produtos: kgProducts,
+        pesoKg: item.weightKg,
+        inicialId: widget.preferences.ultimoProdutoPorQuilo,
+      ),
+    );
+    // A estação pode ter parado com a lista aberta.
+    if (!mounted || machine.state != HandsFreeState.choosingProduct) return;
+    if (escolhido == null) {
+      _runEffects(machine.cancel());
+      return;
+    }
+    final id = '${escolhido['id']}';
+    unawaited(widget.preferences.setUltimoProdutoPorQuilo(id));
+    _runEffects(
+      machine.onProdutoEscolhido(
+        productId: id,
+        pricePerKg: ValueFormatters.number(escolhido['current_price']),
+        now: DateTime.now(),
+      ),
+    );
+  }
+
   // ---------------------------------------------- lançamento na comanda
 
   /// Anota a pesagem NA COMANDA e imprime a etiqueta.
@@ -812,18 +892,23 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// a cada pesagem: assim uma operação cancelada não deixa leituras órfãs.
   Future<void> _launchIntoCommand() async {
     final item = machine.weighedItem;
+    final automatica = machine.comandaAutomatica;
     final code = machine.commandCode;
-    if (item == null || code == null || scaleId == null) return;
+    if (item == null || (code == null && !automatica) || scaleId == null) {
+      return;
+    }
     try {
       // UMA ida ao servidor: o lançamento leva o peso e cria a leitura junto
       // (`lancamento_da_pesagem.dart`). Antes eram duas, em sequência.
-      final printJob =
+      final lancado =
           await LancamentoDaPesagem(
             widget.api,
             accessToken: widget.accessToken,
           ).lancar(
             balanca: scaleId!,
-            comanda: code,
+            // Automática: sem código — o servidor escolhe na fila dele.
+            comanda: automatica ? null : code,
+            produto: item.productId,
             pesoKg: item.weightKg,
             extras: machine.extras.entries
                 .where((entry) => entry.value > 0)
@@ -844,16 +929,34 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             imprimir: _printsTicketHere,
           );
       if (!mounted) return;
+      final printJob = lancado.printJob;
       AppLogger.instance.info(
         'scale_checkout_ok',
-        data: {'command': code, 'weight_kg': item.weightKg},
+        data: {'command': lancado.comanda ?? code, 'weight_kg': item.weightKg},
       );
+      if (automatica && lancado.comanda != null) {
+        unawaited(
+          widget.preferences.setUltimaComandaAutomatica(lancado.comanda),
+        );
+      }
       setState(() => lastPrintJobId = printJob?['id'] as String?);
+      unawaited(
+        HistoricoDePassagens(widget.preferences).registrar(
+          PassagemDaBalanca(
+            comanda: lancado.comanda ?? code ?? '',
+            produto: '${weighedProduct?['name'] ?? 'Refeição por peso'}',
+            pesoKg: item.weightKg,
+            total: _cartTotal(),
+            quando: DateTime.now(),
+            printJobId: lastPrintJobId,
+          ),
+        ),
+      );
       // O item JÁ está na comanda: libera agora. A etiqueta sai AQUI, em
       // segundo plano (`etiqueta_da_pesagem.dart`), e avisa se falhar.
       if (printJob != null) unawaited(_imprimirEtiqueta(printJob));
-      machine.onLaunched();
-      await Future<void>.delayed(const Duration(seconds: 2));
+      machine.onLaunched(comanda: automatica ? lancado.comanda : null);
+      await Future<void>.delayed(_avisoDeLancado);
       if (!mounted || !started) return;
       reader?.resetStability();
       // Mesmo momento em que a máquina zera `_extras` (readyForNext ->
@@ -861,7 +964,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       // configuração de adicionais do anterior.
       extraConfigs.clear();
       commandController.clear();
-      machine.readyForNext();
+      // O prato posto durante o aviso já é pesado (ver `readyForNext`).
+      _runEffects(machine.readyForNext(pricePerKg: pricePerKg));
     } on ApiException catch (error) {
       if (!mounted) return;
       AppLogger.instance.warning(
@@ -874,9 +978,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       ErrorCenterScope.read(context).reportApi(
         error,
         title: 'A comanda não pôde ser fechada',
-        recommendedAction:
-            'Feche este alerta, confira a comanda e leia novamente. '
-            'A pesagem foi preservada.',
+        recommendedAction: automatica
+            ? 'Feche este alerta e toque em "Tentar de novo". '
+                  'A pesagem foi preservada.'
+            : 'Feche este alerta, confira a comanda e leia novamente. '
+                  'A pesagem foi preservada.',
       );
       commandController.clear();
     } catch (error, stackTrace) {
@@ -929,12 +1035,44 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }
   }
 
-  /// Reimprime a última etiqueta sem lançar nada de novo.
+  /// Atalhos da estação, só com a tela da balança NA FRENTE (nenhum modal):
+  /// Esc cancela a passagem em andamento, Tab abre as últimas passagens. As
+  /// setas não são capturadas aqui — só dentro dos modais de produto e de
+  /// histórico, que tratam as próprias teclas.
+  bool _atalhoDaEstacao(KeyEvent event) {
+    if (event is! KeyDownEvent || !started || !mounted) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? false)) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.tab) {
+      unawaited(_abrirHistorico());
+      return true;
+    }
+    if (key == LogicalKeyboardKey.escape && _acceptsCommandInput) {
+      commandController.clear();
+      _runEffects(machine.cancel());
+      return true;
+    }
+    return false;
+  }
+
+  /// "Últimas passagens" (Tab): escolhida uma, reimprime a etiqueta dela.
+  Future<void> _abrirHistorico() async {
+    final escolhida = await showDialog<PassagemDaBalanca>(
+      context: context,
+      builder: (_) => HistoricoDePassagensDialog(
+        passagens: HistoricoDePassagens(widget.preferences).ler(),
+      ),
+    );
+    final jobId = escolhida?.printJobId;
+    if (jobId != null && mounted) await _reprintLastTicket(jobId);
+  }
+
+  /// Reimprime uma etiqueta (a última, sem [id]) sem lançar nada de novo.
   ///
   /// Reenfileira o MESMO trabalho de impressão em vez de montar outro: a
   /// etiqueta sai idêntica e nenhuma anotação entra na comanda de novo.
-  Future<void> _reprintLastTicket() async {
-    final jobId = lastPrintJobId;
+  Future<void> _reprintLastTicket([String? id]) async {
+    final jobId = id ?? lastPrintJobId;
     if (jobId == null || reprinting) return;
     setState(() => reprinting = true);
     try {
@@ -1268,7 +1406,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           // fica à direita, como destino de toque, não de leitura constante.
           : ScaleOperationGrid(
               items: _itemsPanel(),
-              catalog: widget.preferences.showScaleCatalog ? _catalog() : null,
+              // Escolhendo o produto, a coluna do meio sai: a estação é só
+              // pesar, escolher e lançar.
+              catalog: widget.preferences.showScaleCatalog && !escolhendoProduto
+                  ? _catalog()
+                  : null,
               command: _commandPanel(),
             ),
     );
@@ -1423,6 +1565,21 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   ),
                 ],
                 if (errorMessage != null) _errorBox(),
+                const SizedBox(height: 18),
+                ModoDaComandaSelector(
+                  automatica: widget.preferences.comandaAutomatica,
+                  onMudou: (valor) async {
+                    await widget.preferences.setComandaAutomatica(valor);
+                    if (mounted) setState(() {});
+                  },
+                ),
+                EscolherProdutoSwitch(
+                  ligado: widget.preferences.escolherProdutoNaBalanca,
+                  onMudou: (valor) async {
+                    await widget.preferences.setEscolherProdutoNaBalanca(valor);
+                    if (mounted) setState(() {});
+                  },
+                ),
                 const SizedBox(height: 22),
                 FilledButton.icon(
                   onPressed: loadingScales
@@ -1841,6 +1998,15 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             icon: const Icon(Icons.print_outlined, size: 16),
             label: const Text('Reimprimir'),
           ),
+        TextButton.icon(
+          onPressed: () => unawaited(_abrirHistorico()),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            textStyle: const TextStyle(fontSize: 12),
+          ),
+          icon: const Icon(Icons.history, size: 16),
+          label: const Text('Últimas (Tab)'),
+        ),
       ],
     ),
   ];
@@ -1931,6 +2097,18 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             color: Colors.green,
           ),
         );
+      case HandsFreeState.choosingProduct:
+        return ScaleCommandHighlight(
+          totalLabel: ValueFormatters.money(_cartTotal()),
+          status: 'Escolha o produto: ↑ ↓ e Enter.',
+          statusIcon: const Icon(Icons.list_alt, size: 56),
+        );
+      case HandsFreeState.failed when machine.comandaAutomatica:
+        return ScaleCommandHighlight(
+          totalLabel: ValueFormatters.money(_cartTotal()),
+          status: machine.failureMessage ?? 'A pesagem não foi lançada.',
+          statusIcon: const Icon(Icons.error, size: 56, color: Colors.red),
+        );
       case HandsFreeState.waitingCommand:
       case HandsFreeState.failed:
         return Column(
@@ -1945,7 +2123,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         );
       case HandsFreeState.idle:
       case HandsFreeState.waitingWeight:
-        return _commandPlaceholder();
+        return machine.comandaAutomatica
+            ? ComandaAutomaticaAguardando(
+                ultima: widget.preferences.ultimaComandaAutomatica,
+              )
+            : _commandPlaceholder();
     }
   }
 
@@ -1991,13 +2173,20 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   List<Widget> _commandActions() => [
-    FilledButton.icon(
-      onPressed: commandController.text.trim().isEmpty
-          ? null
-          : () => _runEffects(machine.onCommandRead(commandController.text)),
-      icon: const Icon(Icons.check),
-      label: const Text('Finalizar na comanda'),
-    ),
+    if (machine.comandaAutomatica)
+      FilledButton.icon(
+        onPressed: () => _runEffects(machine.tentarDeNovo()),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Tentar de novo'),
+      )
+    else
+      FilledButton.icon(
+        onPressed: commandController.text.trim().isEmpty
+            ? null
+            : () => _runEffects(machine.onCommandRead(commandController.text)),
+        icon: const Icon(Icons.check),
+        label: const Text('Finalizar na comanda'),
+      ),
     TextButton.icon(
       onPressed: () => _runEffects(machine.cancel()),
       icon: const Icon(Icons.close),

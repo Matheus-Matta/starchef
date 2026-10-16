@@ -59,6 +59,20 @@ class DocumentoRegras:
             result.append(self._forma_de_pagamento(payment, str(paid_value)))
         return result or [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
 
+    @staticmethod
+    def _troco(payments, total):
+        """vTroco = o que foi ENTREGUE (soma dos vPag) menos o total da nota.
+
+        A SEFAZ confere a conta, e não de onde veio o troco: pagamentos acima
+        do total sem vTroco é a rejeição 866. O troco era lido só do
+        `change_amount` do dinheiro, e ficava zero no cartão/PIX pago a mais ou
+        no desconto dado depois de pagar. Pagamento abaixo do total não vira
+        troco negativo — é outra recusa, e correta.
+        """
+        entregue = sum((Decimal(p["valor_pagamento"]) for p in payments), start=Decimal("0.00"))
+        troco = (entregue - Decimal(total)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        return troco if troco > 0 else Decimal("0.00")
+
     # O desconto tem teto por item (ver `discount_allocation.py`): o rateio
     # comum jogava a sobra no último item, e a SEFAZ rejeita vDesc > vProd.
     _allocate_discount = staticmethod(ratear_desconto)

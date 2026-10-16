@@ -138,7 +138,7 @@ def test_checkout_command_lanca_anotacoes_pendentes_e_imprime_a_etiqueta(
     texto = job.payload["text_content"]
     assert f"COMANDA {command.number}" in texto
     assert weighed.name in texto
-    assert "29.95" in texto
+    assert "R$ 29,95" in texto
 
 
 @pytest.mark.django_db

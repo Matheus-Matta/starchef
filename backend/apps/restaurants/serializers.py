@@ -6,6 +6,7 @@ from rest_framework import serializers
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 from apps.images.serializers import LogoImageMixin
 from apps.orders.serializers_metafields import MetafieldsField
+from apps.restaurants.linhas_da_comanda import validar_linhas_da_comanda
 
 from apps.restaurants.models import (
     Branch,
@@ -59,6 +60,9 @@ class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
         model = Restaurant
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate_linhas_da_comanda(self, value):
+        return validar_linhas_da_comanda(value)
 
     def get_has_cash_action_password(self, obj):
         return bool(obj.cash_action_password)

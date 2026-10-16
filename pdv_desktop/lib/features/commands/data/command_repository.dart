@@ -19,6 +19,7 @@ class CommandRepository {
 
   final ApiClient _api;
   final String? accessToken;
+  ApiClient get api => _api;
 
   /// Uma página das comandas ativas, para a lista que carrega com a rolagem.
   Future<PaginaDeComandas> page({

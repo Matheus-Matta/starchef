@@ -14,10 +14,14 @@ class LancamentoDaPesagem {
   final String accessToken;
 
   /// Devolve o trabalho de impressão da etiqueta (já reservado para esta
-  /// estação), ou `null` sem ele.
-  Future<Map<String, dynamic>?> lancar({
+  /// estação, ou `null` sem ele) e o número da comanda onde o prato entrou.
+  ///
+  /// [comanda] `null` é a comanda automática: o servidor escolhe a próxima
+  /// livre (`fila_da_comanda.py`).
+  Future<({Map<String, dynamic>? printJob, String? comanda})> lancar({
     required String balanca,
-    required String comanda,
+    required String? comanda,
+    String? produto,
     required double pesoKg,
     required List<Map<String, dynamic>> extras,
     required bool imprimir,
@@ -28,7 +32,10 @@ class LancamentoDaPesagem {
         // O UUID desta pesagem: se a loja gravar e cair antes de responder,
         // o desvio para a nuvem é a MESMA pesagem (`pesagem_por_uuid.py`).
         'id': LocalId.uuid(),
-        'command_code': comanda,
+        'command_code': ?comanda,
+        if (comanda == null) 'comanda_automatica': true,
+        // O produto por quilo escolhido na estação; sem ele, o da balança.
+        'weighed_product': ?produto,
         'weight_kg': pesoKg.toStringAsFixed(3),
         'tare_kg': '0.000',
         'extras': extras,
@@ -42,7 +49,12 @@ class LancamentoDaPesagem {
       accessToken: accessToken,
     );
     final job = resultado['print_job'];
-    if (job is! Map || '${job['id'] ?? ''}'.trim().isEmpty) return null;
-    return Map<String, dynamic>.from(job);
+    final comandaUsada = resultado['command'];
+    return (
+      printJob: job is! Map || '${job['id'] ?? ''}'.trim().isEmpty
+          ? null
+          : Map<String, dynamic>.from(job),
+      comanda: comandaUsada is Map ? '${comandaUsada['number']}' : null,
+    );
   }
 }

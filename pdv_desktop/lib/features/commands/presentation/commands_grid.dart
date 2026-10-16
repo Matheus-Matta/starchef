@@ -27,6 +27,7 @@ class CommandsGrid extends StatelessWidget {
     required this.onLeitura,
     required this.onAbrir,
     this.onImprimirEtiquetas,
+    this.onLinhasDaComanda,
   });
 
   /// As comandas, página a página; a busca do campo "Filtrar" vai por ele ao
@@ -41,6 +42,9 @@ class CommandsGrid extends StatelessWidget {
 
   /// Imprime etiquetas de comanda por faixa; nulo deixa o botão desabilitado.
   final VoidCallback? onImprimirEtiquetas;
+
+  /// Edita os itens impressos na comanda da balança; nulo desabilita.
+  final VoidCallback? onLinhasDaComanda;
 
   @override
   Widget build(BuildContext context) {
@@ -96,6 +100,15 @@ class CommandsGrid extends StatelessWidget {
                   onPressed: onImprimirEtiquetas,
                   icon: const Icon(Icons.qr_code_2_rounded),
                   label: const Text('Imprimir etiquetas'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: OutlinedButton.icon(
+                  onPressed: onLinhasDaComanda,
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: const Text('Linhas da comanda'),
                 ),
               ),
             ],

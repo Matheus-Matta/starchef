@@ -1,11 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/widgets/shadcn_layout.dart';
-import '../../cash/domain/cash_restaurant_selector.dart';
 import '../../auth/presentation/auth_controller.dart';
-import '../../home/data/pdv_repository.dart';
+import '../data/lista_da_estacao.dart';
+import '../data/restaurante_da_estacao.dart';
 import 'scale_workstation_page.dart';
 
 class ScaleWindowPage extends StatefulWidget {
@@ -34,11 +35,6 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
   bool loading = true;
   bool stationRunning = false;
 
-  PdvRepository get repository => PdvRepository(
-    api: widget.controller.repository.apiClient,
-    accessToken: widget.controller.session!.accessToken,
-  );
-
   @override
   void initState() {
     super.initState();
@@ -50,47 +46,45 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
       loading = true;
       errorMessage = null;
     });
+    // Cache primeiro, servidor em segundo plano (`lista_da_estacao.dart`): a
+    // estação reaberta não espera mais a rede, uma lista atrás da outra.
+    final listas = ListaDaEstacao(
+      widget.controller.repository.apiClient,
+      accessToken: widget.controller.session!.accessToken,
+    );
     try {
-      final loadedRestaurants = await repository.list(
+      final loadedRestaurants = await listas.ler(
         '/restaurants/',
         query: {'page_size': 300},
+        aoAtualizar: (nova) {
+          if (mounted && nova.isNotEmpty) setState(() => restaurants = nova);
+        },
       );
       if (loadedRestaurants.isEmpty) {
         throw StateError('Nenhum restaurante está disponível para esta conta.');
       }
-      final available = loadedRestaurants
-          .map((item) => '${item['id']}')
-          .toSet();
-      String? linkedRestaurantId;
-      if (restaurantId == null) {
-        try {
-          final cashStations = await repository.list(
-            '/cash-stations/',
-            query: {'page_size': 300, 'is_active': true},
-          );
-          linkedRestaurantId = cashLinkedRestaurantId(
-            cashStations: cashStations,
-            userId: widget.controller.session!.user.id,
-            availableRestaurantIds: available,
-          );
-        } on ApiException {
-          // A balança continua usando a seleção anterior quando o vínculo do
-          // caixa não pode ser consultado, inclusive no modo offline.
-        }
-      }
-      final preferred =
-          restaurantId ??
-          linkedRestaurantId ??
-          widget.preferredRestaurantId ??
-          widget.controller.session!.user.restaurantId;
-      final selected = preferred != null && available.contains(preferred)
-          ? preferred
-          : '${loadedRestaurants.first['id']}';
+      final selected = await restauranteDaEstacao(
+        listas: listas,
+        restaurantes: loadedRestaurants,
+        userId: widget.controller.session!.user.id,
+        atual: restaurantId,
+        pedido: widget.preferredRestaurantId,
+        doUsuario: widget.controller.session!.user.restaurantId,
+      );
       widget.controller.setActiveRestaurant(selected);
-      await widget.controller.syncSupervisorPassword(restaurantId: selected);
-      final loadedProducts = await repository.list(
+      // Em segundo plano: a senha só é pedida ao fechar com supervisor, e a
+      // cópia guardada vale até a sincronização terminar.
+      unawaited(
+        widget.controller.syncSupervisorPassword(restaurantId: selected),
+      );
+      final loadedProducts = await listas.ler(
         '/menu/products/',
         query: {'page_size': 300, 'restaurant': selected, 'is_active': true},
+        aoAtualizar: (nova) {
+          if (mounted && restaurantId == selected) {
+            setState(() => products = nova);
+          }
+        },
       );
       if (!mounted) return;
       setState(() {

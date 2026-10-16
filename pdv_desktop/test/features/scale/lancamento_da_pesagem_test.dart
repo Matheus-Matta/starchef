@@ -37,7 +37,7 @@ void main() {
   test('lanca com uma requisicao so, levando o peso', () async {
     final lancamento = LancamentoDaPesagem(api(), accessToken: 't');
 
-    final job = await lancamento.lancar(
+    final resultado = await lancamento.lancar(
       balanca: 'bal-1',
       comanda: '42',
       pesoKg: 0.4567,
@@ -59,8 +59,36 @@ void main() {
     expect(corpo['imprime_aqui'], isTrue);
     expect(corpo['id'], isNotEmpty);
     expect(corpo.containsKey('scale_reading'), isFalse);
-    expect(job?['id'], 'job-1');
+    expect(resultado.printJob?['id'], 'job-1');
   });
+
+  test(
+    'comanda automatica pede ao servidor e devolve o numero usado',
+    () async {
+      final lancamento = LancamentoDaPesagem(
+        api(
+          resposta: {
+            'print_job': null,
+            'command': {'number': 17},
+          },
+        ),
+        accessToken: 't',
+      );
+
+      final resultado = await lancamento.lancar(
+        balanca: 'bal-1',
+        comanda: null,
+        pesoKg: 0.5,
+        extras: const [],
+        imprimir: false,
+      );
+
+      final corpo = jsonDecode(chamadas.single.body) as Map<String, dynamic>;
+      expect(corpo['comanda_automatica'], isTrue);
+      expect(corpo.containsKey('command_code'), isFalse);
+      expect(resultado.comanda, '17');
+    },
+  );
 
   test('sem trabalho de impressao devolve null', () async {
     final lancamento = LancamentoDaPesagem(
@@ -69,13 +97,13 @@ void main() {
     );
 
     expect(
-      await lancamento.lancar(
+      (await lancamento.lancar(
         balanca: 'bal-1',
         comanda: '42',
         pesoKg: 1,
         extras: const [],
         imprimir: false,
-      ),
+      )).printJob,
       isNull,
     );
   });

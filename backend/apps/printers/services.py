@@ -1225,8 +1225,8 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
     pedido nenhum, e inventar um só para imprimir seria exatamente o gesto que
     este modelo existe para eliminar.
 
-    Por isso o conteúdo é texto: produto, peso, preço e o número do cartão. É
-    o que a etiqueta precisa dizer.
+    Por isso o conteúdo é texto, montado em `comanda_da_pesagem`: o que foi
+    pesado no cabeçalho e as linhas de item do restaurante para marcar à mão.
 
     ``offline_printed=True`` mantém o contrato de ``register_weigh_print``:
     a estação fechou a pesagem sem servidor e já imprimiu a etiqueta. O job
@@ -1240,20 +1240,12 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
     agentes dos PDVs consultam — senão outro PC o reservava, tentava a porta
     dele (sem a impressora USB/serial da balança) e a etiqueta não saía.
     """
+    from apps.printers.comanda_da_pesagem import texto_da_comanda_da_pesagem
     from apps.printers.command_receipt import TYPE_TABLE_BILL  # noqa: F401
 
     with tenant_context(command.account):
         printer = _resolve_weigh_printer(order=command, scale=scale)
         codigo = str(command.code or command.number or "")
-        linhas = [
-            f"COMANDA {command.number}",
-            "-" * 32,
-            f"{item.product.name}",
-            f"{item.quantity} kg x {item.unit_price}",
-            f"TOTAL  {item.total_price}",
-            "",
-            "Leve esta etiqueta ao caixa.",
-        ]
         return PrintJob.objects.create(
             account=command.account,
             restaurant=command.restaurant,
@@ -1266,7 +1258,7 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
             printed_at=timezone.now() if offline_printed else None,
             payload={
                 **({"claimed_by_terminal": reservado_para} if reservado_para else {}),
-                "text_content": "\n".join(linhas),
+                "text_content": texto_da_comanda_da_pesagem(command=command, item=item),
                 "command": str(command.id),
                 "command_number": command.number,
                 "item": str(item.id),

@@ -32,7 +32,7 @@ from apps.invoices.fiscal import (
     format_access_key,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
-from apps.invoices import contingencia_offline
+from apps.invoices import contingencia_offline, numero_ja_usado
 from apps.invoices.providers import (
     FiscalAmbiguous,
     provider_class_for,
@@ -700,7 +700,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
 
         emit_started = timezone.now()
         try:
-            provider.emit(invoice, config)
+            numero_ja_usado.emitir(provider, invoice, config)
         except FiscalRejection as exc:
             # Recusa definitiva: reenviar repete a recusa. Precisa de correcao humana.
             # Na ACBrLib com contingencia ligada o cupom sai assim mesmo
@@ -1005,7 +1005,7 @@ def resend_fiscal_invoice(invoice, *, user=None):
             try:
                 provider = get_provider(config.provider)
                 if not contingencia_offline.conferir_a_normal(locked, provider, config):
-                    provider.emit(locked, config)
+                    numero_ja_usado.emitir(provider, locked, config)
             except FiscalAmbiguous as exc:
                 _mark_awaiting(locked, AWAITING_RECONCILIATION, exc)
             except FiscalUnavailable as exc:
@@ -1080,7 +1080,7 @@ def reprocess_pending_fiscal_invoices(*, account=None):
                     if not contingencia_offline.conferir_a_normal(invoice, provider, config):
                         if not contingencia_offline.transmite_como_assinada(invoice):
                             _refresh_emission_for_retry(invoice, config)
-                        provider.emit(invoice, config)
+                        numero_ja_usado.emitir(provider, invoice, config)
                 else:
                     provider.status(invoice)
             except FiscalNotFound as exc:

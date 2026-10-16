@@ -21,6 +21,7 @@ from apps.core.numbers import MAX_WEIGHT, parse_decimal
 from apps.core.viewsets import BaseTenantViewSet
 from apps.core.permissions import CanOperateScale, CanUseOrManageDevices
 from apps.orders.serializers import OrderItemSerializer
+from apps.printers.fila_da_comanda import SemComandaLivre, comanda_da_fila
 from apps.printers.models import Printer, PrintJob, Scale, ScaleReading
 from apps.printers.serializers import (
     PrinterSerializer,
@@ -300,7 +301,9 @@ class ScaleViewSet(BaseTenantViewSet):
         from apps.core import uuid_do_aparelho
         from apps.orders.models import CommandItem as CommandItemModel
         from apps.printers import pesagem_por_uuid
-        from apps.printers.scale_command import send_weighing_to_production, weigh_into_command
+        from apps.printers.scale_command import (
+            produto_por_quilo, send_weighing_to_production, weigh_into_command,
+        )
         from apps.printers.services import register_command_weigh_print
         from apps.restaurants.models import Command
 
@@ -313,7 +316,10 @@ class ScaleViewSet(BaseTenantViewSet):
         # da balanca continuar completo.
         offline_weight = request.data.get("weight_kg")
         extras = request.data.get("extras") or []
-        if not command_code:
+        # Comanda automática: a balança não lê cartão, o servidor escolhe a
+        # próxima livre (`fila_da_comanda.py`).
+        automatica = bool(request.data.get("comanda_automatica"))
+        if not command_code and not automatica:
             return Response({"detail": "Leia ou informe o codigo da comanda."}, status=status.HTTP_400_BAD_REQUEST)
         if not reading_id and offline_weight in (None, ""):
             return Response({"detail": "A leitura da balanca e obrigatoria."}, status=status.HTTP_400_BAD_REQUEST)
@@ -323,20 +329,23 @@ class ScaleViewSet(BaseTenantViewSet):
         try:
             with transaction.atomic():
                 scale = Scale.objects.select_for_update().get(pk=self.get_object().pk)
-                command_lookup = Q(code=command_code)
-                if command_code.isdigit():
-                    command_lookup |= Q(number=int(command_code))
-                command = (
-                    Command.objects.select_for_update()
-                    .select_related("restaurant")
-                    .filter(
-                        command_lookup,
-                        account=scale.account,
-                        restaurant=scale.restaurant,
-                        is_active=True,
+                if automatica:
+                    command = comanda_da_fila(scale, request.data.get("id"))
+                else:
+                    command_lookup = Q(code=command_code)
+                    if command_code.isdigit():
+                        command_lookup |= Q(number=int(command_code))
+                    command = (
+                        Command.objects.select_for_update()
+                        .select_related("restaurant")
+                        .filter(
+                            command_lookup,
+                            account=scale.account,
+                            restaurant=scale.restaurant,
+                            is_active=True,
+                        )
+                        .first()
                     )
-                    .first()
-                )
                 if command is None:
                     raise ValidationError("Comanda nao encontrada para o restaurante selecionado.")
 
@@ -413,6 +422,7 @@ class ScaleViewSet(BaseTenantViewSet):
                     # Etiqueta e rodada saem uma vez so, depois dos extras.
                     do_print=False, send=False,
                     item_id=pesagem_por_uuid.id_da_anotacao(pesagem_id) if pesagem_id else None,
+                    product=produto_por_quilo(scale, request.data.get("weighed_product")),
                 )
 
                 extra_items = []
@@ -503,6 +513,9 @@ class ScaleViewSet(BaseTenantViewSet):
                 )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        except SemComandaLivre as exc:
+            # 409, não 400: é estado (todas em uso), e o PDV reenvia 400 para sempre.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
 
 
 class ScaleReadingViewSet(BaseTenantViewSet):

@@ -31,6 +31,11 @@ EXCLUDED = {
     # geraria evento de volta, o laço de eco.
     "synchronization.SyncDiscard": "Histórico local do que este nó ignorou."
     ,
+    # O cursor da comanda automática da Balança Rápida. Cada servidor anda a
+    # própria fila: quem impede a mesma comanda duas vezes é a conferência de
+    # "livre" sob lock, não o cursor. Sincronizá-lo geraria um evento a cada
+    # prato pesado, para um número que o outro lado não usa.
+    "printers.FilaDaComanda": "Cursor local da comanda automática; a trava é por servidor.",
     # Credencial de matrícula. Sincronizá-la mandaria para a LOJA o hash do
     # bilhete de todas as outras — e o bilhete é justamente o que autoriza
     # uma instalação nova a existir.

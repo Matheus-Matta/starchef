@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -10,6 +11,7 @@ import 'package:starchef_pdv_desktop/core/errors/error_center.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
 import 'package:starchef_pdv_desktop/core/storage/local_preferences.dart';
 import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
+import 'package:starchef_pdv_desktop/features/scale/presentation/historico_de_passagens_dialog.dart';
 import 'package:starchef_pdv_desktop/features/scale/presentation/scale_workstation_page.dart';
 
 /// Recriada no meio do expediente, a estação volta LIGADA na mesma balança.
@@ -18,7 +20,11 @@ import 'package:starchef_pdv_desktop/features/scale/presentation/scale_workstati
 /// parava na escolha da balança: o operador tinha de escolher e iniciar de
 /// novo a cada vez. Só a parada pedida pelo operador a deixa parada.
 void main() {
-  Future<List<bool>> abrir(WidgetTester tester, String? emUso) async {
+  Future<List<bool>> abrir(
+    WidgetTester tester,
+    String? emUso, {
+    bool esperarLigar = false,
+  }) async {
     final directory = Directory.systemTemp.createTempSync('starchef-scale-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final preferences = LocalPreferences(
@@ -69,7 +75,11 @@ void main() {
       ),
     );
     // A leitura do vínculo do leitor é arquivo de verdade: o tempo real anda.
-    for (var volta = 0; volta < 5; volta++) {
+    // Quem espera LIGAR espera a condição (até ~3 s), não um tempo fixo: com a
+    // suíte inteira disputando a CPU, 0,5 s às vezes não bastava e o teste
+    // falhava sem defeito nenhum. Quem espera NÃO ligar dá as 5 voltas.
+    for (var volta = 0; volta < (esperarLigar ? 30 : 5); volta++) {
+      if (esperarLigar && ligada.contains(true)) break;
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 100)),
       );
@@ -79,8 +89,22 @@ void main() {
   }
 
   testWidgets('balanca em uso volta ligada ao recriar a tela', (tester) async {
-    final ligada = await abrir(tester, 'r1:b2');
+    final ligada = await abrir(tester, 'r1:b2', esperarLigar: true);
     expect(ligada, contains(true));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Tab abre as últimas passagens e Esc fecha', (tester) async {
+    await abrir(tester, 'r1:b2', esperarLigar: true);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    // A estação ligada tem um relógio de 1 s: nunca "assenta".
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(HistoricoDePassagensDialog), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(HistoricoDePassagensDialog), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 

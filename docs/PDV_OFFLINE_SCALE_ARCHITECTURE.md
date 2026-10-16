@@ -811,6 +811,135 @@ O agente consulta jobs `pending` e `rendered`, envia o conteúdo para a impresso
 
 Notas de pesagem são processadas automaticamente mesmo quando `auto_print` da impressora está desativado; os outros tipos de job respeitam esse campo.
 
+### Comanda automática (Balança Rápida)
+
+Ao iniciar a estação, o operador escolhe o modo: **Ler comanda** (o cliente
+passa o cartão, o de sempre) ou **Comanda automática**. No automático não há
+cartão: peso estável vai direto para `checkout-command` com
+`comanda_automatica: true`, e o SERVIDOR escolhe a comanda
+(`backend/apps/printers/fila_da_comanda.py`). O modo fica salvo no terminal
+(`LocalPreferences.comandaAutomatica`).
+
+O fluxo: pega a próxima comanda depois da última lançada → confere se está
+livre → livre, lança e imprime a comanda da pesagem normalmente → ocupada,
+pula para a seguinte. As regras:
+
+1. **Não pula número.** É sempre a primeira comanda LIVRE depois da última
+   lançada; só passa por cima da ocupada. O último número (`FilaDaComanda`, uma
+   linha por restaurante) só avança na mesma transação do lançamento: pesagem
+   que falha (impressora, rede) volta atrás e o número é oferecido de novo.
+2. **Nunca duas pesagens no mesmo número.** A linha da fila é travada antes de
+   escolher — as balanças entram uma de cada vez —, e a comanda escolhida é
+   travada e conferida de novo depois do lock (o garçom pode ter anotado nela).
+   O reenvio da mesma pesagem (mesmo UUID) volta para a comanda que já usou.
+3. **Volta ao início.** Depois do maior número cadastrado (ex.: 300),
+   recomeça do menor.
+
+"Livre" é a regra do salão (`Command.em_uso`): sem anotação pendente e sem
+pedido aberto. Todas em uso responde **409** (estado, não entrada errada); a
+pesagem fica preservada na estação e o botão **Tentar de novo** relança a mesma.
+Cancelar com o prato na balança retém aquele peso até ele sair, para não lançar
+o mesmo prato de novo. `FilaDaComanda` não sincroniza: cada servidor anda a
+própria fila, e quem impede a repetição é a conferência de "livre" sob lock.
+
+### Abertura e passagem rápidas (Balança Rápida)
+
+A estação abre do CACHE (`scale/data/lista_da_estacao.dart`): restaurantes,
+caixas, cardápio, balanças e impressoras voltam na hora do
+`cache_de_listas.json` (o mesmo cache em disco do PDV, `response_cache.dart`,
+onde `/restaurants/` e `/scales/` passaram a entrar) e o servidor relê em
+segundo plano; a versão nova substitui a da tela. Só a PRIMEIRA abertura, sem
+nada guardado, espera a rede. A senha do supervisor sincroniza em segundo
+plano. Nada disso decide dinheiro: preço e comanda são do servidor, no
+lançamento.
+
+Depois do lançamento, o aviso "Pedido lançado" fica 700 ms (eram 2 s fixos, em
+que a balança não pesava nada). O prato que continua na balança não é cobrado
+de novo: `readyForNext` o retém até sair.
+
+A proteção não pode TRAVAR a fila. A última leitura que chega enquanto a
+estação lança ou mostra o aviso é guardada e reprocessada no `readyForNext`:
+a balança que só transmite quando o peso muda manda o prato novo uma vez só, e
+antes essa leitura era jogada fora — a tela voltava em 0 com o prato em cima.
+Se a leitura for o próprio prato lançado, ela cai no filtro e a tela já mostra
+o peso retido com o "Pesar de novo". Esc na escolha do produto não retém o
+prato (só cancelar no modo automático retém, porque ali a próxima leitura
+lançaria).
+
+O texto da comanda da pesagem continua montado no servidor a cada pesagem:
+medido, custa 2–3 consultas de um total de ~60 e menos de 1 ms (a pesagem
+inteira gasta ~9 ms de banco); um cache ali não mudaria a passagem.
+
+### Teclado e últimas passagens (Balança Rápida)
+
+Com a estação ligada e nenhum modal aberto:
+
+| Tecla | Faz |
+| --- | --- |
+| **Esc** | cancela a passagem em andamento (esperando a comanda, ou depois de uma falha) |
+| **Tab** | abre as **últimas passagens** |
+
+Dentro dos modais (escolha do produto e últimas passagens): **↑ ↓** andam,
+**Enter** confirma (no histórico, reimprime), **Esc** fecha. As setas só são
+capturadas nesses dois modais; fora deles a tela não prende tecla de navegação.
+
+As últimas passagens são as 20 mais recentes DESTE terminal
+(`scale/data/historico_de_passagens.dart`, nas preferências locais — sobrevivem
+a reiniciar): comanda, produto, peso, valor, hora e o trabalho de impressão.
+Reimprimir reenfileira o MESMO trabalho (`requeue` + reserva para a estação):
+nada é lançado de novo na comanda. Passagem sem impressora aparece, mas não
+reimprime. O botão "Últimas (Tab)" fica ao lado de "Reimprimir".
+
+### Escolher o produto a cada pesagem (Balança Rápida)
+
+Opção da tela inicial, independente do modo da comanda: **Escolher o produto a
+cada pesagem**. Ligada, a estação ignora o produto vinculado à balança e, a
+cada peso estável, pergunta qual produto POR QUILO é o prato
+(`escolher_produto_por_quilo_dialog.dart`): ↑ ↓ andam, Enter confirma, 1–9
+escolhem direto, Esc cancela. A lista abre marcada no último produto usado (um
+Enter repete). A coluna do meio (extras) some nesse modo.
+
+Depois da escolha o fluxo segue igual: espera o cartão, ou lança direto na
+comanda automática. A máquina tem a etapa `choosingProduct` entre o peso e a
+comanda. Cancelar retém o prato na balança, para a pergunta não reabrir sozinha.
+
+O PDV manda só QUAL produto (`weighed_product` em `checkout-command`); o preço
+do kg é o do servidor (`scale_command.produto_por_quilo`), que recusa com 400
+produto que não é vendido por quilo. A balança pode até não ter produto
+vinculado nesse modo.
+
+### Comanda da pesagem (Balança Rápida)
+
+Quando a balança pesa para uma COMANDA, o papel é texto de 32 colunas montado
+em `backend/apps/printers/comanda_da_pesagem.py`:
+
+```text
+COMANDA 17
+--------------------------------
+PRODUTO: Self-service Almoco
+PRECO KG:               R$ 69,90
+PESO:                   0,452 kg
+VALOR:                  R$ 31,59
+--------------------------------
+Coca-Cola La. ________ [ ][ ][ ]
+Agua sem gas  ________ [ ][ ][ ]
+______________________ [ ][ ][ ]
+--------------------------------
+Leve esta comanda ao caixa.
+```
+
+Abaixo do cabeçalho saem as **linhas de item** do restaurante
+(`Restaurant.linhas_da_comanda`), que o atendente marca à mão: cada linha é um
+produto (nome cortado em 13 caracteres, um traço para escrever e três
+quadrados) ou uma linha em branco (só traço e quadrados). As em branco saem
+sempre no fim. Sem nenhuma linha configurada, o papel sai só com a pesagem.
+Produto desativado ou apagado some do papel sem derrubar a pesagem.
+
+A lista é editada no PDV, em **Comandas → Linhas da comanda**, e gravada por
+`PATCH /restaurants/<id>/` (`{"linhas_da_comanda": [{"tipo": "produto",
+"produto": "<uuid>"}, {"tipo": "branco"}]}`, máximo 20). Vale para todas as
+balanças do restaurante e sincroniza loja ⇄ nuvem com o cadastro.
+
 ## Caixa Secundário e aplicativos: fila e cópia local próprias
 
 A mesma arquitetura vale nos três níveis. Muda só **para onde a fila entrega**:

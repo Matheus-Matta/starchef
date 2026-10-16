@@ -30,6 +30,11 @@ class LocalPreferences {
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _somenteNuvemKey = 'somente_nuvem';
   static const _balancaEmUsoKey = 'scale_station_in_use';
+  static const _comandaAutomaticaKey = 'scale_auto_command';
+  static const _ultimaComandaAutomaticaKey = 'scale_auto_command_last';
+  static const _escolherProdutoKey = 'scale_choose_product';
+  static const _ultimoProdutoPorQuiloKey = 'scale_choose_product_last';
+  static const _historicoDaBalancaKey = 'scale_recent_passes';
   static const _serialPortOverridesKey = 'serial_port_overrides';
   static const _masterPrinterIdKey = 'master_printer_id';
   static const _terminalInstallationIdKey = 'terminal_installation_id';
@@ -124,6 +129,37 @@ class LocalPreferences {
 
   Future<void> setBalancaEmUso(String? value) =>
       _write(_balancaEmUsoKey, value);
+
+  /// Modo "Comanda automática" da Balança Rápida, escolhido ao iniciar.
+  bool get comandaAutomatica =>
+      _values[_comandaAutomaticaKey] as bool? ?? false;
+  Future<void> setComandaAutomatica(bool value) =>
+      _write(_comandaAutomaticaKey, value);
+
+  /// Última comanda lançada no modo automático — só para a tela mostrar; quem
+  /// decide a próxima é a fila do servidor.
+  String? get ultimaComandaAutomatica =>
+      _values[_ultimaComandaAutomaticaKey] as String?;
+  Future<void> setUltimaComandaAutomatica(String? value) =>
+      _write(_ultimaComandaAutomaticaKey, value);
+
+  /// Escolher o produto por quilo a cada pesagem (ignora o da balança).
+  bool get escolherProdutoNaBalanca =>
+      _values[_escolherProdutoKey] as bool? ?? false;
+  Future<void> setEscolherProdutoNaBalanca(bool value) =>
+      _write(_escolherProdutoKey, value);
+
+  /// Último produto escolhido: a lista abre marcada nele (um Enter repete).
+  String? get ultimoProdutoPorQuilo =>
+      _values[_ultimoProdutoPorQuiloKey] as String?;
+  Future<void> setUltimoProdutoPorQuilo(String? value) =>
+      _write(_ultimoProdutoPorQuiloKey, value);
+
+  /// Últimas passagens da Balança Rápida (`historico_de_passagens.dart`).
+  List<Object?> get historicoDaBalanca =>
+      _values[_historicoDaBalancaKey] as List<Object?>? ?? const [];
+  Future<void> setHistoricoDaBalanca(List<Map<String, dynamic>> value) =>
+      _write(_historicoDaBalancaKey, value);
 
   Future<void> setApiBaseUrlOverride(String? value) => _write(
     _apiBaseUrlOverrideKey,

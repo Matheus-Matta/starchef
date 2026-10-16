@@ -11,6 +11,10 @@ enum HandsFreeState {
   /// Estado 1: esperando um peso válido e estável.
   waitingWeight,
 
+  /// Peso registrado, aguardando o operador escolher o produto por quilo
+  /// (modo "Escolher o produto a cada pesagem").
+  choosingProduct,
+
   /// Estado 2: item pesado registrado, aguardando a leitura da comanda.
   waitingCommand,
 
@@ -40,6 +44,9 @@ enum HandsFreeEffect {
 
   /// A tela está em 0 sem leitura nova: pedir o peso à balança.
   fetchWeight,
+
+  /// A interface deve perguntar qual produto por quilo foi pesado.
+  chooseProduct,
 }
 
 /// Item pesado que aguarda a comanda.
@@ -49,6 +56,7 @@ class WeighedItem {
     required this.pricePerKg,
     required this.capturedAt,
     this.raw,
+    this.productId,
   });
 
   final double weightKg;
@@ -57,6 +65,9 @@ class WeighedItem {
 
   /// Quadro serial que originou a leitura, guardado para auditoria.
   final String? raw;
+
+  /// Produto escolhido na estação; `null` = o vinculado à balança.
+  final String? productId;
 
   double get total => weightKg * pricePerKg;
 }
@@ -93,6 +104,16 @@ class HandsFreeMachine extends ChangeNotifier {
   /// legítimas. O abandono real é tratado pelo timeout configurável.
   final bool cancelOnZeroDuringCommand;
 
+  /// Comanda automática: o servidor escolhe a próxima comanda livre
+  /// (`fila_da_comanda.py`). Peso estável vai direto ao lançamento — não há
+  /// cartão a esperar, e por isso também não há prazo de comanda.
+  bool _comandaAutomatica = false;
+  bool get comandaAutomatica => _comandaAutomatica;
+
+  /// Escolher o produto a cada pesagem, ignorando o vinculado à balança.
+  bool _escolherProduto = false;
+  bool get escolherProduto => _escolherProduto;
+
   HandsFreeState _state = HandsFreeState.idle;
   WeighedItem? _weighedItem;
   final Map<String, int> _extras = {};
@@ -118,6 +139,10 @@ class HandsFreeMachine extends ChangeNotifier {
 
   /// A última amostra descartada pelo filtro, para o "Pesar de novo".
   ScaleSample? _amostraRetida;
+
+  /// A última leitura que chegou enquanto lançava ou mostrava "lançado":
+  /// [readyForNext] a reprocessa, em vez de a tela voltar em 0.
+  ScaleSample? _ultimaDoLancamento;
 
   final _buscaDePeso = BuscaDePeso();
 
@@ -151,8 +176,13 @@ class HandsFreeMachine extends ChangeNotifier {
       _state == HandsFreeState.waitingCommand ||
       _state == HandsFreeState.failed;
 
-  /// Coloca a estação no Estado 1.
-  List<HandsFreeEffect> start() {
+  /// Coloca a estação no Estado 1, no modo escolhido ao iniciar.
+  List<HandsFreeEffect> start({
+    bool comandaAutomatica = false,
+    bool escolherProduto = false,
+  }) {
+    _comandaAutomatica = comandaAutomatica;
+    _escolherProduto = escolherProduto;
     _state = HandsFreeState.waitingWeight;
     _resetOperation();
     notifyListeners();
@@ -176,6 +206,10 @@ class HandsFreeMachine extends ChangeNotifier {
     ScaleSample sample, {
     required double pricePerKg,
   }) {
+    if (_state == HandsFreeState.launching ||
+        _state == HandsFreeState.completed) {
+      _ultimaDoLancamento = sample;
+    }
     final empty = sample.weightKg <= minimumWeightKg;
     final pesado = _weighedItem?.weightKg;
     if (pesado != null) {
@@ -216,16 +250,21 @@ class HandsFreeMachine extends ChangeNotifier {
             capturedAt: sample.at,
             raw: sample.raw,
           );
-          _state = HandsFreeState.waitingCommand;
           _retiradoDepoisDaPesagem = false;
-          _commandDeadline = sample.at.add(commandTimeout);
           effects.add(HandsFreeEffect.successSound);
+          if (_escolherProduto) {
+            _state = HandsFreeState.choosingProduct;
+            effects.add(HandsFreeEffect.chooseProduct);
+          } else {
+            effects.addAll(_seguirParaComanda(sample.at));
+          }
         }
       case HandsFreeState.waitingCommand:
         if (empty && cancelOnZeroDuringCommand) {
           effects.addAll(_cancelToWaiting());
         }
       case HandsFreeState.idle:
+      case HandsFreeState.choosingProduct:
       case HandsFreeState.launching:
       case HandsFreeState.completed:
       case HandsFreeState.failed:
@@ -257,7 +296,11 @@ class HandsFreeMachine extends ChangeNotifier {
   /// Recebe um código lido pelo scanner vinculado ou digitado no teclado touch.
   List<HandsFreeEffect> onCommandRead(String rawCode) {
     final code = rawCode.trim();
-    if (code.isEmpty) return const [HandsFreeEffect.alertSound];
+    // No modo automático quem escolhe a comanda é o servidor: um cartão lido
+    // aqui não tem para onde ir.
+    if (code.isEmpty || _comandaAutomatica) {
+      return const [HandsFreeEffect.alertSound];
+    }
     if (!canAcceptCommand) {
       // Uma leitura fora da etapa certa é ignorada com aviso sonoro para não
       // lançar a comanda em uma operação que não existe.
@@ -280,7 +323,11 @@ class HandsFreeMachine extends ChangeNotifier {
   }
 
   /// A anotação entrou na comanda e a etiqueta foi despachada.
-  List<HandsFreeEffect> onLaunched() {
+  ///
+  /// [comanda] é o número que o servidor escolheu no modo automático, para a
+  /// tela mostrar onde o prato foi parar.
+  List<HandsFreeEffect> onLaunched({String? comanda}) {
+    if (comanda != null) _commandCode = comanda;
     _state = HandsFreeState.completed;
     notifyListeners();
     return const [];
@@ -297,15 +344,75 @@ class HandsFreeMachine extends ChangeNotifier {
     return const [HandsFreeEffect.alertSound];
   }
 
+  /// O operador escolheu o produto por quilo do prato pesado.
+  ///
+  /// O preço do kg é o do produto escolhido, congelado agora — como o da
+  /// balança é congelado na estabilização.
+  List<HandsFreeEffect> onProdutoEscolhido({
+    required String productId,
+    required double pricePerKg,
+    required DateTime now,
+  }) {
+    final item = _weighedItem;
+    if (_state != HandsFreeState.choosingProduct || item == null) {
+      return const [];
+    }
+    _weighedItem = WeighedItem(
+      weightKg: item.weightKg,
+      pricePerKg: pricePerKg,
+      capturedAt: item.capturedAt,
+      raw: item.raw,
+      productId: productId,
+    );
+    final effects = _seguirParaComanda(now);
+    notifyListeners();
+    return effects;
+  }
+
+  /// Depois do peso (e do produto): lança direto ou espera o cartão.
+  List<HandsFreeEffect> _seguirParaComanda(DateTime now) {
+    if (_comandaAutomatica) {
+      _state = HandsFreeState.launching;
+      return const [HandsFreeEffect.launchIntoCommand];
+    }
+    _state = HandsFreeState.waitingCommand;
+    _commandDeadline = now.add(commandTimeout);
+    return const [];
+  }
+
+  /// Modo automático: lança de novo a pesagem que falhou (ex.: nenhuma
+  /// comanda livre). A mesma pesagem, sem pesar outra vez.
+  List<HandsFreeEffect> tentarDeNovo() {
+    if (!_comandaAutomatica ||
+        _state != HandsFreeState.failed ||
+        _weighedItem == null) {
+      return const [];
+    }
+    _failureMessage = null;
+    _state = HandsFreeState.launching;
+    notifyListeners();
+    return const [HandsFreeEffect.launchIntoCommand];
+  }
+
   /// Após o aviso de sucesso, volta ao Estado 1 para o próximo cliente.
-  List<HandsFreeEffect> readyForNext() {
+  ///
+  /// A última leitura que chegou ENQUANTO lançava é reprocessada aqui, com
+  /// [pricePerKg]. A balança que só transmite quando o peso muda manda o
+  /// prato novo uma vez só — e, jogada fora, a tela voltava em 0 com o prato
+  /// em cima, travada. Se a leitura for o prato lançado (mesmo peso, sem ter
+  /// saído), o filtro abaixo a segura e a tela mostra o "Pesar de novo".
+  List<HandsFreeEffect> readyForNext({double? pricePerKg}) {
     // Prato já retirado (o zero chegou enquanto lançava): nada a proteger.
     final lancado = _retiradoDepoisDaPesagem ? null : _weighedItem?.weightKg;
+    final pendente = _ultimaDoLancamento;
     _state = HandsFreeState.waitingWeight;
     _resetOperation();
     _pesoJaLancado = lancado;
-    notifyListeners();
-    return const [];
+    if (pendente == null || pricePerKg == null) {
+      notifyListeners();
+      return const [];
+    }
+    return onSample(pendente, pricePerKg: pricePerKg);
   }
 
   /// O operador confirma que o peso na balança é um prato NOVO.
@@ -329,7 +436,14 @@ class HandsFreeMachine extends ChangeNotifier {
   /// Cancelamento explícito pelo operador.
   List<HandsFreeEffect> cancel() {
     if (_state == HandsFreeState.launching) return const [];
+    final pesado = _weighedItem?.weightKg;
     final effects = _cancelToWaiting();
+    // Automática: o prato cancelado ainda está na balança, e a próxima
+    // amostra estável o LANÇARIA na hora. Ele fica retido até sair (ou o
+    // "Pesar de novo"). Na escolha de produto não: ali o próximo passo é só
+    // perguntar de novo, e reter prendia o prato de quem apertou Esc sem
+    // querer.
+    if (_comandaAutomatica) _pesoJaLancado = pesado;
     notifyListeners();
     return effects;
   }
@@ -360,6 +474,7 @@ class HandsFreeMachine extends ChangeNotifier {
     _pesoJaLancado = null;
     _retiradoDepoisDaPesagem = false;
     _amostraRetida = null;
+    _ultimaDoLancamento = null;
     _buscaDePeso.recomecar();
   }
 }

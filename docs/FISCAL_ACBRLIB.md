@@ -319,6 +319,34 @@ Prazo: a NFC-e em contingência tem de ser transmitida em até 24 h. A
 retransmissão roda a cada 2 minutos; uma nota pendente há mais de 12 h aparece
 como alerta no painel fiscal.
 
+## Recusas comuns tratadas sozinhas
+
+**866 — Ausência de troco.** O troco é `soma(vPag) − vNF`
+(`documento_regras._troco`), nunca negativo. Antes vinha só do `change_amount`
+do dinheiro, e a nota com cartão/PIX pago a mais (ou desconto dado depois de
+pagar) saía sem `vTroco`. Vale para a ACBrLib e para a Focus (o documento é o
+mesmo).
+
+**613/539 — Chave difere da existente em BD.** A SEFAZ já tem uma nota
+autorizada com a nossa série e número e devolve a chave dela entre colchetes
+(`numero_ja_usado.py`, só ACBrLib). O `cNF` decide de quem ela é, porque cada
+nota nossa mantém o mesmo `cNF` em todas as tentativas:
+
+* **mesmo cNF** — é uma tentativa anterior desta nota (tempo esgotado, a normal
+  que a contingência substituiu): consulta e adota chave e protocolo, sem
+  reemitir;
+* **cNF diferente** — outro emissor usou o número (dois servidores com o mesmo
+  CNPJ e série em bancos separados, como a loja e uma nuvem de teste; ou o
+  contador voltado para trás). O número está queimado: a nota é refeita no
+  próximo número livre, com `cNF` novo, e reenviada UMA vez. O motivo fica em
+  `fiscal_payload["numero_ja_usado_na_sefaz"]`. Se o seguinte também estiver
+  usado, a recusa fica na nota para correção.
+
+A causa da 613 com cNF diferente é sempre fora do código: **dois pontos
+emitindo na mesma série**. Cada ponto de emissão precisa da sua série — inclusive
+um ambiente de teste apontado para o mesmo CNPJ. O contador (`avancar_contador`)
+nunca anda para trás.
+
 ## Cancelamento
 
 Cancelar o pedido cancela a nota (`cancel_order` → `cancel_invoice_for_order`

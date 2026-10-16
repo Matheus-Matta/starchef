@@ -359,3 +359,5 @@ class PrintJob(TenantModel):
     def __str__(self):
         return f"{self.job_type} - {self.status}"
 
+
+from apps.printers.models_fila import FilaDaComanda  # noqa: E402,F401  (registra o model)

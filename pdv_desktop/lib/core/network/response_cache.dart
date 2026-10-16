@@ -59,6 +59,10 @@ class ResponseCache {
     '/printers/': 'printers',
     // A tela de pedidos abria vazia, carregando, a cada visita.
     '/orders/': 'orders',
+    // A Balança Rápida esperava estas duas, em sequência, a cada abertura
+    // (`lista_da_estacao.dart`).
+    '/restaurants/': 'restaurants',
+    '/scales/': 'scales',
   };
 
   /// O que uma escrita em cada rota pode ter mudado. Pedido mexe em comanda
@@ -73,6 +77,8 @@ class ResponseCache {
     'cash-stations': {'cash'},
     'cash-register': {'cash'},
     'printers': {'printers'},
+    'restaurants': {'restaurants'},
+    'scales': {'scales'},
   };
 
   static String? assuntoDe(String path) => _assuntos[path];
@@ -147,6 +153,7 @@ class ResponseCache {
       // Trabalho de impressão chega a CADA cupom. Só o cadastro da impressora
       // muda a lista.
       if (modelo == 'printer') invalidate({'printers'});
+      if (modelo == 'scale') invalidate({'scales'});
       return;
     }
     final assuntos = <String>{
@@ -156,6 +163,7 @@ class ResponseCache {
       if (app == 'payments') ...{'payments', 'cash', 'orders'},
       if (app == 'restaurants') ...{'commands', 'tables'},
       if (app == 'restaurants' && modelo == 'restaurant') ...{
+        'restaurants',
         'menu',
         'payments',
         'cash',

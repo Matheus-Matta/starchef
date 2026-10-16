@@ -74,6 +74,9 @@ class Restaurant(TenantBaseModel):
     # variar entre terminais do mesmo restaurante.
     quick_scale_command_timeout_seconds = models.PositiveIntegerField(default=45)
     quick_scale_stability_seconds = models.PositiveIntegerField(default=3)
+    # Produtos e linhas em branco impressos na comanda da pesagem, para marcar
+    # à mão. Formato e regras em `apps.restaurants.linhas_da_comanda`.
+    linhas_da_comanda = models.JSONField(default=list, blank=True)
     # Recibo da venda sai sozinho ao concluir o pagamento. Ligado por padrão
     # (era o único comportamento); o botão "Imprimir recibo" vale sempre.
     auto_print_receipt = models.BooleanField(default=True)
