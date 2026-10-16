@@ -886,6 +886,7 @@ Com a estação ligada e nenhum modal aberto:
 | **Esc** | cancela a passagem em andamento (esperando a comanda, ou depois de uma falha) |
 | **Tab** | abre as **últimas passagens** |
 | **F2** | no modo comanda automática: **esta passagem pede a comanda** (liga/desliga) |
+| **R** | **Pesar de novo**: com o aviso de prato retido na tela, trata o peso como prato novo |
 
 Dentro dos modais (escolha do produto e últimas passagens): **↑ ↓** andam,
 **Enter** confirma (no histórico, reimprime), **Esc** fecha. As setas só são

@@ -1037,7 +1037,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 
   /// Atalhos da estação, só com a tela da balança NA FRENTE (nenhum modal):
   /// Esc cancela a passagem em andamento, Tab abre as últimas passagens, F2
-  /// (no automático) faz esta passagem pedir a comanda. As
+  /// (no automático) faz esta passagem pedir a comanda, R pesa de novo o
+  /// prato retido. As
   /// setas não são capturadas aqui — só dentro dos modais de produto e de
   /// histórico, que tratam as próprias teclas.
   bool _atalhoDaEstacao(KeyEvent event) {
@@ -1046,6 +1047,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.tab) {
       unawaited(_abrirHistorico());
+      return true;
+    }
+    // R: "Pesar de novo" — o peso retido (igual ao prato lançado) é um prato
+    // NOVO. Só vale com o aviso na tela; fora dele, R é só uma letra.
+    if (key == LogicalKeyboardKey.keyR && machine.aguardandoRetirada) {
+      _runEffects(machine.pesarDeNovo(pricePerKg: pricePerKg));
       return true;
     }
     // F2: no automático, esta passagem pede a comanda (o segundo prato).

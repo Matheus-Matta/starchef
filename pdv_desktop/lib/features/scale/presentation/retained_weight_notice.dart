@@ -29,7 +29,7 @@ class RetainedWeightNotice extends StatelessWidget {
                 ? 'Retire o prato lançado para a próxima pesagem.'
                 : 'Na balança: ${peso.toStringAsFixed(3)} kg, o mesmo peso do '
                       'prato já lançado. Retire o prato — ou, se é outro '
-                      'prato, toque em "Pesar de novo".',
+                      'prato, toque em "Pesar de novo" (ou tecle R).',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
@@ -37,7 +37,7 @@ class RetainedWeightNotice extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onPesarDeNovo,
             icon: const Icon(Icons.scale_rounded),
-            label: const Text('Pesar de novo'),
+            label: const Text('Pesar de novo (R)'),
           ),
         ],
       ),
