@@ -23,6 +23,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/cpf_formatter.dart';
 import '../../../core/formatters/cnpj_formatter.dart';
+import 'documento_pendente.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
@@ -37,6 +38,8 @@ import '../../devices/presentation/device_list_page.dart';
 import '../../devices/presentation/print_queue_dialog.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
+import 'danfe_print_question_dialog.dart';
+import '../../../core/input/pdv_key_barrier.dart';
 import '../../../core/data/order_item_status.dart';
 import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
@@ -122,6 +125,7 @@ part 'home_page_paid_receipt.dart';
 part 'home_page_payment_view.dart';
 part 'home_page_payment_coupon.dart';
 part 'home_page_payment_ajustes.dart';
+part 'home_page_payment_documento.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
 part 'home_page_shared.dart';
@@ -192,6 +196,7 @@ class _HomePageState extends State<HomePage>
         _PaidReceiptSection,
         _PaymentCouponSection,
         _PaymentAdjustSection,
+        _PaymentDocumentSection,
         _PaymentView,
         _ReceiptSection,
         _ShellSection,
@@ -336,6 +341,12 @@ class _HomePageState extends State<HomePage>
   String? removingPaymentId;
   @override
   final paymentReference = TextEditingController();
+
+  /// O texto do campo CPF/CNPJ da tela de pagamento, aplicado ou não. Fica
+  /// aqui (e não dentro do campo) porque adicionar o pagamento precisa ler o
+  /// que foi digitado e ainda não foi aplicado.
+  @override
+  final paymentDocument = TextEditingController();
   @override
   final paymentAmount = TextEditingController();
   // O CUPOM NA TELA DE PAGAMENTO. O controlador vive aqui, e nao no mixin,
@@ -1449,6 +1460,7 @@ class _HomePageState extends State<HomePage>
     productScanRepeats?.close();
     inputRouter.dispose();
     paymentReference.dispose();
+    paymentDocument.dispose();
     paymentAmount.dispose();
     couponCode.dispose();
     ordersSearchDebounce?.cancel();

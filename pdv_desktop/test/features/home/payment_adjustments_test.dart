@@ -26,6 +26,7 @@ void main() {
             cobrarTaxa: cobrarTaxa,
             rotuloTaxa: '10% · R\$ 12,36',
             documento: documento,
+            documentoControle: TextEditingController(),
             descontoCentavos: desconto,
             maxDescontoCentavos: maxDesconto,
             busy: false,
@@ -167,4 +168,36 @@ void main() {
 
     expect(campo('payment-discount-remove'), findsNothing);
   });
+
+  testWidgets(
+    'o campo abre com o documento do pedido, não com o texto da venda anterior',
+    (tester) async {
+      // O controle agora é da tela (o "Adicionar pagamento" lê o texto): o
+      // CPF digitado e não aplicado na venda anterior entraria na nota desta.
+      final controle = TextEditingController(text: '529.982.247-25');
+      addTearDown(controle.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PaymentAdjustments(
+              cobrarTaxa: true,
+              rotuloTaxa: '10%',
+              documento: '',
+              documentoControle: controle,
+              descontoCentavos: 0,
+              maxDescontoCentavos: 1000,
+              busy: false,
+              bloqueado: false,
+              erro: '',
+              onTaxa: (_) {},
+              onDocumento: (_) {},
+              onDesconto: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      expect(controle.text, isEmpty);
+    },
+  );
 }

@@ -15,6 +15,7 @@ part of 'home_page.dart';
 mixin _ShellSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
+  PdvInputRouter get inputRouter;
   PdvUpdateStatus get versionStatus;
   NetworkStatus get networkStatus;
   Map<String, dynamic>? get activeOrder;
@@ -178,247 +179,252 @@ mixin _ShellSection on _HomePageShared {
         ),
       );
     }
-    return Scaffold(
-      body: Row(
-        children: [
-          PdvNavigationRail(
-            selected: _selectedDestination,
-            onSelected: (destination) => unawaited(_navigateTo(destination)),
-            showOrders: widget.controller.session!.user.canViewOrders,
-            showFinance: widget.controller.session!.user.canAccessCash,
-          ),
-          Expanded(
-            child: Column(
-              children: [
-                PdvOperationalBar(
-                  cashName: cashSession == null
-                      ? 'StarChef PDV'
-                      : cashStationLabelOf(cashSession!),
-                  operatorName:
-                      widget.controller.session!.user.name.trim().isEmpty
-                      ? widget.controller.session!.user.username
-                      : widget.controller.session!.user.name,
-                  shiftLabel: _shiftLabel,
-                  cashOpen: cashSession != null,
-                  network: networkStatus,
-                  printer: deviceAgent.printerAvailability,
-                  syncPending:
-                      offlineMode || activeOrder?['_offline_pending'] == true,
-                  versionStatus: versionStatus,
-                  onCheckVersion: _checkPdvVersion,
-                  // O sino fica no fim da barra de status, ao lado dos outros
-                  // sinais de "como as coisas estão" — o operador olha para um
-                  // canto só.
-                  //
-                  // Ele NÃO é enfeite: desde que só falha interrompe a tela,
-                  // sucesso e aviso não têm outro lugar para existir. Sem o
-                  // sino montado, "venda concluída" e "impressora indisponível"
-                  // são gravados no histórico e nunca vistos por ninguém.
-                  trailing: const NotificationBell(),
-                ),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      if (flowStep == 'scale-workstation')
-                        ScaleWorkstationPage(
-                          api: api,
-                          accessToken: token,
-                          restaurants: restaurants,
-                          restaurantId: restaurantId,
-                          products: products,
-                          onRestaurantChanged: _changeScaleRestaurant,
-                          preferences: widget.preferences,
-                        )
-                      else if (flowStep == 'commands')
-                        CommandsPage(
-                          repository: CommandRepository(
-                            api,
+    // A tela inteira (menu, cabeçalho com o sino, conteúdo) fica abaixo da
+    // barreira: a tecla que virou atalho não "clica" também no que tem foco.
+    return PdvKeyBarrier(
+      router: inputRouter,
+      child: Scaffold(
+        body: Row(
+          children: [
+            PdvNavigationRail(
+              selected: _selectedDestination,
+              onSelected: (destination) => unawaited(_navigateTo(destination)),
+              showOrders: widget.controller.session!.user.canViewOrders,
+              showFinance: widget.controller.session!.user.canAccessCash,
+            ),
+            Expanded(
+              child: Column(
+                children: [
+                  PdvOperationalBar(
+                    cashName: cashSession == null
+                        ? 'StarChef PDV'
+                        : cashStationLabelOf(cashSession!),
+                    operatorName:
+                        widget.controller.session!.user.name.trim().isEmpty
+                        ? widget.controller.session!.user.username
+                        : widget.controller.session!.user.name,
+                    shiftLabel: _shiftLabel,
+                    cashOpen: cashSession != null,
+                    network: networkStatus,
+                    printer: deviceAgent.printerAvailability,
+                    syncPending:
+                        offlineMode || activeOrder?['_offline_pending'] == true,
+                    versionStatus: versionStatus,
+                    onCheckVersion: _checkPdvVersion,
+                    // O sino fica no fim da barra de status, ao lado dos outros
+                    // sinais de "como as coisas estão" — o operador olha para um
+                    // canto só.
+                    //
+                    // Ele NÃO é enfeite: desde que só falha interrompe a tela,
+                    // sucesso e aviso não têm outro lugar para existir. Sem o
+                    // sino montado, "venda concluída" e "impressora indisponível"
+                    // são gravados no histórico e nunca vistos por ninguém.
+                    trailing: const NotificationBell(),
+                  ),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        if (flowStep == 'scale-workstation')
+                          ScaleWorkstationPage(
+                            api: api,
                             accessToken: token,
+                            restaurants: restaurants,
+                            restaurantId: restaurantId,
+                            products: products,
+                            onRestaurantChanged: _changeScaleRestaurant,
+                            preferences: widget.preferences,
+                          )
+                        else if (flowStep == 'commands')
+                          CommandsPage(
+                            repository: CommandRepository(
+                              api,
+                              accessToken: token,
+                            ),
+                            restaurantId: restaurantId,
+                            codigosLidos: commandPageCodes.stream,
+                            // A tela de comandas não conhece o controlador; ela
+                            // recebe só a capacidade de pedir a liberação.
+                            autorizarCancelamento: _autorizarCancelamentoDeItem,
+                            // O recibo da comanda sai como o de venda: na
+                            // impressora master deste terminal, impresso aqui.
+                            impressoraMaster: () =>
+                                widget.preferences.masterPrinterId,
+                            imprimirNoTerminal: (job, printer) =>
+                                deviceAgent.printJobManually(job, printer),
+                            // O MESMO catálogo da venda: a tela de comandas
+                            // lança produto igual, e carregar uma segunda cópia
+                            // faria as duas divergirem na primeira alteração de
+                            // cardápio.
+                            products: products,
+                            categories: categories,
+                            tables: tables,
+                          )
+                        else if (flowStep == 'customers')
+                          CustomersPage(
+                            repository: CustomerRepository(
+                              api,
+                              accessToken: token,
+                            ),
+                            restaurantId: restaurantId,
+                          )
+                        else if (flowStep == 'orders')
+                          _ordersPage()
+                        else if (activeOrder == null && flowStep == 'context')
+                          (orderType == 'command'
+                              ? _commandContextPanel()
+                              : _tableContextPanel())
+                        else if (activeOrder == null &&
+                            flowStep == 'table_details' &&
+                            selectedTable != null)
+                          TableDetailsPanel(
+                            table: selectedTable!,
+                            onBack: () => setState(() => flowStep = 'context'),
+                            onOpenCommand: (cmd) => _openCommand(cmd),
+                            onAddCommand: busy ? null : _seatCommandAtTable,
+                            onUnlinkCommand: busy
+                                ? null
+                                : (cmd) =>
+                                      unawaited(_unlinkCommandFromTable(cmd)),
+                          )
+                        else if (flowStep == 'payment')
+                          _paymentPage()
+                        else
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final cartWidth = constraints.maxWidth < 980
+                                  ? 360.0
+                                  : constraints.maxWidth >= 1500
+                                  ? 400.0
+                                  : 380.0;
+                              return Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  children: [
+                                    Expanded(child: _catalog()),
+                                    const SizedBox(width: 12),
+                                    SizedBox(width: cartWidth, child: _cart()),
+                                  ],
+                                ),
+                              );
+                            },
                           ),
-                          restaurantId: restaurantId,
-                          codigosLidos: commandPageCodes.stream,
-                          // A tela de comandas não conhece o controlador; ela
-                          // recebe só a capacidade de pedir a liberação.
-                          autorizarCancelamento: _autorizarCancelamentoDeItem,
-                          // O recibo da comanda sai como o de venda: na
-                          // impressora master deste terminal, impresso aqui.
-                          impressoraMaster: () =>
-                              widget.preferences.masterPrinterId,
-                          imprimirNoTerminal: (job, printer) =>
-                              deviceAgent.printJobManually(job, printer),
-                          // O MESMO catálogo da venda: a tela de comandas
-                          // lança produto igual, e carregar uma segunda cópia
-                          // faria as duas divergirem na primeira alteração de
-                          // cardápio.
-                          products: products,
-                          categories: categories,
-                          tables: tables,
-                        )
-                      else if (flowStep == 'customers')
-                        CustomersPage(
-                          repository: CustomerRepository(
-                            api,
-                            accessToken: token,
-                          ),
-                          restaurantId: restaurantId,
-                        )
-                      else if (flowStep == 'orders')
-                        _ordersPage()
-                      else if (activeOrder == null && flowStep == 'context')
-                        (orderType == 'command'
-                            ? _commandContextPanel()
-                            : _tableContextPanel())
-                      else if (activeOrder == null &&
-                          flowStep == 'table_details' &&
-                          selectedTable != null)
-                        TableDetailsPanel(
-                          table: selectedTable!,
-                          onBack: () => setState(() => flowStep = 'context'),
-                          onOpenCommand: (cmd) => _openCommand(cmd),
-                          onAddCommand: busy ? null : _seatCommandAtTable,
-                          onUnlinkCommand: busy
-                              ? null
-                              : (cmd) =>
-                                    unawaited(_unlinkCommandFromTable(cmd)),
-                        )
-                      else if (flowStep == 'payment')
-                        _paymentPage()
-                      else
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final cartWidth = constraints.maxWidth < 980
-                                ? 360.0
-                                : constraints.maxWidth >= 1500
-                                ? 400.0
-                                : 380.0;
-                            return Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Row(
-                                children: [
-                                  Expanded(child: _catalog()),
-                                  const SizedBox(width: 12),
-                                  SizedBox(width: cartWidth, child: _cart()),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      if (cashSession == null)
-                        Positioned.fill(
-                          child: ColoredBox(
-                            color: scheme.surface.withValues(alpha: .94),
-                            child: Center(
-                              child: SizedBox(
-                                width: 460,
-                                child: ShadCard(
-                                  radius: AppTheme.radius,
-                                  shadows: const [],
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(32),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.lock_outline,
-                                          size: 58,
-                                          color: scheme.primary,
-                                        ),
-                                        const SizedBox(height: 16),
-                                        const Text(
-                                          'Abra o caixa para iniciar',
-                                          style: TextStyle(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.w800,
+                        if (cashSession == null)
+                          Positioned.fill(
+                            child: ColoredBox(
+                              color: scheme.surface.withValues(alpha: .94),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 460,
+                                  child: ShadCard(
+                                    radius: AppTheme.radius,
+                                    shadows: const [],
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(32),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.lock_outline,
+                                            size: 58,
+                                            color: scheme.primary,
                                           ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        const Text(
-                                          'O PDV só pode registrar pedidos quando o operador possui um caixa vinculado e uma sessão aberta.',
-                                          textAlign: TextAlign.center,
-                                        ),
-                                        const SizedBox(height: 22),
-                                        FilledButton.icon(
-                                          onPressed: _openCash,
-                                          icon: const Icon(Icons.lock_open),
-                                          label: const Text('Abrir caixa'),
-                                        ),
-                                      ],
+                                          const SizedBox(height: 16),
+                                          const Text(
+                                            'Abra o caixa para iniciar',
+                                            style: TextStyle(
+                                              fontSize: 24,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          const Text(
+                                            'O PDV só pode registrar pedidos quando o operador possui um caixa vinculado e uma sessão aberta.',
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 22),
+                                          FilledButton.icon(
+                                            onPressed: _openCash,
+                                            icon: const Icon(Icons.lock_open),
+                                            label: const Text('Abrir caixa'),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      if (pendingCashMovement != null && !hasCashDivergence)
-                        Positioned(
-                          top: 12,
-                          left: 24,
-                          right: 24,
-                          child: Material(
-                            color: Colors.orange.shade50,
-                            elevation: 3,
-                            borderRadius: AppTheme.radius,
-                            child: InkWell(
+                        if (pendingCashMovement != null && !hasCashDivergence)
+                          Positioned(
+                            top: 12,
+                            left: 24,
+                            right: 24,
+                            child: Material(
+                              color: Colors.orange.shade50,
+                              elevation: 3,
                               borderRadius: AppTheme.radius,
-                              onTap: _showMovementApproval,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 13,
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.warning_amber_rounded,
-                                      color: Colors.orange.shade900,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        '${pendingCashMovement!['movement_type'] == 'withdrawal' ? 'Sangria' : 'Suprimento'} de ${_money(_number(pendingCashMovement!['amount']).abs())} aguardando autorização gerencial.',
+                              child: InkWell(
+                                borderRadius: AppTheme.radius,
+                                onTap: _showMovementApproval,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 13,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.warning_amber_rounded,
+                                        color: Colors.orange.shade900,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          '${pendingCashMovement!['movement_type'] == 'withdrawal' ? 'Sangria' : 'Suprimento'} de ${_money(_number(pendingCashMovement!['amount']).abs())} aguardando autorização gerencial.',
+                                          style: TextStyle(
+                                            color: Colors.orange.shade900,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      const Text(
+                                        'Resolver agora',
                                         style: TextStyle(
-                                          color: Colors.orange.shade900,
                                           fontWeight: FontWeight.w800,
                                         ),
                                       ),
-                                    ),
-                                    const Text(
-                                      'Resolver agora',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    const Icon(Icons.chevron_right),
-                                  ],
+                                      const SizedBox(width: 6),
+                                      const Icon(Icons.chevron_right),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      // Uma barra fina no topo, em vez de cobrir a tela.
-                      //
-                      // O overlay escuro com spinner central aparecia em toda
-                      // operação — abrir mesa, incluir item, pagar — e dava a
-                      // sensação de que o PDV recarregava a cada toque. Bloquear
-                      // a interface também era redundante: `_work` já ignora uma
-                      // segunda chamada enquanto a primeira não termina.
-                      if (busy)
-                        const Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: LinearProgressIndicator(minHeight: 3),
-                        ),
-                    ],
+                        // Uma barra fina no topo, em vez de cobrir a tela.
+                        //
+                        // O overlay escuro com spinner central aparecia em toda
+                        // operação — abrir mesa, incluir item, pagar — e dava a
+                        // sensação de que o PDV recarregava a cada toque. Bloquear
+                        // a interface também era redundante: `_work` já ignora uma
+                        // segunda chamada enquanto a primeira não termina.
+                        if (busy)
+                          const Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: LinearProgressIndicator(minHeight: 3),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-                PdvShortcutBar(message: _operationalMessage),
-              ],
+                  PdvShortcutBar(message: _operationalMessage),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

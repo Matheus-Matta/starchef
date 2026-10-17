@@ -96,6 +96,12 @@
       <StatCard label="Itens vendidos" :value="decimal(totalItems)" tone="neutral" caption="Total de unidades">
         <template #icon><AppIcon name="package" :size="19" /></template>
       </StatCard>
+      <StatCard label="Comandas pagas" :value="String(report.commands_count || 0)" tone="brand" caption="Em pedidos pagos">
+        <template #icon><AppIcon name="ticket" :size="19" /></template>
+      </StatCard>
+      <StatCard label="Ticket por comanda" :value="money(report.commands_average_ticket)" tone="info" caption="Só pedidos com comanda">
+        <template #icon><AppIcon name="trending-up" :size="19" /></template>
+      </StatCard>
     </div>
 
     <div v-if="section === 'orders'" class="responsive-kpi-grid">
@@ -132,6 +138,8 @@
       <StatCard label="Pedidos pagos" :value="String(report.orders || 0)" tone="neutral" caption="Total consolidado" />
       <StatCard label="Ticket médio" :value="money(report.average_ticket)" tone="info" caption="Por pedido" />
     </div>
+
+    <SalesHeatmap v-if="section === 'sales'" :heatmap="report.heatmap" />
 
     <div v-if="section === 'sales'" class="reports-tabs">
       <button
@@ -244,6 +252,7 @@ import ReportDataTable from "../components/data/ReportDataTable.vue";
 import CashMovementsReport from "../components/reports/CashMovementsReport.vue";
 import CouponsReport from "../components/reports/CouponsReport.vue";
 import ProductCostsReport from "../components/reports/ProductCostsReport.vue";
+import SalesHeatmap from "../components/reports/SalesHeatmap.vue";
 import OrdersCancellationsPanel from "../components/reports/OrdersCancellationsPanel.vue";
 import { api, API_BASE_URL } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";

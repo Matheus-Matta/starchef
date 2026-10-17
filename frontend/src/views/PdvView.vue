@@ -703,6 +703,8 @@
       </div>
     </div>
 
+    <DanfePrintQuestion :summary="danfe.pergunta.value?.summary || ''" @print="danfe.imprimir" @cancel="danfe.cancelar" />
+
     <!-- Seleção da mesa antes de abrir ou retomar uma comanda -->
     <div
       v-if="showCommandTableDialog"
@@ -881,6 +883,8 @@ import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
 import { useCheckoutChoices } from "../composables/useCheckoutChoices";
+import { useDanfePrintQuestion } from "../composables/useDanfePrintQuestion";
+import DanfePrintQuestion from "../components/pdv/DanfePrintQuestion.vue";
 import { formatCnpj } from "../utils/cnpj";
 import { formatCpf, isValidCpf } from "../utils/cpf";
 
@@ -893,6 +897,7 @@ const props = defineProps({
 const editMode = computed(() => props.editMode);
 
 const toast = useToast();
+const danfe = useDanfePrintQuestion({ toast });
 /** Mostra o erro da API normalizado num Toast (substitui os alert()). */
 function pdvError(err, summary = "Não foi possível concluir a ação") {
   toast.add({ severity: "error", summary, detail: normalizeApiError(err).message, life: 5000 });
@@ -1760,6 +1765,11 @@ async function addPayment() {
 async function confirmPaid() {
   lastPaidSequence.value = currentOrder.value.sequence;
   navigateStep("success");
+  // O operador sem perfil de admin não carrega a lista de restaurantes.
+  const restaurant =
+    currentRestaurant.value ||
+    (await api.get(`/restaurants/${resolvedRestaurantId.value}/`).then((r) => r.data).catch(() => null));
+  await danfe.oferecer(currentOrder.value, restaurant);
 }
 
 /* ── Teclado de pagamento ────────────────────────────────────────── */
@@ -1862,6 +1872,7 @@ function discardEmptyOrder() {
 }
 
 function newOrder() {
+  danfe.cancelar();
   discardEmptyOrder();
   navigateStep("type", { query: { order: null } });
   orderType.value = null;

@@ -19,6 +19,7 @@ part of 'home_page.dart';
 mixin _FiscalSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   Map<String, dynamic>? get selectedCustomer;
+  Map<String, dynamic>? get selectedRestaurant;
   LocalDeviceAgent get deviceAgent;
   Set<String> get watchedFiscalInvoices;
   bool get emittingInvoice;
@@ -138,6 +139,20 @@ mixin _FiscalSection on _HomePageShared {
         return;
       }
 
+      final summary =
+          'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}';
+      // A pergunta do restaurante (`ask_print_danfe`) sai AGORA, logo depois
+      // da emissão, e não quando a SEFAZ autorizar: uma autorização que demora
+      // faria o modal pular no meio da próxima venda. A resposta fica guardada
+      // até o DANFE poder sair. Nota recusada ou só na fila não pergunta —
+      // não haveria o que imprimir.
+      final printDecision =
+          automatic &&
+              selectedRestaurant?['ask_print_danfe'] == true &&
+              (invoice['printable'] == true || danfeOnTheWay(invoice))
+          ? _askPrintDanfe(summary, salePrinter)
+          : null;
+
       // `fiscal_state` é a situação real do documento; `status` sozinho não
       // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
       // documento AUTORIZADO tem chave que a SEFAZ reconhece — por isso o
@@ -147,8 +162,8 @@ mixin _FiscalSection on _HomePageShared {
         _watchFiscalAuthorization(
           invoice,
           salePrinter: salePrinter,
-          summary:
-              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+          summary: summary,
+          printDecision: printDecision,
         );
         return;
       }
@@ -161,10 +176,11 @@ mixin _FiscalSection on _HomePageShared {
         );
       }
 
+      if (printDecision != null && !await printDecision) return;
+      if (!mounted) return;
       await _printDanfe(
         invoiceId: '${invoice['id']}',
-        summary:
-            'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+        summary: summary,
         automatic: true,
         salePrinter: salePrinter,
       );
@@ -189,18 +205,10 @@ mixin _FiscalSection on _HomePageShared {
     Map<String, dynamic> invoice, {
     required String summary,
     Future<String?>? salePrinter,
+    Future<bool>? printDecision,
   }) {
     final invoiceId = '${invoice['id'] ?? ''}';
-    final state = '${invoice['fiscal_state'] ?? ''}';
-    // Só faz sentido esperar por uma nota que está a caminho. Recusa e erro de
-    // configuração pedem correção humana; documento local ainda na fila (id
-    // `offline-…`) nem existe no servidor para ser consultado.
-    const inFlight = {'processing', 'awaiting_transmission'};
-    if (invoiceId.isEmpty ||
-        invoiceId.startsWith('offline-') ||
-        !inFlight.contains(state)) {
-      return;
-    }
+    if (!danfeOnTheWay(invoice)) return;
     // Um segundo vigia sobre a mesma nota mandaria o DANFE para a impressora
     // de novo — e a segunda via seria um cupom NOVO, porque o trabalho da
     // primeira já teria saído.
@@ -210,20 +218,42 @@ mixin _FiscalSection on _HomePageShared {
         invoiceId: invoiceId,
         summary: summary,
         salePrinter: salePrinter,
+        printDecision: printDecision,
       ),
     );
+  }
+
+  /// Pergunta se imprime o DANFE desta venda. `false` = não imprimir.
+  ///
+  /// Espera a escolha de impressora da venda terminar: dois modais empilhados
+  /// disputariam o mesmo Enter. Sem impressora escolhida não há o que
+  /// perguntar — o DANFE não sairia de qualquer jeito.
+  Future<bool> _askPrintDanfe(
+    String summary,
+    Future<String?>? salePrinter,
+  ) async {
+    if (salePrinter != null && await salePrinter == null) return false;
+    if (!mounted) return false;
+    final wants = await DanfePrintQuestionDialog.ask(context, summary: summary);
+    AppLogger.instance.info(
+      'danfe_pergunta_respondida',
+      data: {'resumo': summary, 'imprimir': wants},
+    );
+    return wants;
   }
 
   Future<void> _pollFiscalAuthorization({
     required String invoiceId,
     required String summary,
     Future<String?>? salePrinter,
+    Future<bool>? printDecision,
   }) async {
     try {
       await _pollFiscalAuthorizationNow(
         invoiceId: invoiceId,
         summary: summary,
         salePrinter: salePrinter,
+        printDecision: printDecision,
       );
     } finally {
       watchedFiscalInvoices.remove(invoiceId);
@@ -234,6 +264,7 @@ mixin _FiscalSection on _HomePageShared {
     required String invoiceId,
     required String summary,
     Future<String?>? salePrinter,
+    Future<bool>? printDecision,
   }) async {
     const backoff = [
       Duration(milliseconds: 1200),
@@ -273,6 +304,10 @@ mixin _FiscalSection on _HomePageShared {
         },
       );
       if (current['printable'] == true) {
+        // O operador disse não no modal: a nota segue autorizada, só o
+        // papel não sai.
+        if (printDecision != null && !await printDecision) return;
+        if (!mounted) return;
         await _printDanfe(
           invoiceId: invoiceId,
           summary: summary,
@@ -291,6 +326,8 @@ mixin _FiscalSection on _HomePageShared {
     // A janela acabou e a autorização não chegou. O operador precisa saber:
     // numa venda de terminal o servidor não cria cupom automático, então este
     // DANFE só sai se alguém mandar imprimir pelo histórico do pedido.
+    // Quem respondeu "não" no modal não precisa do aviso.
+    if (printDecision != null && !await printDecision) return;
     if (!mounted) return;
     showAppToast(
       context,

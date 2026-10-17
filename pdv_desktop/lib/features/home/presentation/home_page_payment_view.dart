@@ -43,7 +43,7 @@ mixin _PaymentView on _HomePageShared {
   void _goBack();
   void _pressPaymentKey(String key);
   void _typePaymentAmount(String raw);
-  void _addSplitPayment();
+  Future<void> _addSplitPayment();
   Future<void> _removePayment(Map<String, dynamic> payment);
   Future<void> _completePaidOrder();
 

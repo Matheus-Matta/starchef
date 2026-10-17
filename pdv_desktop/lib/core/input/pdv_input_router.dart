@@ -174,8 +174,30 @@ class PdvInputRouter {
   final Map<String, DateTime> _lastFired = {};
   static const _repeatGuard = Duration(milliseconds: 400);
 
+  /// A última tecla que este roteador usou. `PdvKeyBarrier` consulta para a
+  /// mesma tecla não chegar também ao widget com foco.
+  KeyEvent? _consumed;
+
+  /// Esta tecla foi usada pelo roteador?
+  ///
+  /// O foco recebe o mesmo evento logo depois do `HardwareKeyboard`; a
+  /// comparação é pelo conteúdo para não depender da mesma instância.
+  bool consumedByRouter(KeyEvent event) {
+    final consumed = _consumed;
+    return consumed != null &&
+        consumed.runtimeType == event.runtimeType &&
+        consumed.timeStamp == event.timeStamp &&
+        consumed.physicalKey == event.physicalKey;
+  }
+
   /// Ponto único de entrada do teclado. Devolve `true` quando consome a tecla.
   bool handleKeyEvent(KeyEvent event) {
+    final consumed = _handle(event);
+    _consumed = consumed ? event : null;
+    return consumed;
+  }
+
+  bool _handle(KeyEvent event) {
     final context = _readContext();
 
     // 2. Captura do leitor. Vem antes dos atalhos porque um código pode conter

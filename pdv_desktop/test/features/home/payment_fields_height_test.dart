@@ -31,6 +31,7 @@ void main() {
                 cobrarTaxa: true,
                 rotuloTaxa: '10%',
                 documento: '52998224725',
+                documentoControle: TextEditingController(),
                 descontoCentavos: 250,
                 maxDescontoCentavos: 1000,
                 busy: false,

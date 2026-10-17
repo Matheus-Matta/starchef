@@ -80,6 +80,11 @@ class Restaurant(TenantBaseModel):
     # Recibo da venda sai sozinho ao concluir o pagamento. Ligado por padrão
     # (era o único comportamento); o botão "Imprimir recibo" vale sempre.
     auto_print_receipt = models.BooleanField(default=True)
+    # PERGUNTAR antes de imprimir o DANFE da NFC-e, no PDV desktop e no PDV
+    # web. A nota é EMITIDA sempre — é obrigação fiscal; a pergunta é só sobre
+    # o papel (cliente que não quer o cupom). Nasce desligado: ligado por
+    # padrão, toda loja passaria a ver um modal novo no dia do deploy.
+    ask_print_danfe = models.BooleanField(default=False)
     # Comprovante do pedido CANCELADO. Nasce desligado: papel novo saindo sem
     # ninguém ter pedido é desperdício e confusão no balcão.
     print_cancellation_receipt = models.BooleanField(default=False)

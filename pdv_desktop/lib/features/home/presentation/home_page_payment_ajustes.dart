@@ -22,6 +22,7 @@ mixin _PaymentAdjustSection on _HomePageShared {
   Map<String, dynamic>? get activeOrder;
   set activeOrder(Map<String, dynamic>? value);
   List<Map<String, dynamic>> get registeredPayments;
+  TextEditingController get paymentDocument;
   double get defaultServiceFeePercent;
   bool get adjustBusy;
   CalculoDoTotal get calculoDoTotal;
@@ -126,7 +127,7 @@ mixin _PaymentAdjustSection on _HomePageShared {
     );
   }
 
-  void _ajustarDocumento(String digitos) => _ajustarFechamento({
+  Future<void> _ajustarDocumento(String digitos) => _ajustarFechamento({
     'fiscal_customer_cpf': digitos.length == 11 ? digitos : '',
     'fiscal_customer_cnpj': digitos.length == 14 ? digitos : '',
   });
@@ -159,6 +160,7 @@ mixin _PaymentAdjustSection on _HomePageShared {
       documento: cpf.isNotEmpty
           ? cpf
           : cnpjDigits(pedido['fiscal_customer_cnpj']),
+      documentoControle: paymentDocument,
       descontoCentavos: centavosDe(pedido['discount']),
       maxDescontoCentavos: centavosDe(pedido['subtotal']),
       // Trava também enquanto o CUPOM recalcula: um cálculo por vez.

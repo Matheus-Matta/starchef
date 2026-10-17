@@ -69,7 +69,7 @@ mixin _InputSection on _HomePageShared {
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
   Future<void> _finishOrder();
   Future<void> _completePaidOrder();
-  void _addSplitPayment();
+  Future<void> _addSplitPayment();
   Future<void> _voidItem(Map<String, dynamic> item);
   Future<Map<String, dynamic>> _sendPendingItemsToKitchen(
     List<Map<String, dynamic>> pending,
@@ -553,7 +553,7 @@ mixin _InputSection on _HomePageShared {
     // Falta valor: só registra o recebimento digitado, e só se ele existir e
     // houver forma de pagamento escolhida.
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
-    _addSplitPayment();
+    await _addSplitPayment();
   }
 
   /// Leva o cursor para a busca da tela atual.

@@ -26,3 +26,14 @@ def test_padroes_recibo_ligado_e_cancelamento_desligado(restaurant):
     """Recibo automático era o único comportamento; o de cancelamento é novo."""
     assert restaurant.auto_print_receipt is True
     assert restaurant.print_cancellation_receipt is False
+
+
+def test_pergunta_do_danfe_vai_no_payload_e_nasce_desligada(restaurant):
+    """Sem o campo no payload, ligar a pergunta na nuvem não chegaria ao PDV da loja."""
+    assert restaurant.ask_print_danfe is False
+    restaurant.ask_print_danfe = True
+    restaurant.save(update_fields=["ask_print_danfe"])
+
+    payload = serialize(restaurant, registry.require("restaurant"))
+
+    assert payload["ask_print_danfe"] is True

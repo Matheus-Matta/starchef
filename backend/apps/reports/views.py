@@ -14,6 +14,8 @@ from apps.payments.models import Payment
 from apps.stock.models import StockMovement
 from apps.reports import dashboard as painel
 from apps.reports.comandas_abertas import resumo as comandas_abertas
+from apps.reports.comandas_nas_vendas import resumo as comandas_nas_vendas
+from apps.reports.mapa_de_calor import mapa_de_calor
 from apps.reports.waiter_sales import sales_by_waiter
 
 
@@ -258,6 +260,7 @@ class SalesReportView(TenantReportMixin, APIView):
             "delivery_fee": paid_totals["delivery_fee"] or 0,
             "average_ticket": paid_totals["average_ticket"] or 0,
             "orders": queryset.count(),
+            **comandas_nas_vendas(queryset),
             "orders_total": all_orders.count(),
             "orders_open": all_orders.filter(status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]).count(),
             "orders_cancelled": all_orders.filter(status=Order.STATUS_CANCELLED).count(),
@@ -276,6 +279,9 @@ class SalesReportView(TenantReportMixin, APIView):
             "by_order_type": list(by_order_type),
             "by_cancellation_reason": cancellation_reasons,
         }
+
+        if self.report_section == "sales" and export != "csv":
+            data["heatmap"] = mapa_de_calor(filtros=filters, inicio=parsed_from, fim=parsed_to)
 
         if self.report_section == "orders":
             from apps.reports.order_cancellations import cancellation_details

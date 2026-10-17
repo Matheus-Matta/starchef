@@ -70,6 +70,7 @@ mixin _PaymentSection on _HomePageShared {
 
   Future<void> _load();
   Future<void> _refreshOrder();
+  Future<bool> _aplicarDocumentoPendente();
   void _resetToNewSale();
   Future<String?> _chooseSalePrinter(Map<String, dynamic> order);
   Future<void> _printSaleReceipt(
@@ -264,11 +265,15 @@ mixin _PaymentSection on _HomePageShared {
   /// Encenar aqui também é o que faz recibo e DANFE saírem no mesmo gesto: a
   /// venda passa a paga e o papel sai em seguida, sem uma janela entre as duas
   /// coisas em que o operador pudesse sair da tela.
-  void _addSplitPayment() {
+  Future<void> _addSplitPayment() async {
     // A mesma trava do botão, para o Enter e o atalho: sobre um total que
     // ainda está sendo calculado, nada se registra.
     if (_calculandoTotal) return;
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
+    // CPF/CNPJ digitado sem o ✓ entra na nota agora; inválido trava aqui.
+    if (!await _aplicarDocumentoPendente() || !mounted) return;
+    if (_calculandoTotal || selectedPaymentMethod == null) return;
+    if (paymentValue <= 0) return;
     final method = paymentMethods.firstWhere(
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
@@ -438,6 +443,9 @@ mixin _PaymentSection on _HomePageShared {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
       return;
     }
+    // Venda de total zero (desconto de 100%) conclui sem recebimento nenhum:
+    // o documento digitado também precisa entrar.
+    if (!await _aplicarDocumentoPendente() || !mounted) return;
     completingOrder = true;
     try {
       await _completePaidOrderNow();

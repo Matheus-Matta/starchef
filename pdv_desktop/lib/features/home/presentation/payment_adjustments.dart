@@ -14,6 +14,7 @@ class PaymentAdjustments extends StatefulWidget {
     required this.cobrarTaxa,
     required this.rotuloTaxa,
     required this.documento,
+    required this.documentoControle,
     required this.descontoCentavos,
     required this.maxDescontoCentavos,
     required this.busy,
@@ -31,6 +32,7 @@ class PaymentAdjustments extends StatefulWidget {
 
   /// O CPF ou CNPJ que o pedido já leva (só dígitos). Vazio = nota sem nome.
   final String documento;
+  final TextEditingController documentoControle; // lido ao pagar
   final int descontoCentavos;
 
   /// O subtotal: dar a mercadoria inteira é o teto (o servidor recusa acima).
@@ -54,9 +56,7 @@ class PaymentAdjustments extends StatefulWidget {
 }
 
 class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
-  late final _documento = TextEditingController(
-    text: documentoFormatado(widget.documento),
-  );
+  TextEditingController get _documento => widget.documentoControle;
   late final _desconto = TextEditingController(
     text: formatarCentavos(widget.descontoCentavos),
   );
@@ -65,6 +65,7 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
   @override
   void initState() {
     super.initState();
+    _documento.text = documentoFormatado(widget.documento);
     // O botão do campo (aplicar ou remover) depende do que está digitado.
     _documento.addListener(_redesenhar);
     _desconto.addListener(_redesenhar);
@@ -86,6 +87,7 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
     // O servidor respondeu (ou outro pedido abriu): o campo mostra o que vale.
     if (antigo.documento != widget.documento) {
       _documento.text = documentoFormatado(widget.documento);
+      _erroLocal = ''; // o erro de antes falava de outro texto
     }
     if (antigo.descontoCentavos != widget.descontoCentavos) {
       _desconto.text = formatarCentavos(widget.descontoCentavos);
@@ -94,7 +96,7 @@ class _PaymentAdjustmentsState extends State<PaymentAdjustments> {
 
   @override
   void dispose() {
-    _documento.dispose();
+    _documento.removeListener(_redesenhar); // o controle é de quem monta
     _desconto.dispose();
     super.dispose();
   }

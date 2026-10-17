@@ -325,6 +325,15 @@ PDV desktop e app mandam `X-Terminal-Id` também quando desviam para a nuvem. O
 mesmo comprovante é reimpresso por `POST /orders/{id}/print/` com
 `job_type=order_cancellation`, com a chave ligada ou não.
 
+`ask_print_danfe` (padrão desligado, sincronizado): ligado, o PDV desktop e o PDV web
+PERGUNTAM "Imprimir a NFC-e?" ao concluir a venda (ENTER imprime; ESC, Cancelar ou
+clique fora cancelam). A nota é emitida sempre — a chave decide só o papel. A
+pergunta só aparece para nota autorizada ou a caminho (`processing`/
+`awaiting_transmission`); a resposta "Imprimir" dada antes da autorização fica
+guardada e o DANFE sai quando a SEFAZ autorizar. O servidor não muda: a venda de
+terminal já não gera DANFE automático (`terminal_prints`), e a sem terminal não
+tem a quem perguntar e segue imprimindo sozinha.
+
 `GET /api/v1/reports/coupons/` (`apps/reports/coupons.py`) é o relatório por
 cupom: usos, `discount` (soma dos resgates), `net` (o que os pedidos cobraram) e
 `gross` (`net + discount`, somando valores já arredondados), mais `totals`.
@@ -332,6 +341,10 @@ Só pedido pago entra. `?coupon=<id>` devolve cada uso com o CPF mascarado;
 `export=csv` exporta. Período e escopo seguem os outros relatórios.
 
 `GET /api/v1/reports/product-costs/` (`apps/reports/product_costs.py`): custo × venda por produto no período (pedidos pagos, sem cancelado/cortesia). O custo vem da **baixa de estoque da venda** (`StockMovement.total_cost` ligado ao item, com sinal; o estorno já se anula) — o custo da época. Sem baixa, usa o do cadastro (`current_average_cost`, senão `estimated_cost`) e a linha diz `cost_source: "cadastro"`. CSV com `export=csv`.
+
+Comandas nas vendas (`comandas_nas_vendas.py`, dentro de `/reports/sales/`): `commands_count` conta as comandas dos pedidos pagos — par (pedido, `OrderItem.command`) distinto, mais o pedido antigo que só tem `Order.command` —, então 100 pedidos podem ser 150 comandas na conta agrupada. `commands_average_ticket` = `commands_total` (soma só dos pedidos que tiveram comanda; o balcão fica fora) ÷ `commands_count`.
+
+Mapa de calor (`mapa_de_calor.py`, chave `heatmap` só na seção `sales`): linhas × 24 horas pela hora em que o item ENTROU — comanda pelo `CommandItem.launched_at` (anotação, conta mesmo antes de paga), balcão pelo `OrderItem.launched_at` de pedido pago sem comanda (pago em qualquer data; o período é o do item). Cancelado e cortesia fora. Até 31 dias sai dia a dia (`mode: day`); acima, por dia da semana (`mode: weekday`). Cada célula traz `command_items/command_total/counter_items/counter_total`.
 
 Relatório do garçom (`waiter_sales.py`): só item **lançado** — que saiu para a produção (`queued`/`sent`/`preparing`/`ready`/`delivered`) ou veio de anotação de comanda (`command_item`). Pendente que nunca foi lançado não conta.
 
