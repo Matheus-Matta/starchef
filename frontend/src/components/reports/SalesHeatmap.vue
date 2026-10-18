@@ -14,10 +14,12 @@
     <p v-if="!rows.length" class="sales-heatmap__empty">Sem movimento no período.</p>
     <div v-else class="sales-heatmap__scroll">
       <div class="sales-heatmap__grid">
+        <div />
+        <div v-for="hour in 24" :key="`h${hour}`" class="sales-heatmap__hour">{{ hourLabel(hour - 1) }}</div>
         <template v-for="row in rows" :key="row.key">
           <div class="sales-heatmap__label">
             <strong>{{ row.label }}</strong>
-            <small v-if="isDayMode">{{ shortDate(row.key) }}</small>
+            <small>{{ shortDate(row.key) }}</small>
           </div>
           <div
             v-for="cell in row.cells"
@@ -27,8 +29,6 @@
             :title="tooltip(row, cell)"
           />
         </template>
-        <div />
-        <div v-for="hour in 24" :key="hour" class="sales-heatmap__hour">{{ hourLabel(hour - 1) }}</div>
       </div>
     </div>
 
@@ -46,7 +46,7 @@ import { computed, ref } from "vue";
 import Card from "../display/Card.vue";
 
 const props = defineProps({
-  // `heatmap` do /reports/sales/: linhas (dia ou dia da semana) × 24 horas.
+  // `heatmap` do /reports/sales/: a semana atual, domingo a sábado × 24 horas.
   heatmap: { type: Object, default: () => ({}) },
 });
 
@@ -63,12 +63,12 @@ const origin = ref("all");
 const measure = ref("items");
 
 const rows = computed(() => props.heatmap?.rows || []);
-const isDayMode = computed(() => props.heatmap?.mode !== "weekday");
-const subtitle = computed(() =>
-  isDayMode.value
-    ? "Itens pela hora em que entraram: comanda na anotação, balcão no lançamento"
-    : "Período longo: soma por dia da semana",
-);
+// A semana é sempre a atual, qualquer que seja o período do relatório.
+const subtitle = computed(() => {
+  const { start, end } = props.heatmap || {};
+  const semana = start && end ? `Semana atual · ${shortDate(start)} a ${shortDate(end)}` : "Semana atual";
+  return `${semana} · itens pela hora em que entraram (comanda na anotação, balcão no lançamento)`;
+});
 
 function value(cell) {
   const pick = (kind) => Number(cell[`${kind}_${measure.value}`] || 0);
@@ -98,7 +98,7 @@ function shortDate(iso) {
 }
 
 function tooltip(row, cell) {
-  const day = isDayMode.value ? `${row.label}, ${shortDate(row.key)}` : row.label;
+  const day = `${row.label}, ${shortDate(row.key)}`;
   return [
     `${day} · ${hourLabel(cell.hour)}–${String(cell.hour).padStart(2, "0")}:59`,
     `Comanda: ${items(cell.command_items)} (${money(cell.command_total)})`,

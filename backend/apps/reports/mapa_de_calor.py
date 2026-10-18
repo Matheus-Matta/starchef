@@ -12,8 +12,10 @@ Cancelado e cortesia ficam fora. A comanda conta mesmo antes de paga: a
 pergunta é "quando o salão estava cheio", e o cartão ainda aberto também é
 gente consumindo.
 
-Período de até 31 dias sai dia a dia; acima disso, por dia da semana — um ano
-em linhas diárias seriam 365 linhas que ninguém lê.
+Mostra SEMPRE a semana atual, de domingo a sábado, independente do período
+do relatório: é o retrato do movimento de agora, e um mês inteiro em linhas
+diárias virava uma tabela que ninguém lê. Os dias que ainda não chegaram
+aparecem vazios.
 """
 from datetime import timedelta
 from decimal import Decimal
@@ -21,7 +23,6 @@ from decimal import Decimal
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
-DIAS_POR_LINHA = 31
 DIAS_DA_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"]
 
 
@@ -45,11 +46,17 @@ def _celulas(comanda, balcao, chave):
     return celulas
 
 
-def mapa_de_calor(*, filtros, inicio, fim):
+def semana_atual(hoje=None):
+    """Domingo e sábado da semana de `hoje` (no fuso da loja)."""
+    hoje = hoje or timezone.localdate()
+    domingo = hoje - timedelta(days=(hoje.weekday() + 1) % 7)
+    return domingo, domingo + timedelta(days=6)
+
+
+def mapa_de_calor(*, filtros, hoje=None):
     from apps.orders.models import CommandItem, Order, OrderItem
 
-    fim = fim or timezone.localdate()
-    inicio = inicio or fim - timedelta(days=6)
+    inicio, fim = semana_atual(hoje)
     fora = [CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED]
     periodo = {"launched_at__date__gte": inicio, "launched_at__date__lte": fim}
 
@@ -62,21 +69,11 @@ def mapa_de_calor(*, filtros, inicio, fim):
         order_id__in=pagos.values("pk"), command_item__isnull=True, command__isnull=True, **periodo
     ).exclude(status__in=fora)
 
-    if (fim - inicio).days < DIAS_POR_LINHA:
-        chave = "launched_at__date"
-        comanda, avulso = _contar(anotados, chave), _contar(balcao, chave)
-        dias = [inicio + timedelta(days=n) for n in range((fim - inicio).days + 1)]
-        linhas = [
-            {"key": dia.isoformat(), "label": DIAS_DA_SEMANA[(dia.weekday() + 1) % 7],
-             "cells": _celulas(comanda, avulso, dia)}
-            for dia in dias
-        ]
-        return {"mode": "day", "rows": linhas}
-
-    chave = "launched_at__week_day"  # 1 = domingo … 7 = sábado
+    chave = "launched_at__date"
     comanda, avulso = _contar(anotados, chave), _contar(balcao, chave)
+    dias = [inicio + timedelta(days=n) for n in range(7)]
     linhas = [
-        {"key": str(n), "label": DIAS_DA_SEMANA[n - 1], "cells": _celulas(comanda, avulso, n)}
-        for n in range(1, 8)
+        {"key": dia.isoformat(), "label": DIAS_DA_SEMANA[n], "cells": _celulas(comanda, avulso, dia)}
+        for n, dia in enumerate(dias)
     ]
-    return {"mode": "weekday", "rows": linhas}
+    return {"start": inicio.isoformat(), "end": fim.isoformat(), "rows": linhas}

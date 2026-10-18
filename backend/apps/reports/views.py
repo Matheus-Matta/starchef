@@ -281,7 +281,7 @@ class SalesReportView(TenantReportMixin, APIView):
         }
 
         if self.report_section == "sales" and export != "csv":
-            data["heatmap"] = mapa_de_calor(filtros=filters, inicio=parsed_from, fim=parsed_to)
+            data["heatmap"] = mapa_de_calor(filtros=filters)
 
         if self.report_section == "orders":
             from apps.reports.order_cancellations import cancellation_details
