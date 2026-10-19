@@ -52,7 +52,7 @@
     "backend/apps/menu/serializers.py": 589,
     "backend/apps/menu/services/menu_resolver.py": 294,
     "backend/apps/menu/tests/test_menus.py": 354,
-    "backend/apps/menu/tests/test_products_api.py": 235,
+    "backend/apps/menu/tests/test_products_api.py": 243,
     "backend/apps/menu/views.py": 367,
     "backend/apps/orders/command_billing.py": 377,
     "backend/apps/orders/models.py": 420,
