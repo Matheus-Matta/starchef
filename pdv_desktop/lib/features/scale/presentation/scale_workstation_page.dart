@@ -22,6 +22,7 @@ import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
 import '../data/etiqueta_da_pesagem.dart';
 import '../data/historico_de_passagens.dart';
+import '../data/id_da_pesagem.dart';
 import '../data/lancamento_da_pesagem.dart';
 import '../data/lista_da_estacao.dart';
 import '../data/scanner_binding_store.dart';
@@ -102,6 +103,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   final commandController = TextEditingController();
   final commandFocusNode = FocusNode(debugLabel: 'command-input');
   final ScannerBindingStore scannerBindingStore = ScannerBindingStore();
+  final _idDaPesagem =
+      IdDaPesagem(); // o mesmo prato, o mesmo id em toda tentativa
   ScannerBinding? scannerBinding;
   SerialScannerService? scannerService;
   StreamSubscription<String>? scannerSubscription;
@@ -905,6 +908,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             widget.api,
             accessToken: widget.accessToken,
           ).lancar(
+            id: _idDaPesagem.para(item),
             balanca: scaleId!,
             // Automática: sem código — o servidor escolhe na fila dele.
             comanda: automatica ? null : code,
@@ -955,6 +959,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       // O item JÁ está na comanda: libera agora. A etiqueta sai AQUI, em
       // segundo plano (`etiqueta_da_pesagem.dart`), e avisa se falhar.
       if (printJob != null) unawaited(_imprimirEtiqueta(printJob));
+      _idDaPesagem.esquecer();
       machine.onLaunched(comanda: automatica ? lancado.comanda : null);
       await Future<void>.delayed(_avisoDeLancado);
       if (!mounted || !started) return;

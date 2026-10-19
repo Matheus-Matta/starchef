@@ -20,6 +20,7 @@ mixin _InputSection on _HomePageShared {
   set codeLookup(CodeLookupService? value);
 
   Map<String, dynamic>? get activeOrder;
+  bool get completingOrder;
   set activeOrder(Map<String, dynamic>? value);
   Map<String, dynamic>? get selectedCommand;
   set selectedCommand(Map<String, dynamic>? value);
@@ -173,6 +174,7 @@ mixin _InputSection on _HomePageShared {
 
   /// Executa a ação de um atalho.
   Future<void> _onShortcut(PdvShortcut shortcut) async {
+    if (completingOrder && !atalhoValeDuranteAConclusao(shortcut.id)) return;
     switch (shortcut.id) {
       case PdvAction.help:
         await _openHelp();

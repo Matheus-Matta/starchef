@@ -173,6 +173,7 @@ mixin _VendaInteiraSection on _HomePageShared {
       // O total mudou, a comanda já foi paga: `_ConflitosSection` recalcula
       // ou abre o pedido certo, em vez de só mostrar o erro.
       errorTitle: 'Não foi possível concluir a venda',
+      fica: true,
     );
     if (resposta == null || !mounted) return false;
     final pedido = Map<String, dynamic>.from(resposta['order'] as Map);

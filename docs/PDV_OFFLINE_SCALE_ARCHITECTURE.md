@@ -837,7 +837,12 @@ pula para a seguinte. As regras:
 
 "Livre" é a regra do salão (`Command.em_uso`): sem anotação pendente e sem
 pedido aberto. Todas em uso responde **409** (estado, não entrada errada); a
-pesagem fica preservada na estação e o botão **Tentar de novo** relança a mesma.
+pesagem fica preservada na estação e o botão **Tentar de novo** relança a mesma
+— com o MESMO identificador (`id_da_pesagem.dart`). Ele nascia a cada
+tentativa: a rede caía depois de o servidor gravar, o "Tentar de novo" ia com
+um identificador novo e o prato entrava duas vezes (ou numa segunda comanda
+automática). Com o mesmo, o servidor reconhece a repetição
+(`pesagem_por_uuid.py`). Lançado com sucesso, o identificador é esquecido.
 Cancelar com o prato na balança retém aquele peso até ele sair, para não lançar
 o mesmo prato de novo.
 

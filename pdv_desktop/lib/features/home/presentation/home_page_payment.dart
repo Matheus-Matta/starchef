@@ -349,6 +349,7 @@ mixin _PaymentSection on _HomePageShared {
           recebimentos: corpos,
         ),
         errorTitle: 'Não foi possível registrar os recebimentos',
+        fica: true,
       );
       if (feito == null) return false;
       // Pedido e recebimentos ao mesmo tempo: uma ida a menos no "Concluir".

@@ -869,6 +869,9 @@ def cancel_payment(*, payment, user):
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
 
         if was_paid:
+            from apps.orders.comanda_do_estorno import reabrir_anotacoes  # o cartão volta a estar em uso
+
+            reabrir_anotacoes(order)
             if order.order_type == Order.TYPE_TABLE and order.table_id:
                 # Apenas para reabrir registros legados; novas vendas de salão
                 # são sempre comandas vinculadas a uma mesa.
@@ -880,9 +883,6 @@ def cancel_payment(*, payment, user):
                 from apps.restaurants.models import Command
 
                 command = Command.objects.select_for_update().get(pk=order.command_id)
-                # `status` volta sozinho ao estornar: as anotações voltam a
-                # PENDENTE e o cartão passa a ter o que cobrar de novo — ver
-                # `Command.status`.
                 command.current_order_id = order.id
                 command.customer_name = order.customer.name if order.customer_id else ""
                 command.current_table = order.table

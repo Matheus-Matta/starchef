@@ -90,6 +90,7 @@ class AppError {
     ApiException exception, {
     String? title,
     String? recommendedAction,
+    Duration? autoDismissAfter,
   }) {
     final status = exception.statusCode;
     if (exception.isConnectivity) {
@@ -101,10 +102,15 @@ class AppError {
         // não ficou guardada em lugar nenhum. Chamar isso de aviso faria o
         // operador seguir para a próxima venda achando que esta entrou.
         severity: AppErrorSeverity.failure,
-        recommendedAction:
-            'Nada foi registrado. Restabeleça a conexão e repita a operação.',
+        // Tempo esgotado DEPOIS de chegar ao servidor: pode ter sido gravado,
+        // e "nada foi registrado" levava o caixa a refazer a venda à mão.
+        recommendedAction: exception.reachedServer
+            ? 'Pode ter sido registrado. Repita a operação: o servidor '
+                  'reconhece a repetição e não cobra duas vezes.'
+            : 'Nada foi registrado. Restabeleça a conexão e repita a operação.',
         technicalDetails: 'ApiException(connectivity)',
         dedupeKey: 'connectivity',
+        autoDismissAfter: autoDismissAfter,
       );
     }
     // Sem status HTTP e sem ser falta de conexão, a recusa não veio de
@@ -120,6 +126,7 @@ class AppError {
         origin: AppErrorOrigin.application,
         recommendedAction: recommendedAction,
         technicalDetails: 'ApiException(local)',
+        autoDismissAfter: autoDismissAfter,
       );
     }
     return AppError(
@@ -129,6 +136,7 @@ class AppError {
       origin: AppErrorOrigin.api,
       recommendedAction: recommendedAction ?? _actionForStatus(status),
       technicalDetails: 'ApiException(statusCode: $status)',
+      autoDismissAfter: autoDismissAfter,
     );
   }
 
@@ -145,9 +153,7 @@ class AppError {
         'continuar, informe o suporte com o horário desta mensagem.',
     origin: origin,
     recommendedAction: 'Repita a operação e confira o resultado.',
-    technicalDetails: stackTrace == null
-        ? '$error'
-        : '$error\n\n$stackTrace',
+    technicalDetails: stackTrace == null ? '$error' : '$error\n\n$stackTrace',
   );
 
   /// Rótulo legível da origem, usado no rodapé do alerta.

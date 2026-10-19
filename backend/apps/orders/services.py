@@ -1204,10 +1204,10 @@ def close_order(
         order._client_expected_total = expected
         order._total_reconciled = expected is not None and expected != actual_total
 
-        # Fechar novamente um pedido parcialmente pago pode alterar desconto ou
-        # taxa. O estado financeiro precisa acompanhar o novo total; caso
-        # contrário a interface mostra saldo zero enquanto o pedido permanece
-        # parcial no servidor.
+        # O estado financeiro acompanha o novo total (fechar de novo um pedido
+        # parcial muda desconto ou taxa). Conta de total ZERO com consumo (100%
+        # de desconto) está quitada: sem isto ela esperava um pagamento que não
+        # existe, e as comandas dela ficavam presas a uma venda que acabou.
         from apps.payments.models import Payment
 
         paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
@@ -1218,7 +1218,7 @@ def close_order(
                 "A alteração deixaria o valor já pago maior que o total do pedido. "
                 "Cancele ou ajuste os pagamentos antes de retirar a taxa."
             )
-        paid_in_full = paid_total == order.total and order.total > Decimal("0.00")
+        paid_in_full = paid_total == order.total and (order.total > 0 or order.subtotal > 0)
         if paid_in_full:
             order.payment_status = Order.PAYMENT_PAID
             order.status = Order.STATUS_PAID

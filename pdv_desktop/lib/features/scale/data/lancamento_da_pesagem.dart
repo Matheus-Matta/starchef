@@ -19,6 +19,7 @@ class LancamentoDaPesagem {
   /// [comanda] `null` é a comanda automática: o servidor escolhe a próxima
   /// livre (`fila_da_comanda.py`).
   Future<({Map<String, dynamic>? printJob, String? comanda})> lancar({
+    String? id,
     required String balanca,
     required String? comanda,
     String? produto,
@@ -31,7 +32,8 @@ class LancamentoDaPesagem {
       body: {
         // O UUID desta pesagem: se a loja gravar e cair antes de responder,
         // o desvio para a nuvem é a MESMA pesagem (`pesagem_por_uuid.py`).
-        'id': LocalId.uuid(),
+        // O MESMO em toda tentativa do mesmo prato (`id_da_pesagem.dart`).
+        'id': id ?? LocalId.uuid(),
         'command_code': ?comanda,
         if (comanda == null) 'comanda_automatica': true,
         // O produto por quilo escolhido na estação; sem ele, o da balança.

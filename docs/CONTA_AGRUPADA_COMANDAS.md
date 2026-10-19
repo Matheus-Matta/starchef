@@ -601,6 +601,19 @@ nuvem que chegaram o `OrderMerge`, os `OrderMergeSource`, os itens com `command`
 preenchido e os pedidos de origem em `merged`. Sem isso, o relatório da nuvem
 vai contar a venda errado — ou não vai contar.
 
+## Pagamento excluído: a comanda volta a estar em uso
+
+`cancel_payment` numa conta que estava PAGA devolve as anotações dela a
+PENDENTE (`orders/comanda_do_estorno.py`). Antes o pedido voltava a "não pago"
+mas as anotações seguiam cobradas: a comanda aparecia livre, a fila da balança
+automática podia entregá-la a outro cliente, e quem tentasse cobrá-la caía na
+conta de quem já tinha ido embora. O vínculo com o item do pedido continua:
+cobrar de novo é concluir AQUELA conta.
+
+Conta de **total zero** com consumo (desconto de 100%) está quitada no
+fechamento (`close_order`): ela esperava um pagamento que não existe, e as
+comandas ficavam presas a uma venda que acabou.
+
 ## Estorno auditado: cancele tudo e esvazie as comandas
 
 Desfazer uma conta **já paga** não é cancelar um recebimento. É desmontar uma

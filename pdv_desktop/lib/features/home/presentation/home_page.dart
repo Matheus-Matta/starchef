@@ -15,6 +15,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/data/local_id.dart';
+import '../../../core/errors/error_center.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
@@ -38,6 +39,7 @@ import '../../devices/presentation/device_list_page.dart';
 import '../../devices/presentation/print_queue_dialog.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
+import 'conclusao_em_andamento.dart';
 import 'danfe_print_question_dialog.dart';
 import '../../../core/input/pdv_key_barrier.dart';
 import '../../../core/data/order_item_status.dart';
@@ -1049,6 +1051,7 @@ class _HomePageState extends State<HomePage>
 
   @override
   Future<void> _navigateTo(PdvDestination destination) async {
+    if (completingOrder) return; // `conclusao_em_andamento.dart`
     switch (destination) {
       case PdvDestination.sale:
         if (activeOrder != null) {
@@ -1420,6 +1423,7 @@ class _HomePageState extends State<HomePage>
 
   @override
   void _goBack() {
+    if (completingOrder) return; // `conclusao_em_andamento.dart`
     if (flowStep == 'payment' && activeOrder != null) {
       // Recebimento montado não existe fora desta tela: voltar o descarta. O
       // operador precisa saber disso ANTES, senão sairia achando que o
@@ -1483,10 +1487,22 @@ class _HomePageState extends State<HomePage>
   /// caixa ("caixa já aberto em outro terminal", "sangria divergente") precisa
   /// chegar ao operador exatamente como o servidor a descreveu.
   @override
-  void _error(Object error, {String? title, String? action}) {
+  void _error(
+    Object error, {
+    String? title,
+    String? action,
+    bool fica = false,
+  }) {
     final center = ErrorCenterScope.read(context);
     if (error is ApiException) {
-      center.reportApi(error, title: title, recommendedAction: action);
+      center.reportApi(
+        error,
+        title: title,
+        recommendedAction: action,
+        // A venda que não concluiu não some em 2 s: o caixa está olhando o
+        // cliente, não a tela.
+        autoDismissAfter: fica ? ErrorCenter.ficaAteFechar : null,
+      );
       return;
     }
     if (error is PrinterCommunicationException) {

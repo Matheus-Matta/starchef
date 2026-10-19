@@ -223,6 +223,15 @@ recebimento), então o reenvio é a MESMA venda.
   próxima conta, em vez de fechar com total maior que o recebido. Leva também
   o total mostrado (`expected_total`): mudou no servidor, a venda é recusada
   sem gravar e a tela simula de novo, mostrando a conta de agora.
+  Enquanto ele espera o servidor, a tela NÃO muda de venda: teclado (só a
+  ajuda responde), Voltar e o menu lateral esperam (`conclusao_em_andamento.dart`).
+  Esc ou F3 no meio da espera começavam outra venda, e a resposta chegava
+  depois e apagava o carrinho do cliente seguinte. A falha da conclusão FICA
+  na tela até o operador fechar (`ErrorCenter.ficaAteFechar`) — em 2 s o
+  caixa nem tinha virado para a tela —, e tempo esgotado depois de chegar ao
+  servidor diz "pode ter sido registrado, repita", não "nada foi registrado".
+  Cada envio deixa rastro no `pdv.log` com o pedido, o número e o tempo
+  (`rastro_da_venda.dart`: `venda_enviada`, `venda_ok`, `venda_falhou`).
 - Pedido que já existia (F9 antes): os recebimentos vão juntos num envio.
 
 ### 5.1.3 Recusa que leva ao lugar certo (`home_page_conflitos.dart`)

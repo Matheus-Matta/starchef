@@ -2,6 +2,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../presentation/order_presenter.dart';
 import 'order_draft_cart.dart';
+import 'rastro_da_venda.dart';
 
 /// A venda sai do PDV num envio só: `POST /orders/submit/`.
 ///
@@ -72,22 +73,27 @@ class OrderDraftMaterializer {
     required List<Map<String, dynamic>> recebimentos,
     String? totalMostrado,
     String? senhaDoCaixa,
-  }) => api.post(
-    caminho,
-    body: {
-      ...corpo(
-        draft,
-        restaurantId: restaurantId,
-        cozinha: true,
-        fechamento: fechamento,
-      ),
-      'payments': recebimentos,
-      // O total que o cliente viu: mudou no servidor (parte da comanda foi
-      // cobrada em outra conta), a venda é recusada sem gravar nada.
-      'expected_total': ?totalMostrado,
-      'cash_password': ?senhaDoCaixa,
-    },
-    accessToken: accessToken,
+  }) => comRastro(
+    'venda',
+    pedido: draft.orderId,
+    dados: {'total': totalMostrado, 'recebimentos': recebimentos.length},
+    chamada: () => api.post(
+      caminho,
+      body: {
+        ...corpo(
+          draft,
+          restaurantId: restaurantId,
+          cozinha: true,
+          fechamento: fechamento,
+        ),
+        'payments': recebimentos,
+        // O total que o cliente viu: mudou no servidor (parte da comanda foi
+        // cobrada em outra conta), a venda é recusada sem gravar nada.
+        'expected_total': ?totalMostrado,
+        'cash_password': ?senhaDoCaixa,
+      },
+      accessToken: accessToken,
+    ),
   );
 
   /// Os recebimentos de um pedido que JÁ existe, todos num envio só.
@@ -95,15 +101,20 @@ class OrderDraftMaterializer {
     required String orderId,
     required String? restaurantId,
     required List<Map<String, dynamic>> recebimentos,
-  }) => api.post(
-    caminho,
-    body: {
-      'id': orderId,
-      'restaurant': restaurantId,
-      'items': const <Map<String, dynamic>>[],
-      'payments': recebimentos,
-    },
-    accessToken: accessToken,
+  }) => comRastro(
+    'recebimento',
+    pedido: orderId,
+    dados: {'recebimentos': recebimentos.length},
+    chamada: () => api.post(
+      caminho,
+      body: {
+        'id': orderId,
+        'restaurant': restaurantId,
+        'items': const <Map<String, dynamic>>[],
+        'payments': recebimentos,
+      },
+      accessToken: accessToken,
+    ),
   );
 
   /// O corpo da venda inteira, a partir do rascunho.

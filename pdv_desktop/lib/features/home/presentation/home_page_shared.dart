@@ -43,7 +43,7 @@ mixin _HomePageShared on State<HomePage> {
     Future<void> Function() action, {
     required String title,
   });
-  void _error(Object error, {String? title, String? action});
+  void _error(Object error, {String? title, String? action, bool fica});
 
   /// O tradutor de códigos lidos, provido por `_ScanSection`. Está aqui
   /// porque a seção de ENTRADA também o usa, no painel que testa um código.
@@ -94,6 +94,7 @@ mixin _HomePageShared on State<HomePage> {
   Future<T?> _workResolvendo<T>(
     Future<T> Function() action, {
     required String errorTitle,
+    bool fica,
   });
   void _discardDraft();
   Future<bool> _confirmLeavingPendingItems();

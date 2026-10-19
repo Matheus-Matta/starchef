@@ -47,6 +47,10 @@ class ErrorCenter extends ChangeNotifier {
   /// [AppError.autoDismissAfter] — falha, aviso ou confirmação.
   static const defaultAutoDismissAfter = Duration(seconds: 2);
 
+  /// `autoDismissAfter` de quem NÃO pode sumir sozinho: a venda que não
+  /// concluiu. Em 2 s o caixa nem tinha virado o rosto para a tela.
+  static const ficaAteFechar = Duration.zero;
+
   List<AppError> get visible => List.unmodifiable(_visible);
   bool get hasErrors => _visible.isNotEmpty;
 
@@ -145,6 +149,7 @@ class ErrorCenter extends ChangeNotifier {
     // `ErrorCenter`, e em teste de widget isso quebra a verificação de que
     // nenhum timer fica pendente.
     final delay = error.autoDismissAfter ?? defaultAutoDismissAfter;
+    if (delay == ficaAteFechar) return error;
     _dismissTimers[error] = Timer(delay, () => dismiss(error));
     return error;
   }
@@ -154,11 +159,13 @@ class ErrorCenter extends ChangeNotifier {
     ApiException exception, {
     String? title,
     String? recommendedAction,
+    Duration? autoDismissAfter,
   }) => report(
     AppError.fromApi(
       exception,
       title: title,
       recommendedAction: recommendedAction,
+      autoDismissAfter: autoDismissAfter,
     ),
   );
 

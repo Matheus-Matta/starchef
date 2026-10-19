@@ -24,6 +24,7 @@ mixin _ConflitosSection on _HomePageShared {
   Future<T?> _workResolvendo<T>(
     Future<T> Function() action, {
     required String errorTitle,
+    bool fica = false,
   }) async {
     Object? falha;
     final resultado = await _work(
@@ -33,7 +34,9 @@ mixin _ConflitosSection on _HomePageShared {
     );
     final recusa = falha;
     if (resultado == null && recusa != null && mounted) {
-      if (!await _resolverConflito(recusa)) _error(recusa, title: errorTitle);
+      if (!await _resolverConflito(recusa)) {
+        _error(recusa, title: errorTitle, fica: fica);
+      }
     }
     return resultado;
   }
