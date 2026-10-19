@@ -23,17 +23,13 @@ mixin _VendaInteiraSection on _HomePageShared {
   set discountPassword(String? value);
 
   set flowStep(String value);
+  String get _percentualDaTaxa;
   bool get paymentAmountTyped;
   set paymentDigits(String value);
   double get remainingTotal;
   void _syncPaymentAmount();
   void _valorSugeridoDoNovoTotal();
   Future<bool> _resolverConflito(Object erro);
-
-  /// A confirmação, pelo servidor, da prévia aberta na hora
-  /// (`previa_local.dart`). A conclusão espera por ela: nunca conclui sobre
-  /// a soma local.
-  Future<bool>? _confirmacao;
 
   /// Cada cálculo ganha um número: a resposta de um antigo não sobrescreve a
   /// de um ajuste (taxa, cupom) feito depois na tela de pagamento.
@@ -44,15 +40,26 @@ mixin _VendaInteiraSection on _HomePageShared {
   /// inteira, e a tela travada era justamente a espera que isto tira.
   @override
   void _abrirPreviaLocal() {
-    final previa = previaLocal(draft);
+    final previa = previaLocal(draft, percentualDaTaxa: _percentualDaTaxa);
     draft.simulada = true;
+    if (draft.commands.isNotEmpty) {
+      draft.anotacoesVistas ??= anotacoesVistas(draft);
+    }
     activeOrder = previa;
     orderItems = _itensDe(previa);
     selectedCommand = draft.command;
     selectedTable = draft.table;
     selectedCustomer = draft.customer;
     orderType = draft.orderType;
-    _confirmacao = _confirmarPrevia(++_rodadaDaPrevia);
+    // Em segundo plano: avisa cedo de comanda já paga ou em outra conta. A
+    // conclusão NÃO espera — o servidor confere o total mostrado (409).
+    unawaited(_confirmarPrevia(++_rodadaDaPrevia));
+  }
+
+  /// Um ajuste feito aqui (`fechamento_local.dart`) vence a confirmação que
+  /// ainda está no ar: ela foi pedida com o fechamento de antes.
+  void _descartarConfirmacao() {
+    _rodadaDaPrevia++;
   }
 
   Future<bool> _confirmarPrevia(int rodada) async {
@@ -113,7 +120,6 @@ mixin _VendaInteiraSection on _HomePageShared {
     if (draft.isEmpty) return false;
     // Um cálculo novo (ajuste na tela) vence o que ainda estava em voo.
     final rodada = ++_rodadaDaPrevia;
-    _confirmacao = null;
     final previa = await _workResolvendo(
       () => OrderDraftMaterializer(api, accessToken: token).simular(
         draft,
@@ -133,7 +139,6 @@ mixin _VendaInteiraSection on _HomePageShared {
     if (!draft.simulada) return;
     // A confirmação que ainda voltar já não vale para nada na tela.
     _rodadaDaPrevia++;
-    _confirmacao = null;
     draft.simulada = false;
     draft.fechamento = null;
     draft.anotacoesVistas = null;
@@ -151,10 +156,9 @@ mixin _VendaInteiraSection on _HomePageShared {
   Future<bool> _concluirVendaSimulada(
     List<Map<String, dynamic>> recebimentos,
   ) async {
-    // Aberto na hora: conclui só depois de o servidor confirmar o total. O
-    // clique espera aqui em vez de se perder (`_work` desiste se ocupado).
-    final pendente = _confirmacao;
-    if (pendente != null && !await pendente) return false;
+    // Sem esperar a confirmação: o servidor confere o total mostrado aqui
+    // mesmo. E a resposta dela, chegando depois, não mexe mais na tela.
+    _descartarConfirmacao();
     final resposta = await _workResolvendo(
       () => OrderDraftMaterializer(api, accessToken: token).concluir(
         draft,

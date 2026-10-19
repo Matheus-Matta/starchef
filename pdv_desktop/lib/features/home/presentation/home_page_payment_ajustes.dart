@@ -39,6 +39,7 @@ mixin _PaymentAdjustSection on _HomePageShared {
   void _refreshSuggestedPaymentAmount();
   void _valorSugeridoDoNovoTotal();
   Widget _paymentSummaryRow(String label, String value, {bool strong});
+  Future<void> _ajustarAqui(Map<String, dynamic> fechamento, {String? senha});
 
   /// As escolhas que o pedido carrega AGORA — a base de toda mudança.
   Map<String, dynamic> _fechamentoAtual() {
@@ -59,6 +60,10 @@ mixin _PaymentAdjustSection on _HomePageShared {
     String? senha,
   }) async {
     if (_calculandoTotal || activeOrder == null) return;
+    // Venda nova sem cupom: a conta é feita aqui (`_AjusteLocalSection`).
+    if (draft.simulada && !mudanca.containsKey('coupon_code')) {
+      return _ajustarAqui({..._fechamentoAtual(), ...mudanca}, senha: senha);
+    }
     setState(() {
       adjustBusy = true;
       adjustError = '';

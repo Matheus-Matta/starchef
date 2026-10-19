@@ -131,11 +131,7 @@ mixin _PaymentView on _HomePageShared {
                         _couponSummaryRow(),
                         _documentoSummaryRow(),
                         _paymentSummaryRow(
-                          // Aberto na hora (`previa_local.dart`): a soma do
-                          // PDV até o servidor confirmar taxa e promoção.
-                          activeOrder![previaLocalMarca] == true
-                              ? 'Total do pedido (confirmando…)'
-                              : 'Total do pedido',
+                          'Total do pedido',
                           _money(activeOrder!['total']),
                           strong: true,
                         ),

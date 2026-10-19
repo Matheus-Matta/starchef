@@ -1,0 +1,13 @@
+{
+  "_leia_me": "Contas do fechamento que o PDV faz sozinho (fechamento_local.dart) e o servidor faz no recálculo (orders/services.py). Lida pelos DOIS testes: test/features/home/fechamento_local_test.dart e backend/apps/orders/tests/test_fechamento_paridade.py. Se uma conta mudar de um lado, o teste do outro quebra.",
+  "casos": [
+    {"nome": "taxa de 10% sobre 25", "subtotal": "25.00", "percentual": "10.00", "taxa_ligada": true, "desconto": "0.00", "taxa": "2.50", "total": "27.50"},
+    {"nome": "meio centavo arredonda para cima", "subtotal": "10.05", "percentual": "10.00", "taxa_ligada": true, "desconto": "0.00", "taxa": "1.01", "total": "11.06"},
+    {"nome": "taxa desligada", "subtotal": "10.05", "percentual": "10.00", "taxa_ligada": false, "desconto": "0.00", "taxa": "0.00", "total": "10.05"},
+    {"nome": "desconto com taxa", "subtotal": "100.00", "percentual": "10.00", "taxa_ligada": true, "desconto": "15.50", "taxa": "10.00", "total": "94.50"},
+    {"nome": "taxa quebrada de 12,5%", "subtotal": "33.33", "percentual": "12.50", "taxa_ligada": true, "desconto": "0.00", "taxa": "4.17", "total": "37.50"},
+    {"nome": "sem taxa no restaurante", "subtotal": "47.90", "percentual": "0.00", "taxa_ligada": true, "desconto": "7.90", "taxa": "0.00", "total": "40.00"},
+    {"nome": "desconto igual ao subtotal com taxa", "subtotal": "20.00", "percentual": "10.00", "taxa_ligada": true, "desconto": "20.00", "taxa": "2.00", "total": "2.00"},
+    {"nome": "pesados e centavos", "subtotal": "61.37", "percentual": "10.00", "taxa_ligada": true, "desconto": "1.37", "taxa": "6.14", "total": "66.14"}
+  ]
+}

@@ -127,6 +127,7 @@ part 'home_page_paid_receipt.dart';
 part 'home_page_payment_view.dart';
 part 'home_page_payment_coupon.dart';
 part 'home_page_payment_ajustes.dart';
+part 'home_page_payment_ajuste_local.dart';
 part 'home_page_payment_documento.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
@@ -200,6 +201,7 @@ class _HomePageState extends State<HomePage>
         _PaidReceiptSection,
         _PaymentCouponSection,
         _PaymentAdjustSection,
+        _AjusteLocalSection,
         _PaymentDocumentSection,
         _PaymentView,
         _ReceiptSection,

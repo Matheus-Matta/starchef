@@ -108,8 +108,8 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **↑ e ↓ trocam a forma de pagamento** na tela de pagamento, dando a volta
   nas pontas (`forma_vizinha.dart`). Valem com o cursor no campo do valor,
   que não usa as setas (`PdvShortcut.insideTextField`).
-- **"Calculando total..."** (`calculo_do_total.dart`): cupom, desconto, taxa,
-  CPF/CNPJ e a prévia aberta na hora passam por UM cálculo por vez. Enquanto
+- **"Calculando total..."** (`calculo_do_total.dart`): o CUPOM (e os ajustes
+  do pedido que já existe, F9) passam por UM cálculo por vez. Enquanto
   ele está no servidor, "Adicionar pagamento" e "Concluir" mostram
   "Calculando total..." e não aceitam clique, Enter nem atalho; um segundo
   ajuste é recusado (duplo clique), a recusa deixa o total anterior e uma
@@ -138,11 +138,17 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
   "não cobrada"), desconto, cupom e "CPF/CNPJ na nota". À direita, abaixo do
   teclado (que se ajusta à altura que sobra), a **chave da taxa de serviço**,
   o **CPF ou CNPJ** (um campo só, reconhecido pelo tamanho) e o **desconto**
-  em R$ (`payment_adjustments.dart` + `home_page_payment_ajustes.dart`). Cada
-  mudança vai ao servidor na hora e o total se redesenha: na venda nova o
-  servidor recalcula a prévia (`simular`), no pedido existente o `/close/`
-  roda de novo. Desconto que pede aprovação abre a senha de ações do caixa,
-  que segue com a conclusão da venda (`cash_password`). Com pagamento já
+  em R$ (`payment_adjustments.dart` + `home_page_payment_ajustes.dart`). Na
+  venda nova, taxa, documento e desconto são calculados NO PDV, na hora
+  (`fechamento_local.dart`, `home_page_payment_ajuste_local.dart`): cada toque
+  simulava a venda inteira no servidor (60 a 120 consultas) com a tela travada.
+  A conta é a do servidor — dinheiro em centavos inteiros, taxa meio centavo
+  para cima — e a tabela `test/fixtures/fechamento_paridade.json` é lida pelo
+  teste do PDV e pelo do backend (`test_fechamento_paridade.py`). O CUPOM
+  continua indo ao servidor (`simular`): limite, uso por CPF e grupo só o
+  banco sabe. No pedido existente o `/close/` roda de novo. Desconto novo de
+  quem não é gerente pede a senha de ações do caixa, conferida no PDV, e ela
+  segue com a conclusão (`cash_password`), onde o servidor confere de novo. Com pagamento já
   lançado, taxa, documento e desconto travam. Todos os campos da tela têm a
   mesma altura (`payment_input_style.dart`, `alturaDoCampo`): com a fonte
   real o campo com ícone ficava mais alto que o sem ícone.
@@ -202,14 +208,17 @@ entra. Tudo leva o UUID do PDV (`draft.orderId`, o id de cada linha, o de cada
 recebimento), então o reenvio é a MESMA venda.
 
 - **F9 / cozinha** (o "pagar depois"): pedido + itens + comandas + produção.
-- **Ir para o pagamento**: NÃO cria nada e não pergunta nada. `simular`
-  devolve o total oficial (taxa, promoção, cupom) e a tela abre sobre ele
-  (`draft.simulada`); taxa, documento e desconto se ajustam nela. Sair sem
+- **Ir para o pagamento**: NÃO cria nada e não pergunta nada. A tela abre NA
+  HORA com a conta feita no PDV (`previa_local.dart`: itens, taxa padrão,
+  total), também com comanda quando a conta de todos os cartões já chegou;
+  cartão com a conta ainda chegando, ou sem nada a cobrar, espera o servidor.
+  `simular` roda em segundo plano só para avisar cedo de comanda já paga ou
+  em outra conta — a conclusão não espera por ele (`draft.simulada`). Sair sem
   pagar não deixa nada no servidor. Enquanto a prévia está na tela, o tempo
   real não a relê (`pedido_na_tela.dart`): ela não existe no servidor.
 - **Concluir**: pedido + itens + comandas + produção + fechamento (taxa, CPF,
   cupom) + recebimentos, num envio (`home_page_venda_inteira.dart`). Leva só
-  as anotações que a simulação trouxe (`draft.anotacoesVistas` →
+  as anotações que o caixa viu ao abrir o pagamento (`draft.anotacoesVistas` →
   `command_items`): o que o garçom lança enquanto o cliente paga fica para a
   próxima conta, em vez de fechar com total maior que o recebido. Leva também
   o total mostrado (`expected_total`): mudou no servidor, a venda é recusada

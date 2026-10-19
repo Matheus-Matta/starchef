@@ -43,11 +43,10 @@ mixin _PaymentCouponSection on _HomePageShared {
   /// cupom, desconto, taxa e CPF/CNPJ passam todos por ele.
   final calculoDoTotal = CalculoDoTotal();
 
-  /// "Calculando total...": um ajuste no ar, ou a prévia aberta na hora
-  /// (`previa_local.dart`) ainda sem a conta do servidor. Enquanto durar,
-  /// nem pagamento, nem conclusão, nem outro ajuste.
-  bool get _calculandoTotal =>
-      calculoDoTotal.emCurso || activeOrder?[previaLocalMarca] == true;
+  /// "Calculando total...": o cupom no servidor. Enquanto durar, nem
+  /// pagamento, nem conclusão, nem outro ajuste. A prévia não trava mais: ela
+  /// já abre com a conta certa (`previa_local.dart`).
+  bool get _calculandoTotal => calculoDoTotal.emCurso;
 
   /// Aplica, troca ou retira. `codigo` vazio retira.
   ///
