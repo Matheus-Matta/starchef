@@ -57,3 +57,23 @@ def emitir_pagos_sem_nota_task():
     from apps.invoices.emissao_da_loja import emitir_pagos_sem_nota
 
     return emitir_pagos_sem_nota()
+
+
+@shared_task(name="invoices.emitir_nota_do_pedido_pago")
+def emitir_nota_do_pedido_pago_task(order_id, user_id=None, auto_print=True):
+    """A NFC-e do pedido que acabou de ser pago, fora da requisição do caixa.
+
+    Ver `apps.invoices.signals`. Falhar aqui não deixa venda sem nota: o PDV
+    pede a nota logo depois (`/invoices/emit/`), e a loja varre os pagos sem
+    nota (`emitir_pagos_sem_nota`).
+    """
+    from django.contrib.auth import get_user_model
+
+    from apps.invoices.services import issue_invoice_for_paid_order
+    from apps.orders.models import Order
+
+    pedido = Order.all_objects.select_related("account", "restaurant", "branch").filter(pk=order_id).first()
+    if pedido is None:
+        return False
+    usuario = get_user_model().objects.filter(pk=user_id).first() if user_id else None
+    return issue_invoice_for_paid_order(pedido, user=usuario, auto_print=auto_print) is not None

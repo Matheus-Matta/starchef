@@ -50,6 +50,7 @@ mixin _FiscalSection on _HomePageShared {
     bool automatic = false,
     Map<String, dynamic>? customer,
     Future<String?>? salePrinter,
+    Future<bool>? danfe,
   }) async {
     // A trava protege o BOTÃO de emissão manual contra duplo clique. A emissão
     // automática da venda não pode passar por ela: a tela é liberada assim que
@@ -96,13 +97,21 @@ mixin _FiscalSection on _HomePageShared {
           data: {'pedido': '${order['id']}', 'causa': '$error'},
         );
         if (!mounted) return;
-        // "Restaurante não emite NFC-e" é a única recusa que pode ser calada
-        // numa emissão automática — o resto o operador precisa ver.
-        if (!silentIfUnconfigured ||
-            !'$error'.toLowerCase().contains('configuracao fiscal')) {
-          _error(error, title: 'Não foi possível emitir a NFC-e');
+        // A nota da venda nasce sozinha no servidor: a emissão daqui falhar
+        // (SEFAZ passou dos 20 s, esbarrou na automática) não quer dizer que
+        // ela não exista. Desistir aqui deixava a venda sem DANFE.
+        final achada = automatic ? await _notaPeloPedido(order) : null;
+        if (!mounted) return;
+        if (achada == null) {
+          // "Restaurante não emite NFC-e" é a única recusa que pode ser calada
+          // numa emissão automática — o resto o operador precisa ver.
+          if (!silentIfUnconfigured ||
+              !'$error'.toLowerCase().contains('configuracao fiscal')) {
+            _error(error, title: 'Não foi possível emitir a NFC-e');
+          }
+          return;
         }
-        return;
+        invoice = achada;
       }
       if (!mounted) return;
 
@@ -141,17 +150,18 @@ mixin _FiscalSection on _HomePageShared {
 
       final summary =
           'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}';
-      // A pergunta do restaurante (`ask_print_danfe`) sai AGORA, logo depois
-      // da emissão, e não quando a SEFAZ autorizar: uma autorização que demora
+      // A pergunta do restaurante (`ask_print_danfe`) já saiu junto com a
+      // venda (`danfe`, de `startPaidOrderFollowUps`). Sem ela, pergunta
+      // agora, e não quando a SEFAZ autorizar: uma autorização que demora
       // faria o modal pular no meio da próxima venda. A resposta fica guardada
-      // até o DANFE poder sair. Nota recusada ou só na fila não pergunta —
-      // não haveria o que imprimir.
+      // até o DANFE poder sair.
       final printDecision =
-          automatic &&
-              selectedRestaurant?['ask_print_danfe'] == true &&
-              (invoice['printable'] == true || danfeOnTheWay(invoice))
-          ? _askPrintDanfe(summary, salePrinter)
-          : null;
+          danfe ??
+          (automatic &&
+                  selectedRestaurant?['ask_print_danfe'] == true &&
+                  (invoice['printable'] == true || danfeOnTheWay(invoice))
+              ? _askPrintDanfe(summary, salePrinter)
+              : null);
 
       // `fiscal_state` é a situação real do documento; `status` sozinho não
       // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
@@ -189,152 +199,59 @@ mixin _FiscalSection on _HomePageShared {
     }
   }
 
-  /// Espera a SEFAZ autorizar e manda o DANFE para a impressora sozinho.
-  ///
-  /// Online, a emissão quase nunca volta autorizada: o provedor ACEITA a nota
-  /// e a SEFAZ responde um instante depois. O "Concluir pedido" terminava
-  /// então com um aviso e nenhum cupom fiscal — o operador tinha de voltar no
-  /// pedido e mandar imprimir na mão, para uma nota que já estava autorizada
-  /// havia dois segundos.
-  ///
-  /// Consulta em segundo plano, com espera crescente: o caixa já pode começar
-  /// a próxima venda. Se a autorização não chegar na janela, nada se perde —
-  /// a nota continua na esteira normal (webhook e consulta periódica) e o
-  /// cupom sai pela reimpressão no histórico do pedido.
+  // Esperar a autorização e a pergunta do DANFE: `_FiscalEsperaSection`.
   void _watchFiscalAuthorization(
     Map<String, dynamic> invoice, {
     required String summary,
     Future<String?>? salePrinter,
     Future<bool>? printDecision,
-  }) {
-    final invoiceId = '${invoice['id'] ?? ''}';
-    if (!danfeOnTheWay(invoice)) return;
-    // Um segundo vigia sobre a mesma nota mandaria o DANFE para a impressora
-    // de novo — e a segunda via seria um cupom NOVO, porque o trabalho da
-    // primeira já teria saído.
-    if (!watchedFiscalInvoices.add(invoiceId)) return;
+  });
+  Future<bool> _askPrintDanfe(String summary, Future<String?>? salePrinter);
+
+  /// "Imprimir a NFC-e?" logo depois da venda (`startPaidOrderFollowUps`).
+  ///
+  /// A resposta fica gravada com o número do pedido (`decisoes_do_danfe.dart`):
+  /// o DANFE sai quando a SEFAZ autorizar, com o caixa já em outra venda, e é
+  /// o registro que diz depois qual era para imprimir e qual não era.
+  Future<bool> _decidirDanfe(
+    Map<String, dynamic> order,
+    Future<String?> salePrinter,
+  ) async {
+    final imprimir = await _askPrintDanfe(
+      'Pedido #${order['sequence'] ?? ''}',
+      salePrinter,
+    );
     unawaited(
-      _pollFiscalAuthorization(
-        invoiceId: invoiceId,
-        summary: summary,
-        salePrinter: salePrinter,
-        printDecision: printDecision,
+      DecisoesDoDanfe.doTerminal.registrar(
+        DecisaoDoDanfe(
+          pedidoId: '${order['id']}',
+          sequencia: '${order['sequence'] ?? ''}',
+          imprimir: imprimir,
+          quando: DateTime.now(),
+        ),
       ),
     );
+    return imprimir;
   }
 
-  /// Pergunta se imprime o DANFE desta venda. `false` = não imprimir.
-  ///
-  /// Espera a escolha de impressora da venda terminar: dois modais empilhados
-  /// disputariam o mesmo Enter. Sem impressora escolhida não há o que
-  /// perguntar — o DANFE não sairia de qualquer jeito.
-  Future<bool> _askPrintDanfe(
-    String summary,
-    Future<String?>? salePrinter,
+  /// A emissão daqui falhou ou demorou: a nota pode existir mesmo assim
+  /// (`nota_do_pedido.dart`). Devolve o bloco `fiscal` do pedido, ou `null`.
+  Future<Map<String, dynamic>?> _notaPeloPedido(
+    Map<String, dynamic> order,
   ) async {
-    if (salePrinter != null && await salePrinter == null) return false;
-    if (!mounted) return false;
-    final wants = await DanfePrintQuestionDialog.ask(context, summary: summary);
+    final nota = await NotaDoPedido(
+      api,
+      accessToken: token,
+    ).esperar('${order['id']}');
     AppLogger.instance.info(
-      'danfe_pergunta_respondida',
-      data: {'resumo': summary, 'imprimir': wants},
+      'nota_procurada_pelo_pedido',
+      data: {
+        'pedido': '${order['id']}',
+        'nota': nota?['id'],
+        'fiscal_state': nota?['fiscal_state'],
+      },
     );
-    return wants;
-  }
-
-  Future<void> _pollFiscalAuthorization({
-    required String invoiceId,
-    required String summary,
-    Future<String?>? salePrinter,
-    Future<bool>? printDecision,
-  }) async {
-    try {
-      await _pollFiscalAuthorizationNow(
-        invoiceId: invoiceId,
-        summary: summary,
-        salePrinter: salePrinter,
-        printDecision: printDecision,
-      );
-    } finally {
-      watchedFiscalInvoices.remove(invoiceId);
-    }
-  }
-
-  Future<void> _pollFiscalAuthorizationNow({
-    required String invoiceId,
-    required String summary,
-    Future<String?>? salePrinter,
-    Future<bool>? printDecision,
-  }) async {
-    const backoff = [
-      Duration(milliseconds: 1200),
-      Duration(seconds: 2),
-      Duration(seconds: 3),
-      Duration(seconds: 4),
-      Duration(seconds: 5),
-    ];
-    for (final wait in backoff) {
-      await Future<void>.delayed(wait);
-      if (!mounted) return;
-      final Map<String, dynamic> current;
-      try {
-        current = await api.post(
-          '/invoices/$invoiceId/refresh-status/',
-          // "Estou esperando esta autorizacao para imprimir." Sem avisar, o
-          // cupom que esta consulta cria entra no laco automatico do agente
-          // local e o cliente recebe DOIS DANFEs: o do agente e o que este
-          // terminal manda em seguida.
-          body: const {'manual_print': true},
-          accessToken: token,
-        );
-      } catch (_) {
-        // Um tropeço de rede não abandona a nota: a próxima volta tenta de
-        // novo. Desistir aqui era barato quando o servidor criava o cupom
-        // sozinho — não é mais: numa venda de terminal (`terminal_prints`)
-        // ninguém mais imprime este DANFE se esta espera desistir.
-        continue;
-      }
-      if (!mounted) return;
-      AppLogger.instance.info(
-        'fiscal_consulta_autorizacao',
-        data: {
-          'nota': invoiceId,
-          'printable': current['printable'],
-          'fiscal_state': current['fiscal_state'],
-        },
-      );
-      if (current['printable'] == true) {
-        // O operador disse não no modal: a nota segue autorizada, só o
-        // papel não sai.
-        if (printDecision != null && !await printDecision) return;
-        if (!mounted) return;
-        await _printDanfe(
-          invoiceId: invoiceId,
-          summary: summary,
-          automatic: true,
-          salePrinter: salePrinter,
-        );
-        return;
-      }
-      final state = '${current['fiscal_state'] ?? ''}';
-      if (state == 'rejected' || state == 'configuration_error') {
-        // Agora sim interrompe: isto não se resolve esperando.
-        _showFiscalStateToast(current, silent: false);
-        return;
-      }
-    }
-    // A janela acabou e a autorização não chegou. O operador precisa saber:
-    // numa venda de terminal o servidor não cria cupom automático, então este
-    // DANFE só sai se alguém mandar imprimir pelo histórico do pedido.
-    // Quem respondeu "não" no modal não precisa do aviso.
-    if (printDecision != null && !await printDecision) return;
-    if (!mounted) return;
-    showAppToast(
-      context,
-      'A SEFAZ ainda não autorizou a NFC-e desta venda. Quando autorizar, '
-      'imprima o DANFE pelo pedido em Pedidos.',
-      severity: AppErrorSeverity.warning,
-    );
+    return nota;
   }
 
   /// Explica ao operador por que o cupom fiscal ainda nao saiu.

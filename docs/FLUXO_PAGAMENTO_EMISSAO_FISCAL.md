@@ -288,6 +288,22 @@ entregue, o clique não achava mais nada para reaproveitar
 A emissão fiscal continua imediata em todos os casos — a SEFAZ pode demorar e
 não há razão para prender isso ao clique.
 
+**Imediata, mas em segundo plano.** O receptor de `order_fully_paid`
+(`invoices/signals.py`) ENFILEIRA a emissão no Celery
+(`invoices.emitir_nota_do_pedido_pago`) em vez de emitir ali. Ele roda no
+`on_commit`, que executa antes de a resposta da venda sair: emitindo ali, o
+"Concluir" esperava a SEFAZ inteira (de 1 s a 40 s com o ACBr). Passando dos
+20 s do PDV, o terminal repetia, saía da tela, e o pedido de nota dele
+esbarrava na emissão que ainda estava na SEFAZ: "Pedido já possui nota fiscal
+emitida" e nenhum DANFE. Sem o Redis (`OperationalError` ao enfileirar), a nota
+é emitida na hora, como antes: venda paga sem nota é pior que esperar.
+
+O `/invoices/emit/` devolve a nota que o pedido já tem — pendente ou
+autorizada — em vez de 400, inclusive quando ela aparece DURANTE a espera pela
+trava do pedido (`invoices/nota_ja_emitida.py`). E o PDV, se a chamada falhar
+mesmo assim, procura a nota pelo pedido (`fiscal` do `GET /orders/{id}/`,
+`nota_do_pedido.dart`) antes de desistir do DANFE.
+
 No modo offline-first, a **emissão** (`POST /invoices/emit/`) é interceptada
 antes da chamada HTTP e gravada na `fiscal_queue` local, inclusive com
 internet disponível — é isso que impede uma queda no meio do caminho de perder

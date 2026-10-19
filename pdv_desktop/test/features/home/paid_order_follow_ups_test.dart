@@ -24,7 +24,7 @@ void main() {
           events.add('recibo na ${await printer}');
           receiptDone.complete();
         },
-        emitInvoice: (printer) async {
+        emitInvoice: (printer, _) async {
           events.add('nfce');
           events.add('danfe na ${await printer}');
           invoiceDone.complete();
@@ -60,7 +60,7 @@ void main() {
         showNextSale: () => events.add('nova venda'),
         choosePrinter: () async => 'printer-1',
         printReceipt: (_) async => events.add('recibo'),
-        emitInvoice: (printer) async {
+        emitInvoice: (printer, _) async {
           events.add('danfe na ${await printer}');
           invoiceDone.complete();
         },
@@ -70,6 +70,39 @@ void main() {
 
       await invoiceDone.future;
       expect(events, ['nova venda', 'danfe na printer-1']);
+    },
+  );
+
+  test(
+    'a pergunta do DANFE sai junto com a venda e a NFC-e não espera a resposta',
+    () async {
+      // A pergunta só aparecia DEPOIS de o servidor responder a emissão — que
+      // podia levar a SEFAZ inteira, ou falhar. O caixa ficava esperando um
+      // modal para liberar a próxima venda. Agora pergunta na hora, e a
+      // emissão segue em segundo plano levando a resposta para quando a nota
+      // puder ser impressa.
+      final resposta = Completer<bool>();
+      final events = <String>[];
+      Future<bool>? recebida;
+
+      startPaidOrderFollowUps(
+        showNextSale: () => events.add('nova venda'),
+        choosePrinter: () async => 'printer-1',
+        printReceipt: (_) async {},
+        askDanfe: (printer) {
+          events.add('pergunta');
+          return resposta.future;
+        },
+        emitInvoice: (printer, danfe) async {
+          events.add('nfce');
+          recebida = danfe;
+        },
+        refreshCatalog: () async {},
+      );
+
+      expect(events, ['nova venda', 'pergunta', 'nfce']);
+      expect(resposta.isCompleted, isFalse);
+      expect(identical(recebida, resposta.future), isTrue);
     },
   );
 }

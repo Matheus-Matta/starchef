@@ -166,3 +166,24 @@ def pagar(api, pedido_id, metodo, valor, chave=None):
 
 def ler(api, pedido_id):
     return api.get(f"{ROTA}/{pedido_id}/").data
+
+
+@pytest.fixture
+def caixa(api_client, contexto_tenant, sem_caixa_obrigatorio, account, restaurant, branch,
+          django_capture_on_commit_callbacks):
+    """O PDV de um restaurante que emite NFC-e (`nota_da_venda.py`).
+
+    `concluir` executa o pós-commit, como o servidor: é lá que a nota nasce.
+    """
+    from types import SimpleNamespace
+
+    from apps.orders.tests.nota_da_venda import URL_NOTA, URL_VENDA, ligar_nota
+
+    def concluir(corpo):
+        with django_capture_on_commit_callbacks(execute=True):
+            return api_client.post(URL_VENDA, corpo, format="json")
+
+    return SimpleNamespace(
+        config=ligar_nota(account, restaurant, branch), concluir=concluir,
+        pedir_nota=lambda pedido_id: api_client.post(URL_NOTA, {"order": pedido_id}, format="json"),
+    )

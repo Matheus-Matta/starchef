@@ -68,23 +68,9 @@ mixin _PaymentSection on _HomePageShared {
   Map<String, dynamic>? get selectedRestaurant;
   LocalDeviceAgent get deviceAgent;
 
-  Future<void> _load();
   Future<void> _refreshOrder();
   Future<bool> _aplicarDocumentoPendente();
-  void _resetToNewSale();
-  Future<String?> _chooseSalePrinter(Map<String, dynamic> order);
-  Future<void> _printSaleReceipt(
-    Map<String, dynamic> order,
-    Future<String?> printerChoice, {
-    bool paidInCash,
-  });
-  Future<void> _emitFiscalInvoice(
-    Map<String, dynamic> order, {
-    bool silentIfUnconfigured,
-    bool automatic,
-    Map<String, dynamic>? customer,
-    Future<String?>? salePrinter,
-  });
+  void _seguirDepoisDePago();
   bool _isOfflinePending(Map<String, dynamic>? value);
 
   Future<void> _paymentDialog() async {
@@ -365,8 +351,12 @@ mixin _PaymentSection on _HomePageShared {
         errorTitle: 'Não foi possível registrar os recebimentos',
       );
       if (feito == null) return false;
-      await _refreshOrder();
-      registeredPayments = await _loadRegisteredPayments();
+      // Pedido e recebimentos ao mesmo tempo: uma ida a menos no "Concluir".
+      final lidos = await Future.wait([
+        _refreshOrder().then<Object?>((_) => null),
+        _loadRegisteredPayments(),
+      ]);
+      registeredPayments = lidos[1]! as List<Map<String, dynamic>>;
     }
     // O saldo da gaveta é só exibição: relido em segundo plano, não segura a
     // próxima venda. Esperá-lo era mais uma ida ao servidor no "Finalizar".
@@ -472,28 +462,6 @@ mixin _PaymentSection on _HomePageShared {
       );
       return;
     }
-    final paidOrder = Map<String, dynamic>.from(activeOrder!);
-    // Lido AGORA, antes de `showNextSale` limpar a tela para a próxima venda:
-    // depois dali `registeredPayments` está vazia, e o recibo sairia sem a
-    // gaveta justamente na venda que a justifica.
-    final paidInCash = registeredPayments.any(_isCashPayment);
-    final customer = selectedCustomer == null
-        ? null
-        : Map<String, dynamic>.from(selectedCustomer!);
-    startPaidOrderFollowUps(
-      showNextSale: _resetToNewSale,
-      choosePrinter: () => _chooseSalePrinter(paidOrder),
-      printReceipt: (printer) =>
-          _printSaleReceipt(paidOrder, printer, paidInCash: paidInCash),
-      emitInvoice: (printer) => _emitFiscalInvoice(
-        paidOrder,
-        customer: customer,
-        salePrinter: printer,
-        silentIfUnconfigured: true,
-        automatic: true,
-      ),
-      refreshCatalog: _load,
-      autoPrintReceipt: selectedRestaurant?['auto_print_receipt'] != false,
-    );
+    _seguirDepoisDePago();
   }
 }

@@ -327,10 +327,11 @@ mesmo comprovante é reimpresso por `POST /orders/{id}/print/` com
 
 `ask_print_danfe` (padrão desligado, sincronizado): ligado, o PDV desktop e o PDV web
 PERGUNTAM "Imprimir a NFC-e?" ao concluir a venda (ENTER imprime; ESC, Cancelar ou
-clique fora cancelam). A nota é emitida sempre — a chave decide só o papel. A
-pergunta só aparece para nota autorizada ou a caminho (`processing`/
-`awaiting_transmission`); a resposta "Imprimir" dada antes da autorização fica
-guardada e o DANFE sai quando a SEFAZ autorizar. O servidor não muda: a venda de
+clique fora cancelam). A nota é emitida sempre — a chave decide só o papel. No
+desktop a pergunta sai JUNTO com a venda, antes da emissão, e a resposta fica
+gravada por pedido no terminal; no web, só para nota autorizada ou a caminho
+(`processing`/`awaiting_transmission`). A resposta "Imprimir" dada antes da
+autorização fica guardada e o DANFE sai quando a SEFAZ autorizar. O servidor não muda: a venda de
 terminal já não gera DANFE automático (`terminal_prints`), e a sem terminal não
 tem a quem perguntar e segue imprimindo sozinha.
 

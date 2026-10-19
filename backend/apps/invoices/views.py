@@ -303,28 +303,22 @@ class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        # O pedido pago ja emite sozinho (`order_fully_paid`). Quando o PDV
-        # pede a emissao logo depois, a nota do pedido ja existe — e devolver
-        # 400 aqui fazia o caixa ver "Pedido ja possui nota fiscal emitida"
-        # numa venda que deu certo. Emitir e idempotente por pedido: a nota
-        # que existe E a resposta.
+        # O pedido pago ja emite sozinho (`order_fully_paid`, em segundo
+        # plano). Quando o PDV pede logo depois, a nota que existe E a
+        # resposta — devolver 400 fazia o caixa ver "Pedido ja possui nota
+        # fiscal emitida" numa venda que deu certo, e o DANFE nao saia.
         # QUEM PEDIU IMPRIME. Um terminal identificado entrega o cupom ele
         # mesmo, no gesto de concluir a venda. A marca fica na NOTA porque a
         # autorizacao da SEFAZ chega depois — por webhook ou consulta — e sem
         # ela aqueles caminhos criavam um cupom automatico que o agente local
         # imprimia antes de o terminal pedir o dele: duas vias da mesma venda.
+        from apps.invoices.nota_ja_emitida import responder_com_a_nota_existente
         from apps.invoices.services import mark_terminal_prints
         from apps.payments.terminals import installation_id_from_request
 
         by_terminal = bool(installation_id_from_request(request))
-
-        existing = getattr(order, "invoice", None)
-        if existing and existing.status in (Invoice.STATUS_PENDING, Invoice.STATUS_ISSUED):
-            if by_terminal and mark_terminal_prints(existing):
-                existing.save(update_fields=["fiscal_payload", "updated_at"])
-            data = with_fiscal_state(InvoiceSerializer(existing, context={"request": request}).data, existing)
-            return Response(data, status=status.HTTP_200_OK)
-
+        if (existente := responder_com_a_nota_existente(order, request, by_terminal=by_terminal)) is not None:
+            return existente
         try:
             invoice = emit_fiscal_invoice(
                 order,
@@ -335,7 +329,10 @@ class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
                 user=request.user,
             )
         except ValidationError as exc:
-            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+            # A conferencia acima rodou antes do commit da automatica; a
+            # emissao esperou a trava do pedido e achou a nota ja gravada.
+            return responder_com_a_nota_existente(order, request, by_terminal=by_terminal) or Response(
+                {"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         if by_terminal and mark_terminal_prints(invoice):
             invoice.save(update_fields=["fiscal_payload", "updated_at"])
         data = with_fiscal_state(InvoiceSerializer(invoice, context={"request": request}).data, invoice)

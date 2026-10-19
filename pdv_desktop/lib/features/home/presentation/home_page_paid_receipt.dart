@@ -8,6 +8,60 @@ part of 'home_page.dart';
 mixin _PaidReceiptSection on _HomePageShared {
   LocalDeviceAgent get deviceAgent;
   PdvRepository get repository;
+  Map<String, dynamic>? get activeOrder;
+  List<Map<String, dynamic>> get registeredPayments;
+  Map<String, dynamic>? get selectedCustomer;
+  Map<String, dynamic>? get selectedRestaurant;
+  void _resetToNewSale();
+  Future<void> _load();
+  Future<bool> _decidirDanfe(
+    Map<String, dynamic> order,
+    Future<String?> salePrinter,
+  );
+  Future<void> _emitFiscalInvoice(
+    Map<String, dynamic> order, {
+    bool silentIfUnconfigured,
+    bool automatic,
+    Map<String, dynamic>? customer,
+    Future<String?>? salePrinter,
+    Future<bool>? danfe,
+  });
+
+  /// A venda está paga: libera a tela e dispara o resto em segundo plano —
+  /// recibo, "Imprimir a NFC-e?" e a nota (`paid_order_follow_ups.dart`).
+  ///
+  /// Movido de `_PaymentSection`, que segue conferindo o recebimento.
+  void _seguirDepoisDePago() {
+    final paidOrder = Map<String, dynamic>.from(activeOrder!);
+    // Lido AGORA, antes de `showNextSale` limpar a tela para a próxima venda:
+    // depois dali `registeredPayments` está vazia, e o recibo sairia sem a
+    // gaveta justamente na venda que a justifica.
+    final paidInCash = registeredPayments.any(_PaymentSection._isCashPayment);
+    final customer = selectedCustomer == null
+        ? null
+        : Map<String, dynamic>.from(selectedCustomer!);
+    startPaidOrderFollowUps(
+      showNextSale: _resetToNewSale,
+      choosePrinter: () => _chooseSalePrinter(paidOrder),
+      printReceipt: (printer) =>
+          _printSaleReceipt(paidOrder, printer, paidInCash: paidInCash),
+      // "Imprimir a NFC-e?" sai já, com a próxima venda liberada; a nota
+      // segue em segundo plano levando a resposta (`paid_order_follow_ups`).
+      askDanfe: selectedRestaurant?['ask_print_danfe'] == true
+          ? (printer) => _decidirDanfe(paidOrder, printer)
+          : null,
+      emitInvoice: (printer, danfe) => _emitFiscalInvoice(
+        paidOrder,
+        customer: customer,
+        salePrinter: printer,
+        danfe: danfe,
+        silentIfUnconfigured: true,
+        automatic: true,
+      ),
+      refreshCatalog: _load,
+      autoPrintReceipt: selectedRestaurant?['auto_print_receipt'] != false,
+    );
+  }
 
   Future<String?> _chooseSalePrinter(Map<String, dynamic> order) async {
     final saleRestaurantId = restaurantId;

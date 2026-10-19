@@ -66,7 +66,9 @@ import '../../../core/input/pdv_input_router.dart';
 import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
+import '../data/decisoes_do_danfe.dart';
 import '../data/forma_vizinha.dart';
+import '../data/nota_do_pedido.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_navigation_rail.dart';
@@ -134,6 +136,7 @@ part 'home_page_conflitos.dart';
 part 'home_page_shell.dart';
 part 'home_page_sidebar.dart';
 part 'home_page_fiscal.dart';
+part 'home_page_fiscal_espera.dart';
 part 'home_page_input.dart';
 part 'home_page_scan.dart';
 part 'home_page_scan_actions.dart';
@@ -177,6 +180,7 @@ class _HomePageState extends State<HomePage>
         _CommandView,
         _TableCommandsSection,
         _FiscalSection,
+        _FiscalEsperaSection,
         _InputSection,
         _ScanSection,
         _ScanActionsSection,

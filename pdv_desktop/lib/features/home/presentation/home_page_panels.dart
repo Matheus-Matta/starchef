@@ -52,6 +52,7 @@ mixin _PanelsSection on _HomePageShared {
     bool automatic,
     Map<String, dynamic>? customer,
     Future<String?>? salePrinter,
+    Future<bool>? danfe,
   });
   Future<void> _reprintDanfe(Map<String, dynamic> order);
 
