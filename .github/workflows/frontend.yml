@@ -66,6 +66,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,9 +103,15 @@ jobs:
         # tudo ficou parado de proposito. `github.workspace` e a raiz do repo,
         # onde os pathspecs batem com os arquivos de verdade.
         working-directory: ${{ github.workspace }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
+          # A ULTIMA TAG QUE CONSTRUIU, e nao a anterior pelo nome: tag que so
+          # re-etiquetou (ou que falhou) nao contem o codigo de agora. Foi assim
+          # que o frontend da v3.0.117 ficou fora de tres releases
+          # (`scripts/ultima_tag_construida.py`).
+          previous="$(python3 scripts/ultima_tag_construida.py frontend.yml "Build e push")"
           if [[ -z "$previous" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Sem release anterior para comparar: imagem sera construida."

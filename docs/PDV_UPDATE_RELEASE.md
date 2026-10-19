@@ -398,8 +398,17 @@ já implica ter subido a versão do PDV.
 
 ### Por que por arquivo alterado, e não pela versão declarada
 
-A decisão sai de `git diff` entre a tag anterior e a atual, e não de comparar
-versões declaradas em `pubspec.yaml`/`package.json`. Dois motivos:
+A decisão sai de `git diff` entre a ÚLTIMA TAG QUE CONSTRUIU o componente e a
+atual (`scripts/ultima_tag_construida.py`: a tag em que o passo de build —
+`Build e push`, ou `Build dos APKs` no mobile — rodou com sucesso, consultada
+na API do Actions). Não é a tag anterior pelo nome: tag que falhou, ou que só
+re-etiquetou, não contém o código de agora. Foi assim que o frontend da
+v3.0.117 (que parou na catraca) ficou fora da v3.0.118 e da v3.0.119, as duas
+com "sucesso" e re-etiquetando a imagem da v3.0.116. Sem a API (rede,
+permissão `actions: read`, limite), o script manda construir.
+
+E não de comparar versões declaradas em `pubspec.yaml`/`package.json`. Dois
+motivos:
 
 - **A falha é para o lado seguro.** Esquecer de subir uma versão faria a
   correção não ser publicada, em silêncio, e ninguém descobriria até o bug

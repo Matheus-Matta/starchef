@@ -75,6 +75,9 @@ jobs:
   release-metadata:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.garantir.outputs.version }}
       build_number: ${{ steps.garantir.outputs.build_number }}
@@ -113,6 +116,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           MANIFEST_URL: ${{ vars.PDV_MOBILE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest-mobile.json', github.repository) }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
@@ -123,7 +127,11 @@ jobs:
             exit 0
           fi
 
-          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
+          # A ULTIMA TAG QUE CONSTRUIU, e nao a anterior pelo nome: tag que so
+          # re-etiquetou (ou que falhou) nao contem o codigo de agora. Foi assim
+          # que o frontend da v3.0.117 ficou fora de tres releases
+          # (`scripts/ultima_tag_construida.py`).
+          previous="$(python3 scripts/ultima_tag_construida.py pdv_mobile.yml "Build dos APKs")"
           if [[ -z "$previous" ]]; then
             changed=true
             motivo="não há release anterior para comparar"

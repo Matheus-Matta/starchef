@@ -96,10 +96,16 @@ O compose de `docker/local/` já faz isso no boot.
   do workflow. O `pdv_mobile.yml` nunca escreve `latest.json`.
 - O pipeline deve falhar se a tag não corresponder à versão pública do
   `pubspec.yaml`.
-- `backend.yml`/`frontend.yml` decidem se reconstroem a imagem comparando o
-  conteúdo com a tag anterior (achada pelo NOME — a mais recente que não seja
-  esta —, nunca por commit ancestral do SHA anterior, que fica confuso quando
-  uma tag é apagada e recriada, como já foi preciso na v1.7.2 e na v1.8.1).
+- `backend.yml`/`frontend.yml` (e `fiscal_acbr.yml` e o APK de
+  `pdv_mobile.yml`) decidem se reconstroem comparando o conteúdo com a ÚLTIMA
+  TAG QUE CONSTRUIU o componente (`scripts/ultima_tag_construida.py`: a tag
+  em que o passo de build rodou com sucesso, consultada na API do Actions).
+  Não é "a tag anterior pelo nome": a v3.0.117 falhou na catraca, a v3.0.118
+  se comparou com ela e só re-etiquetou, a v3.0.119 se comparou com a v3.0.118
+  — e o frontend ficou fora de três releases dizendo "sucesso". Sem a API, o
+  script manda CONSTRUIR (lado seguro), nunca volta ao critério antigo. Nunca
+  use commit ancestral do SHA anterior, que fica confuso quando uma tag é
+  apagada e recriada, como já foi preciso na v1.7.2 e na v1.8.1.
   Esse passo de "o que mudou" precisa rodar com `working-directory:
   ${{ github.workspace }}` (a raiz do repo) — ele fica DENTRO de um job cujo
   default é `working-directory: backend`/`frontend`, e `git diff -- backend
