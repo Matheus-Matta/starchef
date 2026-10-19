@@ -80,6 +80,18 @@ bool aprovaOProprioDesconto(AuthUser usuario) =>
     usuario.isSuperuser ||
     const {'manager', 'admin', 'owner'}.contains(usuario.profileType);
 
+/// O total de UMA linha como o servidor grava: preço × quantidade (o peso em
+/// 3 casas), meio centavo para cima (`add_order_item`).
+///
+/// Em `double` o PDV errava o centavo: R$ 49,90 × 0,750 kg = 37,425 vira
+/// 37,42499… e saía 37,42, contra 37,43 do servidor — e a venda voltava
+/// "total mudou". São mais de mil pares realistas de preço e peso assim.
+int centavosDaLinha(double quantidade, double precoUnitario) {
+  final milesimos = (quantidade * 1000).round();
+  final preco = (precoUnitario * 100).round();
+  return (milesimos * preco + 500) ~/ 1000;
+}
+
 /// Dinheiro em CENTAVOS inteiros: nunca `double` na conta (regra do projeto).
 ///
 /// Aceita o texto do servidor ("27.50") e o número do carrinho, que soma em

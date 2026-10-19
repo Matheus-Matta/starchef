@@ -2,7 +2,12 @@ import '../../home/data/fechamento_local.dart';
 import 'order_draft_cart.dart';
 
 export '../../home/data/fechamento_local.dart'
-    show FechamentoLocal, FechamentoRecusado, aprovaOProprioDesconto, centavos;
+    show
+        FechamentoLocal,
+        FechamentoRecusado,
+        aprovaOProprioDesconto,
+        centavos,
+        centavosDaLinha;
 
 /// O pagamento abre NA HORA, já com a conta certa.
 ///
@@ -34,7 +39,18 @@ Map<String, dynamic> previaLocal(
   OrderDraftCart draft, {
   required String percentualDaTaxa,
 }) {
-  final subtotal = reais(centavos(draft.total));
+  // Linha a linha, como o servidor soma — e não `draft.total`, que é `double`.
+  final subtotal = reais(
+    draft.lines.fold<int>(
+          0,
+          (soma, linha) =>
+              soma + centavosDaLinha(linha.quantity, linha.unitPrice),
+        ) +
+        draft.itensJaLancados.fold<int>(
+          0,
+          (soma, item) => soma + centavos(item['total_price']),
+        ),
+  );
   return FechamentoLocal.aplicar(
     {
       'id': draft.orderId,
