@@ -196,7 +196,7 @@ class CashMovementsReportView(TenantReportMixin, APIView):
         summary["difference_total"] = sum((s["difference_amount"] or 0) for s in finished)
 
         page = self._positive_int(request.query_params.get("page"), 1)
-        page_size = min(self._positive_int(request.query_params.get("page_size"), 20), 200)
+        page_size = min(self._positive_int(request.query_params.get("page_size"), 20), 1000)  # tudo: a tabela ordena no navegador
         ordered = movements.order_by("-created_at")
         count = ordered.count()
         rows = CashMovementSerializer(ordered[(page - 1) * page_size : page * page_size], many=True).data

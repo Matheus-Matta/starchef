@@ -63,6 +63,7 @@ from apps.payments.views_cash_movements import CashMovementViewSet
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.imports.views import ImportJobViewSet
 from apps.reports.cash_movements import CashMovementsReportView
+from apps.reports.comandas_relatorio import CommandsReportView
 from apps.reports.coupons import CouponsReportView
 from apps.reports.product_costs import ProductCostsReportView
 from apps.restaurants.pdv_config import PdvConfigView
@@ -220,6 +221,7 @@ urlpatterns = [
     path("api/v1/reports/cash-movements/", CashMovementsReportView.as_view(), name="cash-movements-report"),
     path("api/v1/reports/product-costs/", ProductCostsReportView.as_view(), name="product-costs-report"),
     path("api/v1/reports/coupons/", CouponsReportView.as_view(), name="coupons-report"),
+    path("api/v1/reports/commands/", CommandsReportView.as_view(), name="commands-report"),
     path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),

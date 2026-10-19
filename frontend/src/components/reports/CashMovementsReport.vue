@@ -38,7 +38,7 @@
         <ReportDataTable :rows="sessionRows" :columns="sessionColumns" row-clickable @row-click="openSession" />
       </Card>
       <Card title="Movimentações" subtitle="Cada lançamento, com quem fez, onde e quem autorizou" padding="none">
-        <ReportDataTable :rows="movementRows" :columns="movementColumns" row-clickable @row-click="openMovement" />
+        <ReportDataTable :rows="movementRows" :columns="movementColumns" :total="report.pagination?.movements?.count" row-clickable @row-click="openMovement" />
       </Card>
     </div>
     <CashMovementDetailsDialog v-model:visible="movementDialog" :movement="selectedMovement" @view-session="openSessionById" />

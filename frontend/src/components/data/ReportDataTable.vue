@@ -1,38 +1,45 @@
 <template>
-  <DataTable
-    :value="rows"
-    paginator
-    :rows="10"
-    :rows-per-page-options="[10, 20, 50]"
-    paginator-template="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
-    responsive-layout="scroll"
-    striped-rows
-    class="report-data-table"
-    :row-class="rowClass"
-    @row-click="handleRowClick"
-  >
-    <Column
-      v-for="column in columns"
-      :key="column.key"
-      :field="column.key"
-      :header="column.label"
-      :sortable="column.sortable !== false"
-      :body-style="{ textAlign: column.align || 'left' }"
-      :header-style="{ textAlign: column.align || 'left' }"
+  <div>
+    <p v-if="cortada" class="report-data-table__aviso">
+      Mostrando {{ quantidade(rows.length) }} de {{ quantidade(total) }} — a ordenação vale só para
+      estas. Reduza o período para ver todas.
+    </p>
+    <DataTable
+      :value="rows"
+      paginator
+      :rows="10"
+      :rows-per-page-options="[10, 20, 50]"
+      paginator-template="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
+      responsive-layout="scroll"
+      striped-rows
+      class="report-data-table"
+      :row-class="rowClass"
+      @row-click="handleRowClick"
     >
-      <template #body="{ data }">
-        <span class="report-data-table__cell" :title="String(formatValue(data[column.key], column))">
-          {{ formatValue(data[column.key], column) }}
-        </span>
+      <Column
+        v-for="column in columns"
+        :key="column.key"
+        :field="column.key"
+        :header="column.label"
+        :sortable="column.sortable !== false"
+        :body-style="{ textAlign: column.align || 'left' }"
+        :header-style="{ textAlign: column.align || 'left' }"
+      >
+        <template #body="{ data }">
+          <span class="report-data-table__cell" :title="String(formatValue(data[column.key], column))">
+            {{ formatValue(data[column.key], column) }}
+          </span>
+        </template>
+      </Column>
+      <template #empty>
+        <div class="report-data-table__empty">Sem dados no período selecionado.</div>
       </template>
-    </Column>
-    <template #empty>
-      <div class="report-data-table__empty">Sem dados no período selecionado.</div>
-    </template>
-  </DataTable>
+    </DataTable>
+  </div>
 </template>
 
 <script setup>
+import { computed } from "vue";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 
@@ -42,7 +49,13 @@ const props = defineProps({
   rows: { type: Array, required: true },
   columns: { type: Array, required: true },
   rowClickable: { type: Boolean, default: false },
+  // Quantas linhas EXISTEM no servidor. Maior que `rows`: a lista veio cortada
+  // no teto e a ordenação daqui não enxerga o resto — a tela precisa dizer.
+  total: { type: Number, default: null },
 });
+
+const cortada = computed(() => props.total != null && props.total > props.rows.length);
+const quantidade = (valor) => Number(valor || 0).toLocaleString("pt-BR");
 const emit = defineEmits(["row-click"]);
 
 function rowClass() {
@@ -59,6 +72,14 @@ function formatValue(value, column) {
 </script>
 
 <style scoped>
+.report-data-table__aviso {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--surface-hover);
+}
+
 .report-data-table__empty {
   padding: 28px;
   color: var(--text-muted);

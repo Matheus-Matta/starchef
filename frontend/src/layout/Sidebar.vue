@@ -347,6 +347,7 @@ const groups = computed(() =>
             { id: "relatorio-pagamentos", label: "Pagamentos" },
             { id: "relatorio-caixa", label: "Caixa" },
             { id: "relatorio-cupons", label: "Cupons" },
+            { id: "relatorio-comandas", label: "Comandas" },
             { id: "relatorio-custos", label: "Custo × venda" },
             hasModule("logistica") ? { id: "relatorio-estoque", label: "Estoque" } : null,
             { id: "relatorio-garcons", label: "Garçons" },

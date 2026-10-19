@@ -5,6 +5,7 @@ Cobre: produto com e sem categoria, ativo/inativo, categoria (criação válida,
 duplicidade → 409, campo obrigatório), filtros/busca/ordenação/paginação e
 isolamento por restaurante.
 """
+import unicodedata
 import uuid
 
 import pytest
@@ -204,7 +205,14 @@ def test_products_search_and_ordering(api_client, restaurant, branch):
 
     resp = api_client.get("/api/v1/menu/products/?ordering=name")
     names = [row["name"] for row in resp.data["results"]]
-    assert names == sorted(names)
+    # O acento ordena conforme o banco: o SQLite compara o código do caractere
+    # ("Água" no fim) e o Postgres segue o português ("Água" antes de "Café").
+    # Os dois valem; o `sorted()` puro do Python só batia com o SQLite.
+    sem_acento = sorted(names, key=lambda n: unicodedata.normalize("NFKD", n).encode("ascii", "ignore").lower())
+    assert names in (sorted(names), sem_acento), names
+
+    resp = api_client.get("/api/v1/menu/products/?ordering=-name")
+    assert [row["name"] for row in resp.data["results"]] == list(reversed(names))
 
 
 def test_products_pagination_envelope(api_client, restaurant, branch):

@@ -9,20 +9,24 @@ export const endpoints = {
   waiter: "/reports/waiters/",
   restaurant: "/reports/restaurants/",
   coupon: "/reports/coupons/",
+  command: "/reports/commands/",
   cost: "/reports/product-costs/",
 };
+
+/**
+ * Linhas por lista de relatório: TODAS, até este teto (o do servidor).
+ *
+ * A tabela do relatório ordena e pagina no navegador. Pedindo 10 linhas, a
+ * seção mostrava 10 e a tabela achava que eram todas: ordenar "do maior para
+ * o menor" escolhia o maior entre as 10. Passando do teto, a tabela avisa
+ * (`ReportDataTable`, `total`).
+ */
+export const LINHAS_DO_RELATORIO = 1000;
 
 export const reportService = {
   async get(section, filters = {}) {
     const response = await api.get(endpoints[section] || endpoints.sales, {
-      // O DataTable pagina de 10 em 10 no cliente. Para produtos, carregamos o
-      // conjunto consolidado para que ordenar por quantidade não considere
-      // apenas os 10 primeiros por faturamento.
-      params: {
-        page: 1,
-        page_size: ["product", "waiter", "sales"].includes(section) ? 100 : 10,
-        ...filters,
-      },
+      params: { page: 1, page_size: LINHAS_DO_RELATORIO, ...filters },
     });
     return response.data || {};
   },

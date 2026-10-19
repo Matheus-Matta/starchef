@@ -435,7 +435,8 @@ REST_FRAMEWORK = {
         "django_filters.rest_framework.DjangoFilterBackend",
         "apps.data_exchange.filters.AdvancedFieldFilterBackend",
         "rest_framework.filters.SearchFilter",
-        "rest_framework.filters.OrderingFilter",
+        # A coluna da tela, em todos os registros (`apps/core/ordenacao.py`).
+        "apps.core.ordenacao.OrdenacaoPorColuna",
     ),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "apps.core.exceptions.api_exception_handler",

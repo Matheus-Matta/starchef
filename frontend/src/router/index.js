@@ -214,6 +214,7 @@ export const router = createRouter({
         { path: "relatorios/estoque", name: "relatorio-estoque", component: StockPositionView, meta: { requiresAuth: true, title: "Relatório de estoque", nav: "relatorio-estoque", module: "logistica" } },
         { path: "relatorios/custos", name: "relatorio-custos", component: ReportsView, props: { section: "cost" }, meta: { requiresAuth: true, title: "Custo × venda por produto", nav: "relatorio-custos" } },
         { path: "relatorios/cupons", name: "relatorio-cupons", component: ReportsView, props: { section: "coupon" }, meta: { requiresAuth: true, title: "Relatório de cupons", nav: "relatorio-cupons" } },
+        { path: "relatorios/comandas", name: "relatorio-comandas", component: ReportsView, props: { section: "command" }, meta: { requiresAuth: true, title: "Relatório de comandas", nav: "relatorio-comandas" } },
         { path: "relatorios/caixa", name: "relatorio-caixa", component: ReportsView, props: { section: "cash" }, meta: { requiresAuth: true, title: "Relatório de caixa", nav: "relatorio-caixa" } },
         { path: "relatorios/filiais", redirect: { name: "relatorio-restaurantes" } },
         ...resourceRoutes,

@@ -25,6 +25,9 @@ export function useResourceList({ service, defaultParams = {}, buildParams, page
   const page = ref(1);
   const rowsPerPage = ref(pageSize);
   const ordering = ref(""); // formato DRF: "campo" (asc) ou "-campo" (desc)
+  // As colunas que o SERVIDOR sabe ordenar (`orderable` da resposta). `null` é
+  // servidor antigo, que não informa: aí nenhuma coluna perde a ordenação.
+  const orderable = ref(null);
   const nextUrl = ref("");
   const previousUrl = ref("");
   const loading = ref(false);
@@ -38,6 +41,16 @@ export function useResourceList({ service, defaultParams = {}, buildParams, page
     total.value = data.count ?? rows.value.length;
     nextUrl.value = data.next || "";
     previousUrl.value = data.previous || "";
+    orderable.value = Array.isArray(data?.orderable) ? data.orderable : null;
+  }
+
+  /**
+   * A coluna pode ser ordenada? A ordem é do servidor e vale para TODOS os
+   * registros — oferecer ordenação numa coluna que ele não sabe ordenar
+   * devolvia a mesma ordem e parecia defeito.
+   */
+  function canSort(key) {
+    return orderable.value === null || orderable.value.includes(key);
   }
 
   /** Executa uma requisição protegida por loading/erro (mensagem normalizada). */
@@ -109,7 +122,7 @@ export function useResourceList({ service, defaultParams = {}, buildParams, page
   }
 
   return {
-    rows, total, page, rowsPerPage, ordering, nextUrl, previousUrl, loading, error, search,
-    load, reload, goToPage, setPageSize, setSort, loadUrl,
+    rows, total, page, rowsPerPage, ordering, orderable, nextUrl, previousUrl, loading, error, search,
+    load, reload, goToPage, setPageSize, setSort, loadUrl, canSort,
   };
 }

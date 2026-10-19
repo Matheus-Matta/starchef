@@ -321,7 +321,7 @@ class SalesReportView(TenantReportMixin, APIView):
         }
         keys = section_keys.get(self.report_section, section_keys["sales"])
         page = self._positive_int(request.query_params.get("page"), 1)
-        page_size = min(self._positive_int(request.query_params.get("page_size"), 10), 100)
+        page_size = min(self._positive_int(request.query_params.get("page_size"), 10), 1000)  # tudo: a tabela ordena no navegador
         pagination = {}
 
         for key in section_keys["sales"]:

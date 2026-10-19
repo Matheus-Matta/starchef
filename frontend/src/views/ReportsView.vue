@@ -82,6 +82,7 @@
     <CashMovementsReport v-if="section === 'cash'" :report="report" :bar-options="barOptions" />
     <ProductCostsReport v-if="section === 'cost'" :report="report" />
     <CouponsReport v-if="section === 'coupon'" :report="report" :filters="{ date_from: dateFrom, date_to: dateTo, restaurant: selectedRestaurantId }" />
+    <CommandsReport v-if="section === 'command'" :report="report" />
 
     <div v-if="section === 'sales'" class="responsive-kpi-grid">
       <StatCard label="Total vendido" :value="money(report.total)" tone="success" caption="Periodo selecionado">
@@ -186,7 +187,7 @@
         <div class="report-chart report-chart--wide"><Chart type="bar" :data="productChartData" :options="barOptions" /></div>
       </Card>
       <Card title="Vendas por produto" padding="none">
-        <ReportDataTable :rows="productRows" :columns="productColumns" row-clickable @row-click="openProductSales" />
+        <ReportDataTable :rows="productRows" :columns="productColumns" :total="report.pagination?.by_product?.count" row-clickable @row-click="openProductSales" />
       </Card>
     </div>
 
@@ -251,6 +252,7 @@ import AppDateRange from "../components/form/AppDateRange.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
 import CashMovementsReport from "../components/reports/CashMovementsReport.vue";
 import CouponsReport from "../components/reports/CouponsReport.vue";
+import CommandsReport from "../components/reports/CommandsReport.vue";
 import ProductCostsReport from "../components/reports/ProductCostsReport.vue";
 import SalesHeatmap from "../components/reports/SalesHeatmap.vue";
 import OrdersCancellationsPanel from "../components/reports/OrdersCancellationsPanel.vue";
@@ -535,8 +537,8 @@ function fetchReport() {
       date_to: dateTo.value,
       restaurant: selectedRestaurantId.value,
       ...(props.section === "product" ? productFilters : {}),
-      ...(props.section === "cash" ? { ...cashFilters, page_size: 200 } : {}),
-      ...(props.section === "orders" ? { ...ordersFilters, page_size: 200 } : {}),
+      ...(props.section === "cash" ? cashFilters : {}),
+      ...(props.section === "orders" ? ordersFilters : {}),
   });
 }
 
@@ -613,7 +615,7 @@ async function exportCsv() {
   const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = blobUrl;
-  const prefix = { cash: "caixa", orders: "pedidos" }[props.section] || "vendas";
+  const prefix = { cash: "caixa", orders: "pedidos", command: "comandas_em_uso" }[props.section] || "vendas";
   a.setAttribute("download", `${prefix}_${dateFrom.value}_${dateTo.value}.csv`);
   document.body.appendChild(a);
   a.click();

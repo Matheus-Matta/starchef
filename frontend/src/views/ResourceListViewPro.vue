@@ -353,7 +353,7 @@
         :row-hover="true"
         :scrollable="props.endpoint !== '/inbound-nfe/'"
         :scroll-height="props.endpoint !== '/inbound-nfe/' ? 'flex' : undefined"
-        removable-sort
+        removable-sort lazy
         :sort-field="sortField"
         :sort-order="sortOrder"
         @sort="onSort"
@@ -367,7 +367,7 @@
           :key="column.key"
           :field="column.key"
           :header="column.label"
-          :sortable="column.sortable !== false"
+          :sortable="column.sortable !== false && canSort(column.key)"
           :body-style="columnBodyStyle(column)"
           :header-class="column.align === 'right' ? 'dt-col-right' : undefined"
         >
@@ -2608,7 +2608,7 @@ function buildProParams() {
 const service = new ResourceService({ endpoint: props.endpoint, globalScope: props.globalScope });
 const {
   rows, total, page, rowsPerPage, ordering, loading, error, search,
-  reload, goToPage, setSort, setPageSize,
+  reload, goToPage, setSort, setPageSize, canSort,
 } = useResourceList({
   service,
   defaultParams: props.defaultParams,
@@ -2739,7 +2739,7 @@ const advancedFilterFields = computed(() => {
 
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (rowsPerPage.value || 1))));
 
-/* ── Ordenação server-side ─────────────────────────────────────────── */
+/* ── Ordenação server-side: `lazy` na tabela, para ela NÃO reordenar a página ─ */
 const sortField = computed(() => (ordering.value ? ordering.value.replace(/^-/, "") : null));
 const sortOrder = computed(() => (ordering.value ? (ordering.value.startsWith("-") ? -1 : 1) : null));
 function onSort(event) {

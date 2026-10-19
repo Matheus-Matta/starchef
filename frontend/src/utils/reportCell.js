@@ -5,6 +5,8 @@
  * chega como "10.00000000000000". Número com casas decimais passa a ter no
  * máximo 2; `digits` na coluna pede mais (peso em kg, por exemplo).
  */
+import { duracao } from "./duracao";
+
 const DECIMAL = /^-?\d+\.\d+$/;
 
 function decimal(value, digits = 2) {
@@ -16,6 +18,9 @@ export function formatReportCell(value, column = {}) {
     return Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   }
   if (column.type === "decimal") return decimal(value, column.digits ?? 2);
+  // Minutos guardados como número (a coluna ordena pelo tempo) e lidos como
+  // "1 h 25 min": guardados como texto, "45 min" vinha depois de "1 h".
+  if (column.type === "duration") return duracao(value);
   if (value == null || value === "") return "—";
   if ((typeof value === "number" && !Number.isInteger(value)) || (typeof value === "string" && DECIMAL.test(value))) {
     return decimal(value, column.digits ?? 2);
