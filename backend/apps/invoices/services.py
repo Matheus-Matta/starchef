@@ -20,7 +20,7 @@ from django.utils.dateparse import parse_datetime
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
-from apps.invoices.emissao_da_loja import avancar_contador, serie_desta_emissao
+from apps.invoices.emissao_da_loja import avancar_contador, numero_desta_emissao, serie_desta_emissao
 from apps.invoices.emission_secrets import segredos_de
 from apps.customers.validators import is_valid_cnpj, is_valid_cpf, strip_cnpj, strip_cpf
 from apps.invoices.fiscal import (
@@ -588,7 +588,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
                 # Ordem fixa pedido → configuração em toda emissão: sem deadlock.
                 config = FiscalConfig.objects.select_for_update().get(pk=config.pk)
                 serie, contador = serie_desta_emissao(order, config)
-                number = _proximo_numero_livre(config, serie, contador)
+                number, cnf_da_nota = numero_desta_emissao(existing, config, serie, contador)
                 # O CSC pode não estar gravado aqui: a loja não recebe segredo de
                 # emissão pela sincronização. Resolvido UMA vez por emissão — o
                 # empréstimo tem cache em memória, mas duas chamadas seriam duas
@@ -601,7 +601,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
                     cnpj=config.cnpj,
                     model=config.document_model,
                     series=serie,
-                    number=number,
+                    number=number, numeric_code=cnf_da_nota,
                 )
                 qr_data = build_nfce_qrcode(
                     access_key=access_key,

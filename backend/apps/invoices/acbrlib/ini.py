@@ -57,10 +57,15 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
         "vTotTrib": documento["valor_total_tributos"],
     })
     secao("Transportador", {"modFrete": documento.get("modalidade_frete", "9")})
-    for n, pagamento in enumerate(documento["formas_pagamento"], start=1):
-        secao(f"pag{n:03d}", _pagamento(pagamento))
-    if documento.get("valor_troco"):
-        secao("pag", {"vTroco": documento["valor_troco"]})
+    formas = documento["formas_pagamento"]
+    for n, pagamento in enumerate(formas, start=1):
+        campos = _pagamento(pagamento)
+        # O troco vai DENTRO da seção do pagamento: é só ali que a ACBrLib o lê
+        # (`ACBrNFe.IniReader.pas`, `Ler_Pagamento`). Numa seção `[pag]` à
+        # parte ele era ignorado, e toda venda com troco voltava 866.
+        if n == len(formas) and documento.get("valor_troco"):
+            campos["vTroco"] = documento["valor_troco"]
+        secao(f"pag{n:03d}", campos)
     return "\n".join(linhas)
 
 

@@ -162,14 +162,16 @@ def test_numero_que_e_desta_mesma_nota_e_adotado_sem_reemitir(ambiente, monkeypa
 
 
 def test_numero_usado_de_novo_no_reenvio_vira_erro_sem_laco(ambiente, monkeypatch):
-    """Uma troca de número por tentativa: a segunda recusa fica para o humano."""
+    """A série inteira ocupada: anda até o teto e para — a recusa fica para o humano."""
+    from apps.invoices.numero_ja_usado import TENTATIVAS_DE_NUMERO
+
     sefaz = SefazComNumeroUsado(cnf=CNF_DE_OUTRO_EMISSOR, recusar_sempre=True)
 
     nota = _emitir_com(ambiente, monkeypatch, sefaz)
 
     assert nota.status == Invoice.STATUS_ERROR
     assert "613" in nota.error_message
-    assert [c[0] for c in sefaz.chamadas].count("/v1/nfe/emitir") == 2
+    assert [c[0] for c in sefaz.chamadas].count("/v1/nfe/emitir") == 1 + TENTATIVAS_DE_NUMERO
 
 
 def test_rejeicao_comum_nao_mexe_no_numero(ambiente, monkeypatch):

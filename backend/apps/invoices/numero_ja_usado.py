@@ -13,8 +13,11 @@ tentativas (normal, contingência, reenvio):
 * **cNF diferente: é de outro emissor** — outro servidor com o mesmo CNPJ e
   série (loja e um ambiente de teste com bancos separados), ou o contador
   voltado para trás. O número está queimado: a nota é refeita no próximo
-  número livre, cNF novo, e reenviada UMA vez. Fica registrado em
-  `numero_ja_usado_na_sefaz` por que ela pulou o número.
+  número livre, cNF novo, e reenviada — e, se o seguinte também for de outro
+  emissor, segue andando até `TENTATIVAS_DE_NUMERO`. Andar UM por tentativa
+  deixava o operador reenviando e recebendo 613 a cada clique com o contador
+  alguns números atrás. Fica registrado em `numero_ja_usado_na_sefaz` por que
+  ela pulou.
 
 Só a ACBrLib: na Focus quem numera é a Focus.
 """
@@ -30,6 +33,9 @@ from apps.invoices.providers_erros import FiscalRejection
 logger = logging.getLogger(__name__)
 
 CODIGOS = ("613", "539")
+#: Quantos números a nota anda numa emissão quando outro emissor ocupa a série.
+#: O teto existe: um contador muito atrás é cadastro a corrigir, não laço.
+TENTATIVAS_DE_NUMERO = 10
 _CHAVE = re.compile(r"(?<!\d)(\d{44})(?!\d)")
 
 
@@ -77,6 +83,20 @@ def _adotar(provider, invoice, config, chave, erro):
 
 
 def _reemitir_no_proximo_numero(provider, invoice, config, chave):
+    tentativa = 0
+    while True:
+        tentativa += 1
+        travada = _trocar_de_numero(invoice, config, chave)
+        try:
+            return provider.emit(invoice, travada)
+        except FiscalRejection as erro:
+            proxima = chave_existente(erro)
+            if proxima is None or tentativa == TENTATIVAS_DE_NUMERO:
+                raise
+            chave = proxima
+
+
+def _trocar_de_numero(invoice, config, chave):
     from apps.invoices.emissao_da_loja import avancar_contador, serie_desta_emissao
     from apps.invoices.services import _proximo_numero_livre, _refresh_emission_for_retry
 
@@ -103,5 +123,4 @@ def _reemitir_no_proximo_numero(provider, invoice, config, chave):
     _refresh_emission_for_retry(invoice, travada)  # chave e QR do número novo, cNF novo
     logger.warning("Nota %s: a SEFAZ já tem o número %s (%s); reemitida como %s.",
                    invoice.pk, numero_queimado, chave, numero)
-    # UMA vez: se o próximo também estiver usado, a recusa sobe para o humano.
-    return provider.emit(invoice, travada)
+    return travada

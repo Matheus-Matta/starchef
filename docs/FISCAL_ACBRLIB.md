@@ -327,6 +327,19 @@ do dinheiro, e a nota com cartão/PIX pago a mais (ou desconto dado depois de
 pagar) saía sem `vTroco`. Vale para a ACBrLib e para a Focus (o documento é o
 mesmo).
 
+No INI da ACBrLib o `vTroco` vai DENTRO da última seção `[pagNNN]`: é só ali
+que o leitor da lib o lê (`ACBrNFe.IniReader.pas`, `Ler_Pagamento`). Ele ia
+numa seção `[pag]` à parte, que a lib ignorava — e toda venda com troco
+voltava 866 mesmo com o valor certo no arquivo. O teste lê o INI como a ACBr
+lê (`test_rejeicoes_que_voltavam.py`), e não procura a chave em qualquer lugar.
+
+**386 — CFOP não permitido para o CSOSN.** Na NFC-e do Simples, o CSOSN 500
+(ST já recolhida) só aceita CFOP 5405, 5656 ou 5667, e os CSOSN 101, 102, 103,
+300, 400 e 900 só aceitam 5101–5104 e 5115. O cadastro guarda os dois
+separados; o par que não combina sai com o CFOP padrão do CSOSN (5405 ou
+5102), e a troca vai para o log (`cfop_do_csosn.py`). O CFOP da venda ao
+consumidor é consequência do CSOSN; no Simples ele não muda imposto nenhum.
+
 **613/539 — Chave difere da existente em BD.** A SEFAZ já tem uma nota
 autorizada com a nossa série e número e devolve a chave dela entre colchetes
 (`numero_ja_usado.py`, só ACBrLib). O `cNF` decide de quem ela é, porque cada
@@ -338,9 +351,19 @@ nota nossa mantém o mesmo `cNF` em todas as tentativas:
 * **cNF diferente** — outro emissor usou o número (dois servidores com o mesmo
   CNPJ e série em bancos separados, como a loja e uma nuvem de teste; ou o
   contador voltado para trás). O número está queimado: a nota é refeita no
-  próximo número livre, com `cNF` novo, e reenviada UMA vez. O motivo fica em
-  `fiscal_payload["numero_ja_usado_na_sefaz"]`. Se o seguinte também estiver
-  usado, a recusa fica na nota para correção.
+  próximo número livre, com `cNF` novo, e reenviada; se o seguinte também
+  for de outro emissor, segue andando até `TENTATIVAS_DE_NUMERO` (10) — andar
+  um por reenvio deixava o operador clicando e recebendo 613 com o contador
+  alguns números atrás. O motivo fica em
+  `fiscal_payload["numero_ja_usado_na_sefaz"]`. Passando do teto, a recusa
+  fica na nota para correção do cadastro.
+
+**A nota recusada emitida de novo mantém número e `cNF`**
+(`numero_desta_emissao`). Recusa não gasta o número na SEFAZ. Antes, cada
+"emitir de novo" de uma nota em erro (o botão do PDV, a emissão automática)
+dava número e `cNF` novos: um buraco na série por tentativa, e a nota deixava
+de se reconhecer quando uma tentativa anterior tinha sido autorizada — virava
+"nota de outro emissor" (613) e podia sair uma segunda nota para a mesma venda.
 
 A causa da 613 com cNF diferente é sempre fora do código: **dois pontos
 emitindo na mesma série**. Cada ponto de emissão precisa da sua série — inclusive

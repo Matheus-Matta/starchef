@@ -12,7 +12,9 @@ recusou.
 """
 from decimal import Decimal
 
+from apps.invoices import cfop_do_csosn
 from apps.invoices.fiscal import only_digits
+from apps.invoices.models import FiscalConfig
 from apps.invoices.documento_regras import DocumentoRegras
 from apps.invoices.providers_erros import FiscalRejection
 
@@ -42,6 +44,11 @@ class DocumentoFiscal(DocumentoRegras):
             "cofins_valor": str(item.cofins_value),
             "valor_total_tributos": str(item.approx_tax_value),
         }
+        if (str(config.crt) in {FiscalConfig.CRT_SIMPLES, FiscalConfig.CRT_SIMPLES_EXCESSO}
+                and str(config.document_model) == FiscalConfig.MODEL_NFCE):
+            # O par CFOP × CSOSN que a SEFAZ recusa (386) sai acertado.
+            payload["cfop"] = cfop_do_csosn.ajustar(
+                payload["cfop"], payload["icms_situacao_tributaria"], descricao=item.description)
         if item.cest:
             payload["codigo_cest"] = item.cest
         if discount:

@@ -87,6 +87,27 @@ def serie_desta_emissao(order, config):
     return config.series, "next_number"
 
 
+def numero_desta_emissao(existente, config, serie, contador):
+    """`(número, cNF)` da emissão: os da nota RECUSADA que é emitida de novo.
+
+    Recusa não gasta o número na SEFAZ. Dar número novo a cada tentativa
+    abria um buraco na série por recusa e trocava o cNF — e o cNF é como a nota
+    se reconhece quando uma tentativa anterior foi autorizada
+    (`numero_ja_usado.py`): trocado, ela virava "nota de outro emissor" (613)
+    e podia sair uma segunda nota para a mesma venda. `cNF` None = sortear.
+    """
+    from apps.invoices.models import Invoice
+    from apps.invoices.services import _proximo_numero_livre
+
+    if (existente is not None and existente.status == Invoice.STATUS_ERROR
+            and (existente.number or "").strip()
+            and str(existente.series) == str(serie)
+            and existente.environment == config.environment
+            and existente.document_model == config.document_model):
+        return int(existente.number), (existente.fiscal_payload or {}).get("cNF")
+    return _proximo_numero_livre(config, serie, contador), None
+
+
 def avancar_contador(config, campo, numero):
     """O contador só anda para FRENTE, comparado com o que está no banco.
 
