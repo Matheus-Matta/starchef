@@ -175,6 +175,9 @@ class InboundNFe(TenantModel):
     MANIFEST_UNKNOWN = "unknown_operation"
     MANIFEST_NOT_PERFORMED = "operation_not_performed"
     MANIFEST_ERROR = "manifestation_error"
+    # A Ciência voltou 655: a nota já tem Confirmação, Desconhecimento ou
+    # Operação não Realizada (services/manifestacao_final.py). Não é erro.
+    MANIFEST_FINAL_EXISTS = "final_manifestation_exists"
 
     RECEIVING_NOT_STARTED = "not_started"
     RECEIVING_PENDING = "pending"

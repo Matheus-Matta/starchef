@@ -318,8 +318,9 @@ class CommandViewSet(ResumoDosItensMixin, ScannableCodesMixin, BaseTenantViewSet
     queryset = Command.objects.select_related("restaurant", "branch", "current_table").all()
     filterset_class = CommandFilterSet
     search_fields = ["number", "code", "customer_name"]
-    # `status` não ordena (não é coluna): filtre por `status=occupied`.
     ordering_fields = ["number", "updated_at"]
+    # `status` é calculado; ordena pela anotação de `anotar_estado`.
+    ordenacao_das_colunas = {"status": "ordem_do_status"}
     MAX_BULK_COMMANDS = 200
 
     def get_queryset(self):

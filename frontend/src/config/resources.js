@@ -70,6 +70,8 @@ import { invoiceColumns, invoiceProConfig } from "./invoiceResource";
 import { promotionResources } from "./promotionResources";
 import { formatMoney } from "../utils/format";
 
+const optionsFromLabels = (labels) => Object.entries(labels).map(([value, label]) => ({ value, label }));
+
 /**
  * O aviso que aparece abaixo dos campos de preço do produto.
  *
@@ -217,6 +219,21 @@ export const resources = [
     pro: {
       bulkDeleteEndpoint: "/commands/bulk-delete/",
       bulkUpdateEndpoint: "/commands/bulk-update/",
+      // `param` manda o filtro como a API da comanda o conhece (`?status=`,
+      // `?number_min=`). `status` é calculado: o `filter__status` genérico
+      // seria ignorado e a lista viria inteira.
+      filterFields: [
+        { name: "status", param: "status", label: "Status", compact: true, options: optionsFromLabels(COMMAND_STATUS_LABELS) },
+        { name: "is_active", param: "is_active", label: "Situação", compact: true, options: [{ value: "true", label: "Ativas" }, { value: "false", label: "Inativas" }] },
+      ],
+      // Sem esta lista o "Mais filtros" copiava o formulário de cadastro
+      // ("Número da comanda (opcional)").
+      advancedFilters: [
+        { name: "number_min", param: "number_min", label: "Comanda de", type: "number" },
+        { name: "number_max", param: "number_max", label: "Comanda até", type: "number" },
+        { name: "customer_name", label: "Cliente", type: "text" },
+        { name: "code", label: "Código", type: "text" },
+      ],
       headerActions: [
         { key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-create", bulkType: "commands" },
         // O que a comanda da Balança Rápida imprime abaixo do peso (CommandLinesDialog).

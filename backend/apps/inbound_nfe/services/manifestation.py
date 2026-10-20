@@ -18,6 +18,12 @@ from apps.inbound_nfe.services.signer import (
     verify_xml_signature,
     NFE_NS,
 )
+from apps.inbound_nfe.services.manifestacao_final import (
+    CSTAT_JA_TEM_FINAL,
+    MENSAGEM as MENSAGEM_FINAL,
+    ja_tem_manifestacao_final,
+    tratar_ja_tem_final,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +330,12 @@ def register_science(invoice, user=None) -> tuple[bool, str]:
     if not invoice or not invoice.access_key:
         return False, "Chave de acesso inválida."
 
+    # Nota já manifestada (inclusive depois de um 655): a SEFAZ recusaria a
+    # Ciência de novo. Antes da idempotência, que voltaria Confirmada para
+    # "ciência registrada".
+    if ja_tem_manifestacao_final(invoice):
+        return True, MENSAGEM_FINAL
+
     # 1. Idempotência: verificar se evento 210210 já foi aceito anteriormente
     existing = NFeManifestation.all_objects.filter(
         invoice=invoice,
@@ -449,6 +461,11 @@ def register_science(invoice, user=None) -> tuple[bool, str]:
                 logger.warning(f"Não foi possível enfileirar fetch_full_xml_task: {exc}")
 
             return True, f"Ciência da Operação registrada (Prot: {manifestation.protocol}). Aguardando liberação do XML pela SEFAZ."
+
+        elif resp.event_cstat == CSTAT_JA_TEM_FINAL:
+            manifestation.status = NFeManifestation.STATUS_REJECTED
+            manifestation.save()
+            return tratar_ja_tem_final(invoice)
 
         else:
             manifestation.status = NFeManifestation.STATUS_REJECTED

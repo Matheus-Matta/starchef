@@ -516,9 +516,12 @@ class InboundNFeViewSet(BaseTenantViewSet):
         Dispara a Ciência da Operação (evento 210210) oficial na SEFAZ e,
         se aceito, busca imediatamente o XML completo (procNFe) via consChNFe.
         """
+        from apps.inbound_nfe.services.manifestacao_final import SEM_REENVIO, ja_tem_manifestacao_final
         from apps.inbound_nfe.services.manifestation import register_science
 
         invoice = self.get_object()
+        if ja_tem_manifestacao_final(invoice):
+            return Response({**SEM_REENVIO, "invoice": self.get_serializer(invoice).data})
         success, message = register_science(invoice, user=request.user)
 
         invoice.refresh_from_db()

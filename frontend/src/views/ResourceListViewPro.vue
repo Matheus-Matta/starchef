@@ -2588,13 +2588,20 @@ function setInboundFilter(val) {
 
 /** Filtros dinâmicos da tela: período (os demais irão para "filtros avançados"). */
 function buildProParams() {
+  // Filtro com `param` vai com o nome que a API conhece; o resto, pelo
+  // `filter__` genérico, que só sabe filtrar coluna do banco.
+  const paramDoFiltro = Object.fromEntries(
+    [...(proCfg.value.filterFields || []), ...(proCfg.value.advancedFilters || [])]
+      .filter((field) => field.param)
+      .map((field) => [field.name, field.param]),
+  );
   const params = {
     ...linkFilters.value,
     ...dateParams(),
     ...Object.fromEntries(
       Object.entries(advancedFilters)
         .filter(([, value]) => value !== "" && value != null)
-        .map(([key, value]) => [`filter__${key}`, value]),
+        .map(([key, value]) => [paramDoFiltro[key] || `filter__${key}`, value]),
     ),
   };
   if (props.endpoint === "/inbound-nfe/" && inboundStatusFilter.value && inboundStatusFilter.value !== "all") {
@@ -2716,6 +2723,7 @@ const activeFilterCount = computed(() =>
 );
 
 const advancedFilterFields = computed(() => {
+  if (proCfg.value.advancedFilters) return proCfg.value.advancedFilters;
   const excluded = new Set(["textarea", "password", "json", "remote-multiselect"]);
   const fields = (props.formFields || [])
     .filter((field) => !excluded.has(field.type) && field.name !== "restaurants")

@@ -17,7 +17,7 @@ partir do model e descartava a anotação declarada no corpo da classe.
 """
 from decimal import Decimal
 
-from django.db.models import Count, DecimalField, Exists, OuterRef, Q, Sum, Value
+from django.db.models import BooleanField, Case, Count, DecimalField, Exists, OuterRef, Q, Sum, Value, When
 from django.db.models.functions import Coalesce
 
 
@@ -41,6 +41,15 @@ def anotar_estado(queryset):
                 pk=OuterRef("current_order_id"),
                 status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
             )
+        ),
+    )
+    # O `status` da tela ("Livre"/"Em uso") como valor do banco: é por ele que
+    # a coluna ordena todas as páginas, não só a que está aberta.
+    anotado = anotado.annotate(
+        ordem_do_status=Case(
+            When(Q(pendentes__gt=0) | Q(pedido_aberto=True), then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
         ),
     )
     # A contagem vira GROUP BY, e o Django ignora `Meta.ordering` em consulta
