@@ -52,8 +52,9 @@ mixin _DraftSection on _HomePageShared {
     double? weightKg,
     String? scaleReadingId,
   }) {
+    late OrderDraftLine incluida;
     setState(() {
-      draft.add(
+      incluida = draft.add(
         OrderDraftLine(
           id: '',
           productId: '${product['id']}',
@@ -73,6 +74,12 @@ mixin _DraftSection on _HomePageShared {
         ),
       );
     });
+    // Esc tira o último prato passado, sem apagar os anteriores.
+    draft.desfazer.empilhar(
+      'order',
+      incluida.productName,
+      () => setState(() => draft.desfazerInclusao(incluida)),
+    );
   }
 
   /// Muda a quantidade de uma linha do rascunho — sem ida ao servidor.

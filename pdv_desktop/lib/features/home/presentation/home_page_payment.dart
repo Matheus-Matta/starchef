@@ -118,23 +118,20 @@ mixin _PaymentSection on _HomePageShared {
     // Venda simulada: o pedido ainda não existe no servidor — não há o que
     // recarregar nem recebimento gravado; só as formas de pagamento.
     final simulada = draft.simulada;
+    // As formas já vieram com o catálogo na abertura do PDV. Na venda nova a
+    // tela abre COM elas e a lista é relida em segundo plano: esperar essa
+    // leitura era de 0,5 a 4 s na nuvem com a tela parada (pdv.log).
+    final jaTemFormas = simulada && paymentMethods.isNotEmpty;
+    if (jaTemFormas) unawaited(_atualizarFormasDePagamento());
     final resultados = await Future.wait([
       simulada
           ? Future<Object?>.value()
           : _refreshOrder()
                 .then<Object?>((_) => null)
                 .catchError((Object _) => null),
-      _list(
-        '/payments/methods/',
-        // A MESMA consulta do catálogo (`pdv_catalog.dart`): uma entrada de
-        // cache serve às duas, e a mais usada vem primeiro e já selecionada.
-        query: {
-          'restaurant': restaurantId,
-          'is_active': true,
-          'page_size': 100,
-          'ordering': '-uso,name',
-        },
-      ),
+      jaTemFormas
+          ? Future.value(paymentMethods)
+          : _list('/payments/methods/', query: _consultaDasFormas),
       // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem
       // pagamentos — tratar isso como falha impediria de receber offline, que
       // é exatamente quando o operador mais precisa concluir a venda.
@@ -153,9 +150,40 @@ mixin _PaymentSection on _HomePageShared {
     paymentReference.clear();
     // Um ajuste ainda no ar de uma visita anterior não vale para esta.
     calculoDoTotal.descartar();
+    // O Esc desta visita só desfaz o que for feito NELA.
+    draft.desfazer.esquecer('payment');
     couponBusy = false;
     adjustBusy = false;
     setState(() => flowStep = 'payment');
+  }
+
+  /// A MESMA consulta do catálogo (`pdv_catalog.dart`): uma entrada de cache
+  /// serve às duas, e a mais usada vem primeiro e já selecionada.
+  Map<String, dynamic> get _consultaDasFormas => {
+    'restaurant': restaurantId,
+    'is_active': true,
+    'page_size': 100,
+    'ordering': '-uso,name',
+  };
+
+  /// Relê as formas sem segurar a tela; a escolhida continua escolhida.
+  Future<void> _atualizarFormasDePagamento() async {
+    try {
+      final formas = await _list(
+        '/payments/methods/',
+        query: _consultaDasFormas,
+      );
+      if (!mounted || formas.isEmpty) return;
+      setState(() {
+        paymentMethods = formas;
+        final aindaExiste = formas.any(
+          (forma) => '${forma['id']}' == selectedPaymentMethod,
+        );
+        if (!aindaExiste) selectedPaymentMethod = '${formas.first['id']}';
+      });
+    } catch (_) {
+      // Fica a lista que já estava na tela: é a mesma do catálogo.
+    }
   }
 
   void _pressPaymentKey(String key) {
@@ -315,6 +343,25 @@ mixin _PaymentSection on _HomePageShared {
       _syncPaymentAmount();
       paymentReference.clear();
     });
+    // Esc tira ESTE recebimento (o mais recente primeiro), e não todos.
+    draft.desfazer.empilhar(
+      'payment',
+      '${method['name'] ?? 'Pagamento'}',
+      () => _tirarRecebimentoMontado(staged),
+    );
+  }
+
+  /// Tira da tela um recebimento ainda não enviado (o Esc e a lixeira).
+  void _tirarRecebimentoMontado(Map<String, dynamic> payment) {
+    if (!registeredPayments.any((item) => identical(item, payment))) return;
+    setState(() {
+      registeredPayments = registeredPayments
+          .where((item) => !identical(item, payment))
+          .toList();
+      paymentAmountTyped = false;
+      paymentDigits = (remainingTotal * 100).round().toString();
+      _syncPaymentAmount();
+    });
   }
 
   /// Recebimentos que ainda não foram enviados ao servidor.
@@ -340,7 +387,7 @@ mixin _PaymentSection on _HomePageShared {
       // A venda inteira num envio: pedido, cozinha, fechamento e recebimentos.
       if (!await _concluirVendaSimulada(corpos)) return false;
     } else {
-      // Pedido que já existia (F9 antes): os recebimentos num envio só, não
+      // Pedido que já existia (Ctrl + E antes): os recebimentos num envio só, não
       // um por chamada — tudo ou nada, com o UUID de cada um.
       final feito = await _workResolvendo(
         () => OrderDraftMaterializer(api, accessToken: token).receber(
@@ -398,14 +445,7 @@ mixin _PaymentSection on _HomePageShared {
     // então não há o que o servidor desfazer — e era justamente por pedir isso
     // a ele que excluir devolvia 409 antes de a venda sequer ter subido.
     if (payment['_staged'] == true) {
-      setState(() {
-        registeredPayments = registeredPayments
-            .where((item) => !identical(item, payment))
-            .toList();
-        paymentAmountTyped = false;
-        paymentDigits = (remainingTotal * 100).round().toString();
-        _syncPaymentAmount();
-      });
+      _tirarRecebimentoMontado(payment);
       return;
     }
     setState(() => removingPaymentId = '$id');

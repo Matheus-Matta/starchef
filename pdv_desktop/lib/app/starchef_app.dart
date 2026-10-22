@@ -6,6 +6,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/errors/app_error_host.dart';
+import '../core/input/teclado_sem_navegacao.dart';
 import '../core/errors/error_center.dart';
 import '../core/storage/local_preferences.dart';
 import '../core/theme/app_theme.dart';
@@ -136,6 +137,8 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
   Widget build(BuildContext context) => MaterialApp(
     navigatorKey: _navigatorKey,
     title: 'StarChef PDV',
+    // Teclado = atalhos; navegar e clicar é com o mouse (`teclado_sem_navegacao.dart`).
+    shortcuts: atalhosSemNavegacao(),
     debugShowCheckedModeBanner: false,
     theme: AppTheme.light(),
     darkTheme: AppTheme.dark(),
@@ -199,6 +202,10 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
                 controller: _auth,
                 autoUpdater: widget.autoUpdater,
                 onCheckForUpdates: _checkForUpdates,
+                onInstalarVersao: (versao) => widget.autoUpdater.instalarVersao(
+                  versao,
+                  closePdv: _closeForUpdate,
+                ),
                 isDark: _themeMode == ThemeMode.dark,
                 onToggleTheme: _toggleTheme,
                 isFullScreen: _isFullScreen,

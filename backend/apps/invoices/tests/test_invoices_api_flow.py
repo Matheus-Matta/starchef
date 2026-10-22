@@ -14,6 +14,7 @@ import pytest
 
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.providers import FiscalProvider, register_provider
+from apps.invoices.tests.quitacao import quitar_pedido
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -66,6 +67,7 @@ def product(account, restaurant, branch):
 def order_with_item(restaurant, branch, product, manager_user):
     order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER, user=manager_user)
     add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    quitar_pedido(order)
     return order
 
 

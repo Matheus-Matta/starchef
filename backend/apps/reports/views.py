@@ -59,6 +59,16 @@ class DashboardReportView(TenantReportMixin, APIView):
         today = timezone.localdate()
         filters = self.tenant_filter()
         orders = self.tenant_manager(Order).filter(**filters, **painel.faixa(today, today))
+        kitchen_open_items = (
+            self.tenant_manager(OrderItem).filter(**filters)
+            .exclude(status__in=[OrderItem.STATUS_DELIVERED, OrderItem.STATUS_CANCELLED])
+        )
+        # `?resumo=1`: o topo de TODA página do painel relê isto a cada 30 s e
+        # mostra três números. O dashboard inteiro (gráfico do mês, estoque)
+        # custava ~700 ms por vez, por aba aberta.
+        if request.query_params.get("resumo"):
+            return Response({**painel.resumo_de_hoje(orders, Order),
+                             "kitchen_open_items": kitchen_open_items.count()})
         paid_orders = orders.filter(payment_status=Order.PAYMENT_PAID)
         pagos_no_periodo = self.tenant_manager(Order).filter(
             payment_status=Order.PAYMENT_PAID, **filters,
@@ -96,10 +106,7 @@ class DashboardReportView(TenantReportMixin, APIView):
 
         data = {
             **painel.resumo_de_hoje(orders, Order),
-            "kitchen_open_items": self.tenant_manager(OrderItem)
-            .filter(**filters)
-            .exclude(status__in=[OrderItem.STATUS_DELIVERED, OrderItem.STATUS_CANCELLED])
-            .count(),
+            "kitchen_open_items": kitchen_open_items.count(),
             **painel.vendas_por_periodo(pagos_no_periodo, today),
             "sales_by_order_type": list(
                 paid_orders.values("order_type").annotate(total=Sum("total"), count=Count("id")).order_by("-total")

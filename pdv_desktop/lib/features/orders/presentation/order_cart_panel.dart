@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/data/order_item_status.dart';
+import '../../../core/input/pdv_screen.dart';
+import '../../../core/input/pdv_shortcuts.dart';
 import 'draft_destination_bar.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cart_item_card.dart';
@@ -30,6 +32,7 @@ class OrderCartPanel extends StatelessWidget {
     this.onEmitInvoice,
     this.onPrintInvoice,
     required this.printing,
+    this.abrindoPagamento = false,
     this.emittingInvoice = false,
     this.selectedItemId,
     this.onSelectItem,
@@ -74,7 +77,7 @@ class OrderCartPanel extends StatelessWidget {
   /// botão aparece desligado, em vez de sumir ou de não fazer nada ao clique.
   final VoidCallback? onFinish;
 
-  /// Manda para a produção o que ainda não foi — o mesmo que F9 faz.
+  /// Manda para a produção o que ainda não foi — o mesmo que Ctrl + E faz.
   ///
   /// Era só uma tecla, e antes disso um caminho escondido dentro do diálogo
   /// de revisão ("Pagar depois"). Quem não decorou a tecla mandava o pedido
@@ -103,6 +106,11 @@ class OrderCartPanel extends StatelessWidget {
   /// Imprime o DANFE de uma nota que JA existe e esta autorizada.
   final VoidCallback? onPrintInvoice;
   final bool printing;
+
+  /// A tela de pagamento está abrindo (com comanda, o servidor confere a
+  /// conta antes): o botão diz isso e não aceita o segundo clique — o mesmo
+  /// padrão do "Concluir pedido" (`BotaoDoPagamento`).
+  final bool abrindoPagamento;
   final bool emittingInvoice;
 
   /// Item sob o cursor do teclado.
@@ -131,7 +139,7 @@ class OrderCartPanel extends StatelessWidget {
 
   /// Existe algo para mandar para a produção?
   ///
-  /// Mesma regra do F9: só o que está `pending` viaja. Sem nada pendente o
+  /// Mesma regra do Ctrl + E: só o que está `pending` viaja. Sem nada pendente o
   /// botão fica desligado em vez de mandar uma rodada vazia.
   bool get _hasPendingItems =>
       items.any((item) => '${item['status']}' == 'pending');
@@ -216,9 +224,16 @@ class OrderCartPanel extends StatelessWidget {
         ),
         if (tecla != null) ...[
           const SizedBox(width: 8),
-          Text(
-            tecla,
-            style: TextStyle(fontSize: fontSize - 3, letterSpacing: .4),
+          // Compacta ("Ctrl+E") e flexível: no carrinho estreito ela encolhe
+          // junto com o texto, em vez de estourar o botão.
+          Flexible(
+            child: Text(
+              tecla.replaceAll(' + ', '+'),
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              softWrap: false,
+              style: TextStyle(fontSize: fontSize - 3, letterSpacing: .4),
+            ),
           ),
         ],
       ],
@@ -366,7 +381,7 @@ class OrderCartPanel extends StatelessWidget {
                       child: _acaoDoBotao(
                         const Icon(Icons.outdoor_grill_outlined, size: 17),
                         'Enviar cozinha',
-                        tecla: 'F9',
+                        tecla: PdvShortcuts.teclaDe(PdvAction.sendToKitchen),
                         fontSize: 12,
                       ),
                     ),
@@ -391,7 +406,9 @@ class OrderCartPanel extends StatelessWidget {
                               )
                             : const Icon(Icons.print_outlined, size: 17),
                         printing ? 'Gerando...' : 'Recibo',
-                        tecla: printing ? null : 'F12',
+                        tecla: printing
+                            ? null
+                            : PdvShortcuts.teclaDe(PdvAction.printReceipt),
                         fontSize: 12,
                       ),
                     ),
@@ -408,12 +425,26 @@ class OrderCartPanel extends StatelessWidget {
                 // dos dois gestos que FAZEM o pedido nascer. Exigir pedido
                 // aberto deixaria o botão apagado justamente no rascunho, que
                 // é quando ele mais precisa funcionar.
-                onPressed: items.isNotEmpty ? onFinish : null,
-                child: _acaoDoBotao(
-                  const Icon(Icons.payments_outlined, size: 18),
-                  'Ir para pagamento',
-                  tecla: 'F4',
-                ),
+                onPressed: items.isNotEmpty && !abrindoPagamento
+                    ? onFinish
+                    : null,
+                child: abrindoPagamento
+                    ? _acaoDoBotao(
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        'Abrindo pagamento...',
+                      )
+                    : _acaoDoBotao(
+                        const Icon(Icons.payments_outlined, size: 18),
+                        'Ir para pagamento',
+                        tecla: PdvShortcuts.teclaDe(
+                          PdvAction.payment,
+                          screen: PdvScreen.order,
+                        ),
+                      ),
               ),
             ),
           ],
@@ -478,7 +509,9 @@ class OrderCartPanel extends StatelessWidget {
     return AppEmptyState(
       icon: Icons.shopping_basket_outlined,
       title: 'O pedido está vazio',
-      description: 'Selecione um produto ou pressione F2 para buscar.',
+      description:
+          'Selecione um produto ou pressione '
+          '${PdvShortcuts.teclaDe(PdvAction.focusSearch)} para buscar.',
     );
   }
 

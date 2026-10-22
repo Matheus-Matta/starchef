@@ -39,6 +39,9 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 # proxy), desligue os três no .env — senão o redirect quebra tudo e os
 # cookies Secure não são gravados pelo navegador em conexão HTTP.
 SECURE_SSL_REDIRECT = config("DJANGO_SECURE_SSL_REDIRECT", default=True, cast=bool)
+# O healthcheck do container chama http://localhost:8000/health/, sem proxy e
+# sem TLS: redirecionado, ele recebia 301 a cada 30 s e nunca chegava à view.
+SECURE_REDIRECT_EXEMPT = [r"^health/$"]
 SESSION_COOKIE_SECURE = config("DJANGO_SESSION_COOKIE_SECURE", default=True, cast=bool)
 CSRF_COOKIE_SECURE = config("DJANGO_CSRF_COOKIE_SECURE", default=True, cast=bool)
 SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30

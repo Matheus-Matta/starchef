@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../config/app_config.dart';
+import '../update/pdv_troca_de_versao.dart';
 import '../data/local_id.dart';
 import 'app_paths.dart';
 
@@ -29,6 +31,7 @@ class LocalPreferences {
   static const _showCatalogKey = 'scale_show_catalog';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _somenteNuvemKey = 'somente_nuvem';
+  static const _versaoFixadaKey = 'versao_fixada';
   static const _balancaEmUsoKey = 'scale_station_in_use';
   static const _comandaAutomaticaKey = 'scale_auto_command';
   static const _ultimaComandaAutomaticaKey = 'scale_auto_command_last';
@@ -110,6 +113,13 @@ class LocalPreferences {
   /// leem daqui, e todos passam a usar a nuvem sem apagar o IP guardado.
   String? get apiBaseUrlOverride => somenteNuvem ? null : ipServerLocalGuardado;
 
+  /// O endereço com que o PDV abre e reaponta (`AppConfig.enderecoDeAbertura`):
+  /// em "só nuvem", a nuvem — e não o `.env` achado na pasta.
+  String? get enderecoDeAbertura => AppConfig.enderecoDeAbertura(
+    somenteNuvem: somenteNuvem,
+    ipDaLoja: apiBaseUrlOverride,
+  );
+
   /// O IP server local guardado, mesmo com o terminal em "só nuvem".
   String? get ipServerLocalGuardado {
     final value = _values[_apiBaseUrlOverrideKey] as String?;
@@ -120,6 +130,20 @@ class LocalPreferences {
   bool get somenteNuvem => _values[_somenteNuvemKey] as bool? ?? false;
 
   Future<void> setSomenteNuvem(bool value) => _write(_somenteNuvemKey, value);
+
+  /// A versão do PDV escolhida para FICAR neste terminal (`VersaoFixada`):
+  /// com ela, a abertura não atualiza sozinha. `null` = atualiza sozinho.
+  String? get versaoFixada {
+    final value = _values[_versaoFixadaKey] as String?;
+    return (value == null || value.trim().isEmpty) ? null : value.trim();
+  }
+
+  Future<void> setVersaoFixada(String? value) =>
+      _write(_versaoFixadaKey, value);
+
+  /// A versão fixada como o `PdvAutoUpdater` a lê e grava.
+  VersaoFixada get guardaDaVersao =>
+      VersaoFixada(ler: () => versaoFixada, gravar: setVersaoFixada);
 
   /// A balança que a estação deste terminal estava USANDO, por restaurante
   /// ("restaurante:balança"), ou null se o operador a parou. Recriada por

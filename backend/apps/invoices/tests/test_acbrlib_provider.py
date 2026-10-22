@@ -18,6 +18,7 @@ from apps.invoices.services import (
     reprocess_pending_fiscal_invoices,
 )
 from apps.invoices.tests.certificado_de_teste import SENHA, pfx
+from apps.invoices.tests.quitacao import quitar_pedido
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -87,6 +88,7 @@ def ambiente(settings, monkeypatch, account, restaurant, branch, manager_user):
     pedido = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER,
                           user=manager_user)
     add_order_item(order=pedido, product=produto, quantity=1, user=manager_user)
+    quitar_pedido(pedido)
     return SimpleNamespace(config=config, pedido=pedido, user=manager_user)
 
 

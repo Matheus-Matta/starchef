@@ -101,6 +101,7 @@ from apps.stock.views import (
     StockSettingsViewSet,
     SupplierViewSet,
 )
+from apps.reports.visao_geral import VisaoGeralView
 from apps.data_exchange.views import CsvExportView, CsvParseView
 
 
@@ -218,6 +219,7 @@ urlpatterns = [
     path("api/v1/reports/waiters/", WaitersReportView.as_view(), name="waiters-report"),
     path("api/v1/reports/restaurants/", RestaurantsReportView.as_view(), name="restaurants-report"),
     path("api/v1/reports/dashboard/", DashboardReportView.as_view(), name="dashboard-report"),
+    path("api/v1/reports/overview/", VisaoGeralView.as_view(), name="overview-report"),
     path("api/v1/reports/cash-movements/", CashMovementsReportView.as_view(), name="cash-movements-report"),
     path("api/v1/reports/product-costs/", ProductCostsReportView.as_view(), name="product-costs-report"),
     path("api/v1/reports/coupons/", CouponsReportView.as_view(), name="coupons-report"),

@@ -49,8 +49,7 @@ void main() {
     servidor = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     servidor.listen((request) async {
       consultas.add(request.uri);
-      final response = request.response
-        ..headers.contentType = ContentType.json;
+      final response = request.response..headers.contentType = ContentType.json;
       if (request.uri.path == '/api/v1/printers/') {
         response.write(
           jsonEncode({
@@ -103,27 +102,32 @@ void main() {
     return agente;
   }
 
-  test('a lista de trabalhos sai numa requisição, não numa por status', () async {
-    final agente = montarAgente();
+  test(
+    'a lista de trabalhos sai numa requisição, não numa por status',
+    () async {
+      final agente = montarAgente();
 
-    await agente.processPendingPrintJobsForTesting(
-      token: _token,
-      restaurantId: 'rest-1',
-    );
+      await agente.processPendingPrintJobsForTesting(
+        token: _token,
+        restaurantId: 'rest-1',
+      );
 
-    final deTrabalhos = consultas
-        .where((uri) => uri.path == '/api/v1/print-jobs/')
-        .toList();
-    expect(deTrabalhos, hasLength(1));
-    // Os três estados de uma vez — era uma chamada para cada.
-    expect(
-      deTrabalhos.single.queryParameters['status__in'],
-      'scheduled,pending,rendered',
-    );
-    // E do mais novo para o mais velho: com acumulado, a primeira página
-    // precisa ser a das comandas recentes.
-    expect(deTrabalhos.single.queryParameters['ordering'], '-created_at');
-  });
+      final deTrabalhos = consultas
+          .where((uri) => uri.path == '/api/v1/print-jobs/')
+          .toList();
+      expect(deTrabalhos, hasLength(1));
+      // Os três estados de uma vez — era uma chamada para cada.
+      expect(
+        deTrabalhos.single.queryParameters['status__in'],
+        'scheduled,pending,rendered',
+      );
+      // E do mais novo para o mais velho: com acumulado, a primeira página
+      // precisa ser a das comandas recentes.
+      expect(deTrabalhos.single.queryParameters['ordering'], '-created_at');
+      // Só as impressoras deste terminal: o resto do restaurante não vem.
+      expect(deTrabalhos.single.queryParameters['printer__in'], 'printer-1');
+    },
+  );
 
   test('cupom velho não vai para o papel', () async {
     // O caso real: uma loja com dezenas de trabalhos parados há semanas. Sem

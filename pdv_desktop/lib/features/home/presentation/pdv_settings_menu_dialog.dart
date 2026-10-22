@@ -74,6 +74,12 @@ class PdvSettingsMenuDialog extends StatelessWidget {
                 subtitle: 'Porta, protocolo e impressora vinculada',
                 onTap: () => _select(context, 'scale'),
               ),
+              _SettingsEntry(
+                icon: Icons.history,
+                title: 'Versão do PDV',
+                subtitle: 'Voltar a uma versão anterior ou escolher outra',
+                onTap: () => _select(context, 'versions'),
+              ),
               const Divider(),
             ],
             _SettingsEntry(

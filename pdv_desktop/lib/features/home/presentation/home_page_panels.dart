@@ -14,6 +14,7 @@ part of 'home_page.dart';
 /// O código foi MOVIDO, não reescrito.
 mixin _PanelsSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
+  bool get abrindoPagamento;
   Map<String, dynamic>? get activeOrder;
   Map<String, dynamic>? get selectedTable;
   Map<String, dynamic>? get selectedCommand;
@@ -23,6 +24,10 @@ mixin _PanelsSection on _HomePageShared {
   List<Map<String, dynamic>> get products;
   List<Map<String, dynamic>> get categories;
   List<Map<String, dynamic>> get visibleProducts;
+  int? get produtoDestacado;
+  set produtoDestacado(int? value);
+  set colunasDaVenda(int value);
+  bool get carregandoMaisProdutos;
   String? get category;
   set category(String? value);
   String? get orderType;
@@ -67,8 +72,18 @@ mixin _PanelsSection on _HomePageShared {
       searchGeneration: catalogSearchGeneration,
       searchFocusNode: catalogSearchFocus,
       money: _money,
-      onSearchChanged: (value) => setState(() => search = value),
-      onCategoryChanged: (value) => setState(() => category = value),
+      // A lista mudou: o destaque volta ao primeiro produto dela.
+      onSearchChanged: (value) => setState(() {
+        search = value;
+        produtoDestacado = 0;
+      }),
+      onCategoryChanged: (value) => setState(() {
+        category = value;
+        produtoDestacado = 0;
+      }),
+      destacado: produtoDestacado,
+      carregandoMais: carregandoMaisProdutos,
+      onColunas: (colunas) => colunasDaVenda = colunas,
       onProductPressed: _configureProduct,
     );
   }
@@ -144,6 +159,7 @@ mixin _PanelsSection on _HomePageShared {
         ? null
         : () => _reprintDanfe(activeOrder!),
     printing: printingReceipt,
+    abrindoPagamento: abrindoPagamento,
     emittingInvoice: emittingInvoice,
   );
 }

@@ -2,12 +2,25 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../../../core/network/response_cache.dart';
+import 'freio_da_releitura.dart';
 import 'pdv_repository.dart';
+import 'produtos_em_paginas.dart';
 
 export 'pdv_catalog_model.dart';
 
-/// Abaixo disso a cópia acabou de vir do servidor: reler seria em dobro.
-const catalogRevalidateAfter = Duration(seconds: 10);
+/// Lista que NENHUM aviso marcou como velha só é relida depois disto.
+///
+/// Eram 10 s: como a tela recarrega a cada aviso da loja (um item na comanda,
+/// um pagamento), o cardápio inteiro era relido o tempo todo — 316 leituras
+/// de produtos em 50 minutos, 13 s cada, no pdv.log de um caixa travando. O
+/// que mudou de fato chega marcado como velho (`ResponseCache.invalidate`) e é
+/// relido na hora; isto é só a rede de segurança para aviso perdido.
+const catalogRevalidateAfter = Duration(minutes: 5);
+
+/// A lista do catálogo precisa ser relida? Velha (aviso, escrita, reconexão)
+/// ou guardada há mais de [catalogRevalidateAfter].
+bool listaDoCatalogoPrecisaReler(Duration? idade) =>
+    (idade ?? ResponseCache.idadeDaVelha) > catalogRevalidateAfter;
 
 /// O catálogo do PDV: carga do servidor e a última cópia para abrir na hora.
 extension CatalogoDoPdv on PdvRepository {
@@ -18,12 +31,27 @@ extension CatalogoDoPdv on PdvRepository {
   /// redesenhar (ela já escuta esse sinal). Sem catálogo inteiro, lê do
   /// servidor como sempre. Escrita e evento do assunto apagam a entrada, então
   /// depois de uma mudança a leitura vai ao servidor.
-  Future<PdvCatalog> loadCatalog(String restaurantId) async {
+  ///
+  /// [porAviso]: a carga veio de um aviso do servidor, e não de gesto daqui;
+  /// comandas e mesas passam pelo [freioDoAviso].
+  Future<PdvCatalog> loadCatalog(
+    String restaurantId, {
+    bool porAviso = false,
+  }) async {
     final guardado = cachedCatalog(restaurantId);
     if (guardado == null) return _completarDoServidor(restaurantId);
     // A tela abre com o guardado — mesmo VELHO, depois de uma venda ou de
     // reiniciar o PDV — e relê em silêncio SÓ as listas que podem ter mudado.
-    final paraReler = _consultasParaReler(restaurantId);
+    final paraReler = [
+      for (final consulta in _consultasParaReler(restaurantId))
+        if (!porAviso ||
+            !listasComFreio.contains(consulta.$1) ||
+            freioDoAviso.podeReler(
+              '$restaurantId${consulta.$1}',
+              depois: () => api.signals.emit('realtime:tables'),
+            ))
+          consulta,
+    ];
     if (paraReler.isNotEmpty) {
       unawaited(_revalidar(restaurantId, guardado, paraReler));
     }
@@ -35,25 +63,34 @@ extension CatalogoDoPdv on PdvRepository {
   /// Uma venda apaga comandas e mesas, e nada mais. Exigir o catálogo inteiro
   /// fazia o PDV baixar as seis listas — o cardápio inclusive — depois de
   /// TODA venda. Agora sobem duas.
+  ///
+  /// Os PRODUTOS não esperam o cardápio inteiro: a primeira página abre a
+  /// venda e o resto chega por trás (`produtos_em_paginas.dart`).
   Future<PdvCatalog> _completarDoServidor(String restaurantId) async {
     final consultas = _consultasDoCatalogo(restaurantId);
     final guardadas = [
       for (final (path, query, paginada) in consultas)
         paginada ? _peekAll(path, query) : _peekOne(path, query),
     ];
-    if (guardadas.every((lista) => lista == null)) {
-      return _loadCatalogFromServer(restaurantId);
+    var incompleto = false;
+    Future<List<JsonMap>> produtos(String path, Map<String, dynamic> q) async {
+      final primeira = await produtosDaPrimeiraPagina(this, path, q);
+      incompleto = primeira.incompleto;
+      return primeira.itens;
     }
+
     final listas = await Future.wait([
       for (var i = 0; i < consultas.length; i++)
         if (guardadas[i] case final lista?)
           Future.value(lista)
+        else if (consultas[i].$1 == '/menu/products/')
+          produtos(consultas[i].$1, consultas[i].$2)
         else if (consultas[i].$3)
           listAll(consultas[i].$1, query: consultas[i].$2)
         else
           list(consultas[i].$1, query: consultas[i].$2),
     ]);
-    return PdvCatalog.fromLists(listas);
+    return PdvCatalog.fromLists(listas, carregandoProdutos: incompleto);
   }
 
   Future<void> _revalidar(
@@ -69,7 +106,9 @@ extension CatalogoDoPdv on PdvRepository {
       final atual = cachedCatalog(restaurantId);
       if (atual != null &&
           jsonEncode(atual.toJson()) != jsonEncode(mostrado.toJson())) {
-        api.signals.emit('realtime:pdv');
+        // `menu`, e não `pdv`: só o catálogo mudou, e `pdv` recarregava a
+        // tela inteira (restaurantes, caixa, agente de impressão).
+        api.signals.emit('realtime:menu');
       }
     } catch (_) {
       // A tela já tem a última versão; o próximo evento ou abertura relê.
@@ -82,13 +121,13 @@ extension CatalogoDoPdv on PdvRepository {
     String restaurantId,
   ) => [
     for (final consulta in _consultasDoCatalogo(restaurantId))
-      if ((api.cacheAge(
-                consulta.$1,
-                query: consulta.$3 ? {...consulta.$2, 'page': 1} : consulta.$2,
-                accessToken: accessToken,
-              ) ??
-              ResponseCache.idadeDaVelha) >
-          catalogRevalidateAfter)
+      if (listaDoCatalogoPrecisaReler(
+        api.cacheAge(
+          consulta.$1,
+          query: consulta.$3 ? {...consulta.$2, 'page': 1} : consulta.$2,
+          accessToken: accessToken,
+        ),
+      ))
         consulta,
   ];
 
@@ -98,7 +137,12 @@ extension CatalogoDoPdv on PdvRepository {
     final query = {'page_size': 300, 'restaurant': restaurantId};
     return [
       ('/cash-stations/', {...query, 'is_active': true}, false),
-      ('/menu/products/', {...query, 'is_active': true}, true),
+      (
+        '/menu/products/',
+        // Página menor: é a primeira que abre a venda (`produtos_em_paginas`).
+        {...query, 'page_size': produtosPorPagina, 'is_active': true},
+        true,
+      ),
       ('/menu/categories/', {'page_size': 100, 'is_active': true}, false),
       ('/tables/', query, true),
       ('/commands/', {...query, 'is_active': true}, true),
@@ -152,33 +196,5 @@ extension CatalogoDoPdv on PdvRepository {
       if (resposta['next'] == null) return juntos;
     }
     return juntos;
-  }
-
-  Future<PdvCatalog> _loadCatalogFromServer(String restaurantId) async {
-    final query = {'page_size': 300, 'restaurant': restaurantId};
-    final responses = await Future.wait([
-      list('/cash-stations/', query: {...query, 'is_active': true}),
-      // Produtos, mesas e comandas crescem sem teto: um restaurante com 400
-      // itens no cardápio ou 1.000 cartões de comanda é rotina. Estas três
-      // seguem `next` até o fim; as demais cabem em uma página.
-      listAll('/menu/products/', query: {...query, 'is_active': true}),
-      list('/menu/categories/', query: {'page_size': 100, 'is_active': true}),
-      listAll('/tables/', query: query),
-      // Mesas servem ao vínculo opcional da comanda; comandas são o contexto
-      // de abertura do pedido.
-      listAll('/commands/', query: {...query, 'is_active': true}),
-      // Exatamente a mesma consulta da tela de recebimento: a mesma entrada
-      // do cache serve às duas.
-      list(
-        '/payments/methods/',
-        query: {
-          'restaurant': restaurantId,
-          'is_active': true,
-          'page_size': 100,
-          'ordering': '-uso,name',
-        },
-      ),
-    ]);
-    return PdvCatalog.fromLists(responses);
   }
 }

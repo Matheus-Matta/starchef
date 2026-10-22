@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../theme/app_theme.dart';
+import 'teclas_do_dialogo.dart';
 
 /// Diálogo padrão do PDV, renderizado pelo flutter-shadcn-ui.
 ///
@@ -43,18 +44,22 @@ class AppDialog extends StatelessWidget {
         ? null
         : Material(type: MaterialType.transparency, child: child);
 
-    return dialog(
-      title: materialChild(title),
-      child: materialChild(content),
-      actions: actions.map((action) => materialChild(action)!).toList(),
-      scrollable: scrollable,
-      constraints: constraints,
-      radius: AppTheme.radius,
-      shadows: const [],
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      actionsPinned: true,
-      actionsAxis: effectiveMaxWidth < 420 ? Axis.vertical : Axis.horizontal,
-      actionsGap: 8,
+    // Enter confirma e Esc cancela em TODO diálogo (`teclas_do_dialogo.dart`).
+    return TeclasDoDialogo(
+      acoes: actions,
+      child: dialog(
+        title: materialChild(title),
+        child: materialChild(content),
+        actions: actions.map((action) => materialChild(action)!).toList(),
+        scrollable: scrollable,
+        constraints: constraints,
+        radius: AppTheme.radius,
+        shadows: const [],
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        actionsPinned: true,
+        actionsAxis: effectiveMaxWidth < 420 ? Axis.vertical : Axis.horizontal,
+        actionsGap: 8,
+      ),
     );
   }
 }

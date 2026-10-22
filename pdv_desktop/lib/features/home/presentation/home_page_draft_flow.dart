@@ -150,7 +150,7 @@ mixin _DraftFlowSection on _HomePageShared {
     if (activeOrder != null && !draft.simulada) return true;
     if (draft.isEmpty) return false;
 
-    // UM envio: pedido, itens, comandas e — no F9 — a cozinha juntos.
+    // UM envio: pedido, itens, comandas e — no Ctrl + E — a cozinha juntos.
     final pedido = await _workResolvendo(() async {
       final materializer = OrderDraftMaterializer(api, accessToken: token);
       return await materializer.materialize(
@@ -161,7 +161,7 @@ mixin _DraftFlowSection on _HomePageShared {
     }, errorTitle: 'Não foi possível abrir o pedido');
 
     // Recusa resolvida (a comanda estava em outra conta, que foi aberta):
-    // o F9 segue com ELA.
+    // o Ctrl + E segue com ELA.
     if (pedido == null || !mounted) {
       return activeOrder != null && !draft.simulada;
     }

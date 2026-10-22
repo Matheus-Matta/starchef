@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/teclas_do_dialogo.dart';
 
 /// Escolhe o produto de uma linha da comanda; devolve o id ou `null`.
 ///
@@ -41,7 +42,7 @@ class _EscolherProdutoDaLinhaDialogState
   @override
   Widget build(BuildContext context) {
     final visiveis = _visiveis;
-    return AlertDialog(
+    return AlertaComTeclas(
       title: const Text('Adicionar item na comanda'),
       content: SizedBox(
         width: 460,

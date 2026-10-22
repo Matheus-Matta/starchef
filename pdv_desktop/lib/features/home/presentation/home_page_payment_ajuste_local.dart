@@ -10,6 +10,12 @@ part of 'home_page.dart';
 /// tela travada em "Calculando total". A conta é a do servidor
 /// (`fechamento_local.dart`), e ele confere o total na conclusão. O cupom
 /// continua indo ao servidor: só o banco sabe limite, uso por CPF e grupo.
+/// O pedido da tela e o fechamento da venda nova, para o Esc voltar a eles.
+typedef FotoDoFechamento = ({
+  Map<String, dynamic>? pedido,
+  Map<String, dynamic>? fechamento,
+});
+
 mixin _AjusteLocalSection on _HomePageShared {
   // ── fornecido por `_HomePageState` e pelas outras seções ────────────────
   Map<String, dynamic>? get activeOrder;
@@ -21,6 +27,8 @@ mixin _AjusteLocalSection on _HomePageShared {
   Future<String?> _autorizarDesconto(String motivo);
   void _valorSugeridoDoNovoTotal();
   void _descartarConfirmacao();
+  CalculoDoTotal get calculoDoTotal;
+  TextEditingController get couponCode;
 
   /// A taxa padrão do restaurante, como o servidor a aplica no fechamento.
   String get _percentualDaTaxa =>
@@ -55,6 +63,7 @@ mixin _AjusteLocalSection on _HomePageShared {
         return;
       }
     }
+    final antes = _fotoDoFechamento();
     final Map<String, dynamic> atualizado;
     try {
       atualizado = FechamentoLocal.aplicar(
@@ -74,6 +83,26 @@ mixin _AjusteLocalSection on _HomePageShared {
       activeOrder = atualizado;
       adjustError = '';
       _valorSugeridoDoNovoTotal();
+    });
+    _empilharVoltaDoFechamento(antes, 'Ajuste do pagamento');
+  }
+
+  /// O fechamento da venda nova como está agora: o pedido da tela e o que vai
+  /// na conclusão. Voltar a ele é o Esc de um cupom ou de um ajuste.
+  FotoDoFechamento _fotoDoFechamento() =>
+      (pedido: activeOrder, fechamento: draft.fechamento);
+
+  void _empilharVoltaDoFechamento(FotoDoFechamento antes, String rotulo) {
+    draft.desfazer.empilhar('payment', rotulo, () {
+      if (!mounted || antes.pedido == null) return;
+      calculoDoTotal.descartar();
+      setState(() {
+        activeOrder = antes.pedido;
+        draft.fechamento = antes.fechamento;
+        couponCode.text = '${antes.pedido!['coupon_code'] ?? ''}';
+        adjustError = '';
+        _valorSugeridoDoNovoTotal();
+      });
     });
   }
 }

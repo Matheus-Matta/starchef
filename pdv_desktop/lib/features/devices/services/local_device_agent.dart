@@ -13,6 +13,7 @@ import '../printing/print_document.dart';
 import '../printing/printer.dart';
 import '../printing/printer_device.dart';
 import '../printing/printer_transport.dart';
+import 'consultas_da_fila.dart';
 import 'print_template_cache.dart';
 
 export '../printing/print_document.dart';
@@ -199,13 +200,10 @@ class LocalDeviceAgent {
     // Com o WebSocket de pé ela quase nunca é usada — é ele que avisa, na
     // hora. Por isso o tique é curto mas a CONSULTA é rara enquanto a conexão
     // está boa: ver [_shouldPollJobs].
-    _printJobsPollTimer = Timer.periodic(
-      const Duration(minutes: 2),
-      (_) {
-        if (!_shouldPollJobs()) return;
-        unawaited(_guarded(_processPrintJobs));
-      },
-    );
+    _printJobsPollTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      if (!_shouldPollJobs()) return;
+      unawaited(_guarded(_processPrintJobs));
+    });
     // A fila local gira sozinha, com ou sem rede. É o que faz um cupom que
     // falhou por falta de papel sair assim que o papel volta, sem depender de
     // um evento do servidor que, offline, nunca chega.
@@ -503,25 +501,24 @@ class LocalDeviceAgent {
     // Eram três chamadas por ciclo, em cada terminal de cada loja, devolvendo
     // sempre a mesma lista concatenada. `status__in` é a mesma consulta com um
     // terço do tráfego — ver o `filterset_fields` de `PrintJobViewSet`.
-    final List<Map<String, dynamic>> jobs;
+    final jobs = <Map<String, dynamic>>[];
     try {
-      jobs = await _list(
-        '/print-jobs/',
-        query: {
-          'restaurant': _restaurantId,
-          'status__in': 'scheduled,pending,rendered',
-          'page_size': 100,
-          // Do MAIS NOVO para o mais velho. Uma loja com acumulado tem mais de
-          // cem trabalhos parados no servidor; ordenando do mais velho, a
-          // primeira página seria só lixo antigo — que o corte de idade
-          // descarta — e a comanda recém-criada não caberia nela.
-          'ordering': '-created_at',
-        },
-      );
+      for (final query in consultasDaFila(
+        restaurantId: _restaurantId!,
+        impressoras: availablePrinters.values,
+      )) {
+        jobs.addAll(await _list('/print-jobs/', query: query));
+      }
     } on ApiException catch (error) {
       if (!error.isConnectivity) rethrow;
       return;
     }
+    // Duas consultas, cada uma do mais novo ao mais velho: junta e reordena,
+    // para o laço abaixo continuar imprimindo na ordem do pedido.
+    jobs.sort(
+      (a, b) =>
+          '${b['created_at'] ?? ''}'.compareTo('${a['created_at'] ?? ''}'),
+    );
     _lastJobsPoll = DateTime.now();
     AppLogger.instance.info(
       'print_jobs_poll',
@@ -621,10 +618,13 @@ class LocalDeviceAgent {
         final isAutomaticWeighTicket =
             document.type == PrintJobType.weighTicket;
         if (printer['auto_print'] != true && !isAutomaticWeighTicket) {
-          AppLogger.instance.info(
-            'print_job_skipped_auto_print_off',
-            data: {'job_id': jobId, 'printer_id': printer['id']},
-          );
+          // Só se a impressora mudou depois da consulta: avisa uma vez.
+          if (_avisados.add(jobId)) {
+            AppLogger.instance.info(
+              'print_job_skipped_auto_print_off',
+              data: {'job_id': jobId, 'printer_id': printer['id']},
+            );
+          }
           continue;
         }
         if (document.isEmpty) {

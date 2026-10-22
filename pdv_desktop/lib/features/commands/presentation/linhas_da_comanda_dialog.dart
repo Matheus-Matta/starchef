@@ -6,6 +6,7 @@ import '../data/linhas_da_comanda.dart';
 import 'escolher_produto_da_linha_dialog.dart';
 import 'linhas_da_comanda_acoes.dart';
 import 'linha_da_comanda_tile.dart';
+import '../../../core/widgets/teclas_do_dialogo.dart';
 
 /// Abre o editor. Salvar fecha o diálogo; erro de gravação aparece dentro dele.
 Future<void> abrirLinhasDaComanda(
@@ -135,7 +136,7 @@ class _LinhasDaComandaDialogState extends State<LinhasDaComandaDialog> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return AlertaComTeclas(
       title: const Text('Linhas da comanda da balança'),
       content: SizedBox(
         width: 560,

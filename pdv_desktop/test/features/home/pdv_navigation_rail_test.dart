@@ -37,7 +37,12 @@ void main() {
     for (final destino in PdvDestination.values) {
       expect(
         find.byWidgetPredicate(
-          (widget) => widget is Tooltip && widget.message == _rotulo(destino),
+          // O rótulo, seguido da tecla da página: "Mesas (F3)".
+          (widget) =>
+              widget is Tooltip &&
+              RegExp(
+                r'^' + RegExp.escape(_rotulo(destino)) + r'( \(.+\))?$',
+              ).hasMatch(widget.message ?? ''),
         ),
         findsOneWidget,
         reason: 'destino $destino não tem botão no trilho',

@@ -212,10 +212,13 @@ cancelamento                     →  CouponRedemption é apagado
 | `/promotions/rules/reorder/`                  | `{"ids": [...]}` — todas as regras da tabela |
 | `/promotions/coupons/`                        | CRUD                             |
 | `/promotions/coupons/validate/`               | `{"code", "order"}` → confere **sem** aplicar |
+| `/promotions/coupons/validate/` (venda nova)  | `{"code", "subtotal", "delivery_fee", "order_type", "cpf", "products"}` → mesmas regras, sem pedido |
 | `/promotions/coupons/{id}/redemptions/`       | quem usou                        |
 | `/promotions/coupon-redemptions/`             | leitura; nascem do pagamento     |
 | `/orders/{id}/apply-coupon/`                  | `{"code"}`; vazio retira. Serve conta aberta E em pagamento |
 | `/orders/{id}/close/`                         | aceita `coupon_code`             |
+
+Sem `order`, o `validate` confere a **venda nova**, que ainda vive no PDV (`coupon_sem_pedido.py`): o PDV manda os números dela, recebe o desconto e refaz o total sozinho (`cupom_local.dart`). Antes cada cupom digitado simulava a venda inteira no servidor (60 a 120 consultas). A conclusão (`/orders/submit/`) aplica o cupom de verdade e confere o total.
 
 `validate` existe para o caixa conferir enquanto o cliente fala. Aplicar para
 depois desfazer deixaria rastro de cupom em pedido que o cliente desistiu de

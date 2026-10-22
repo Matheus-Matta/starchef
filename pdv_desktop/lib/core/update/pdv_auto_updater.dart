@@ -4,9 +4,12 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../logging/app_logger.dart';
-import '../storage/app_paths.dart';
+import 'pdv_troca_de_versao.dart';
 import 'pdv_update_installer.dart';
 import 'pdv_update_service.dart';
+import 'versoes_do_pdv.dart';
+
+part 'pdv_versao_escolhida.dart';
 
 enum PdvAutoUpdatePhase {
   idle,
@@ -23,13 +26,19 @@ class PdvAutoUpdater extends ChangeNotifier {
     PdvUpdateService? service,
     PdvUpdateInstaller? installer,
     bool? enabled,
+    VersaoFixada? versaoFixada,
   }) : _service = service ?? PdvUpdateService(),
        _installer = installer ?? PdvUpdateInstaller(),
-       enabled = enabled ?? kReleaseMode;
+       enabled = enabled ?? kReleaseMode,
+       _fixada = versaoFixada ?? VersaoFixada.emMemoria();
 
   final PdvUpdateService _service;
   final PdvUpdateInstaller _installer;
   final bool enabled;
+  final VersaoFixada _fixada;
+
+  /// A versão que o operador escolheu manter, ou `null` (atualiza sozinho).
+  String? get versaoFixada => _fixada.ler();
 
   PdvAutoUpdatePhase phase = PdvAutoUpdatePhase.idle;
   PdvUpdateStatus? status;
@@ -53,7 +62,7 @@ class PdvAutoUpdater extends ChangeNotifier {
       return;
     }
     _started = true;
-    await _run(closePdv: closePdv);
+    await _run(closePdv: closePdv, automatico: true);
   }
 
   /// Repete a consulta e aplica a versão encontrada, mesmo que a tentativa da
@@ -75,10 +84,15 @@ class PdvAutoUpdater extends ChangeNotifier {
       );
       return;
     }
+    // Pedir a atualização é desistir da versão fixada.
+    await _fixada.gravar(null);
     await _run(closePdv: closePdv);
   }
 
-  Future<void> _run({required Future<void> Function() closePdv}) async {
+  Future<void> _run({
+    required Future<void> Function() closePdv,
+    bool automatico = false,
+  }) async {
     if (_running) return;
     _running = true;
     _setPhase(PdvAutoUpdatePhase.checking);
@@ -101,69 +115,63 @@ class PdvAutoUpdater extends ChangeNotifier {
         return;
       }
 
-      final artifact = status!.artifact!;
-      _setPhase(PdvAutoUpdatePhase.downloading);
-      final downloads = Directory(
-        '${AppPaths.dataDirectory().path}${Platform.pathSeparator}updates'
-        '${Platform.pathSeparator}${status!.latestVersion}',
-      );
-      final downloaded = await _service.downloadAndVerify(
-        artifact,
-        downloads,
-        onProgress: (received, total) {
-          if (_disposed) return;
-          progress = total <= 0 ? null : received / total;
-          notifyListeners();
-        },
-      );
-      if (_disposed) return;
-      _setPhase(PdvAutoUpdatePhase.preparing);
-      final prepared = await _installer.prepare(
-        downloaded,
-        status!.latestVersion!,
-      );
-      if (_disposed) return;
-      await _installer.launch(prepared);
-      _setPhase(PdvAutoUpdatePhase.restarting);
-      AppLogger.instance.info(
-        'pdv_update_handoff',
-        data: {
-          'from': status!.installed?.version,
-          'to': status!.latestVersion,
-          'artifact': artifact.name,
-        },
-      );
-      await closePdv();
+      // Versão fixada pelo operador: a abertura avisa, mas não troca.
+      final fixada = _fixada.ler();
+      if (automatico && fixada != null) {
+        _setPhase(
+          PdvAutoUpdatePhase.idle,
+          detail: 'Versão $fixada fixada neste terminal.',
+        );
+        return;
+      }
+      await _trocar(status!.artifact!, status!.latestVersion!, closePdv);
     } catch (error, stackTrace) {
-      if (_disposed) return;
-      final message = _failureMessage(error);
-      AppLogger.instance.error(
-        'pdv_auto_update_failed',
-        cause: error,
-        stackTrace: stackTrace,
-        data: {'version': status?.latestVersion},
-      );
-      status = PdvUpdateStatus(
-        phase: PdvUpdatePhase.unavailable,
-        installed: status?.installed,
-        latestVersion: status?.latestVersion,
-        releaseUrl: status?.releaseUrl,
-        detail: message,
-      );
-      _setPhase(PdvAutoUpdatePhase.failed, detail: message);
+      _falhou(error, stackTrace, status?.latestVersion);
     } finally {
       _running = false;
     }
   }
 
-  String _failureMessage(Object error) {
-    if (error is FileSystemException && error.message.trim().isNotEmpty) {
-      return '${error.message} O PDV atual foi mantido.';
-    }
-    if (error is FormatException && error.message.trim().isNotEmpty) {
-      return '${error.message}. O PDV atual foi mantido.';
-    }
-    return 'A atualização falhou. O PDV atual foi mantido.';
+  Future<void> _trocar(
+    PdvReleaseArtifact artifact,
+    String version,
+    Future<void> Function() closePdv,
+  ) => trocarDeVersao(
+    service: _service,
+    installer: _installer,
+    artifact: artifact,
+    version: version,
+    from: status?.installed?.version,
+    closePdv: closePdv,
+    onFase: (fase) => _setPhase(switch (fase) {
+      'downloading' => PdvAutoUpdatePhase.downloading,
+      'preparing' => PdvAutoUpdatePhase.preparing,
+      _ => PdvAutoUpdatePhase.restarting,
+    }),
+    onProgress: (received, total) {
+      if (_disposed) return;
+      progress = total <= 0 ? null : received / total;
+      notifyListeners();
+    },
+  );
+
+  void _falhou(Object error, StackTrace stackTrace, String? version) {
+    if (_disposed) return;
+    final message = mensagemDaFalha(error);
+    AppLogger.instance.error(
+      'pdv_auto_update_failed',
+      cause: error,
+      stackTrace: stackTrace,
+      data: {'version': version},
+    );
+    status = PdvUpdateStatus(
+      phase: PdvUpdatePhase.unavailable,
+      installed: status?.installed,
+      latestVersion: status?.latestVersion,
+      releaseUrl: status?.releaseUrl,
+      detail: message,
+    );
+    _setPhase(PdvAutoUpdatePhase.failed, detail: message);
   }
 
   void _setPhase(PdvAutoUpdatePhase value, {String? detail}) {

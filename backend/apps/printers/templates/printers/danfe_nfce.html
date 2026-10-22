@@ -86,7 +86,8 @@
     <tr><td>QTD. TOTAL DE ITENS</td><td>{{ items|length }}</td></tr>
     <tr class="b"><td>VALOR TOTAL R$</td><td>{{ invoice.total_amount|floatformat:2 }}</td></tr>
     {% if invoice.discount_total %}<tr><td>DESCONTO R$</td><td>{{ invoice.discount_total|floatformat:2 }}</td></tr>{% endif %}
-    {% if invoice.tax_approx_total %}<tr><td>TRIBUTOS APROX. R$</td><td>{{ invoice.tax_approx_total|floatformat:2 }}</td></tr>{% endif %}
+    {# Sempre, mesmo zerada: Lei 12.741 (apps/invoices/lei_da_transparencia.py). #}
+    <tr><td>Tributos Totais Incidentes (Lei Federal 12.741/2012) R$</td><td>{{ invoice.tax_approx_total|default:0|floatformat:2 }}</td></tr>
   </table>
 
   <div class="line"></div>

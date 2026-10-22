@@ -61,6 +61,7 @@ mixin _OrdersSection on _HomePageShared {
 
   Future<void> _paymentDialog();
   Future<void> _refreshOrder();
+  void _aplicarPedido(Map<String, dynamic> pedido);
   Future<void> _ensureCommandTable();
   Future<void> _printCustomerReceipt([Map<String, dynamic>? target]);
 
@@ -267,7 +268,7 @@ mixin _OrdersSection on _HomePageShared {
   Future<void> _editOrder(Map<String, dynamic> order) async {
     final detail = await _orderDetail(order);
     if (detail == null) return;
-    activeOrder = detail;
+    _aplicarPedido(detail);
     selectedOrderItemId = null;
     orderType = '${detail['order_type']}';
     selectedTable = detail['table'] == null
@@ -290,7 +291,7 @@ mixin _OrdersSection on _HomePageShared {
             'document': detail['customer_document'],
             'phone': '',
           };
-    await _refreshOrder();
+    // `detail` acabou de ser lido: `_aplicarPedido` acima já o pôs na tela.
     if (mounted) setState(() => flowStep = 'order');
     // Editar um pedido de comanda também é hora de perguntar a mesa: a
     // comanda pode ter sido aberta avulsa e o cliente já ter sentado.

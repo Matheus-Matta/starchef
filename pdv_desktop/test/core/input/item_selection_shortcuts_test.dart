@@ -47,13 +47,37 @@ void main() {
 
   // ── seleção ──────────────────────────────────────────────────────────
 
-  test('as setas navegam entre os itens do pedido', () async {
+  test('as setas andam pela grade de produtos e o Espaço adiciona', () async {
     final ids = await press([
       LogicalKeyboardKey.arrowDown,
-      LogicalKeyboardKey.arrowUp,
+      LogicalKeyboardKey.arrowRight,
+      LogicalKeyboardKey.space,
     ]);
 
-    expect(ids, [PdvAction.moveSelectionDown, PdvAction.moveSelectionUp]);
+    expect(ids, [
+      PdvAction.gridDown,
+      PdvAction.gridRight,
+      PdvAction.addHighlighted,
+    ]);
+  });
+
+  test('Shift + setas navegam entre os itens do carrinho', () {
+    PdvShortcut atalho(String id) =>
+        PdvShortcuts.all.firstWhere((item) => item.id == id);
+
+    for (final (id, tecla) in [
+      (PdvAction.moveSelectionDown, LogicalKeyboardKey.arrowDown),
+      (PdvAction.moveSelectionUp, LogicalKeyboardKey.arrowUp),
+    ]) {
+      expect(atalho(id).trigger.key, tecla);
+      expect(atalho(id).trigger.shift, isTrue, reason: id);
+    }
+    // E vêm ANTES das setas da grade: `matches` aceita o Shift a mais.
+    final ordem = PdvShortcuts.all.map((item) => item.id).toList();
+    expect(
+      ordem.indexOf(PdvAction.moveSelectionDown),
+      lessThan(ordem.indexOf(PdvAction.gridDown)),
+    );
   });
 
   test('as setas não valem fora da edição do pedido', () async {
@@ -82,7 +106,6 @@ void main() {
     context = const PdvInputContext(screen: PdvScreen.order);
 
     final ids = await press([
-      LogicalKeyboardKey.arrowDown,
       LogicalKeyboardKey.add,
       LogicalKeyboardKey.minus,
       LogicalKeyboardKey.delete,
@@ -100,23 +123,26 @@ void main() {
 
   // ── Enter ────────────────────────────────────────────────────────────
 
-  test('Enter confirma a ação principal da tela', () async {
-    expect(await press([LogicalKeyboardKey.enter]), [PdvAction.confirm]);
+  test('na venda, Enter vai ao pagamento', () async {
+    expect(await press([LogicalKeyboardKey.enter]), [PdvAction.payment]);
   });
 
-  test('F4 paga e F2 leva à pesquisa do catálogo', () async {
-    expect(await press([LogicalKeyboardKey.f4, LogicalKeyboardKey.f2]), [
+  test('Enter paga e Tab leva à pesquisa do catálogo', () async {
+    expect(await press([LogicalKeyboardKey.enter, LogicalKeyboardKey.tab]), [
       PdvAction.payment,
       PdvAction.focusSearch,
     ]);
   });
 
-  test('a barra NAO e atalho: o leitor de comanda a digita no meio do QR', () async {
-    // Um QR com endereço ("https://.../c/12") chega como teclas; a "/" no
-    // meio levava o cursor à busca e o resto do código caía nela, travando
-    // a leitura da comanda.
-    expect(await press([LogicalKeyboardKey.slash]), isEmpty);
-  });
+  test(
+    'a barra NAO e atalho: o leitor de comanda a digita no meio do QR',
+    () async {
+      // Um QR com endereço ("https://.../c/12") chega como teclas; a "/" no
+      // meio levava o cursor à busca e o resto do código caía nela, travando
+      // a leitura da comanda.
+      expect(await press([LogicalKeyboardKey.slash]), isEmpty);
+    },
+  );
 
   test(
     'Enter não é confirmação nas telas que não têm ação principal',
@@ -156,12 +182,12 @@ void main() {
     expect(await press([LogicalKeyboardKey.enter]), isEmpty);
   });
 
-  test('Enter segurado não confirma duas vezes', () async {
+  test('Enter segurado não abre o pagamento duas vezes', () async {
     final ids = await press(List.filled(5, LogicalKeyboardKey.enter));
 
     // É a tecla mais fácil de segurar sem perceber, então uma inclusão ou um
     // recebimento nunca pode duplicar.
-    expect(ids, [PdvAction.confirm]);
+    expect(ids, [PdvAction.payment]);
   });
 
   test('o Enter do leitor não vira confirmação', () async {

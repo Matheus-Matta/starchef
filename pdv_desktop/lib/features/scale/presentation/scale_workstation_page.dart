@@ -1031,8 +1031,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         ),
       );
     } on ApiException catch (erro) {
-      // Saiu no papel, mas a confirmação não chegou ao servidor: a reserva
-      // expira e um PDV pode imprimir uma segunda via — só registra.
+      // Falha da API ANTES de imprimir. A confirmação depois do papel insiste
+      // sozinha (`etiqueta_da_pesagem.dart`), e a etiqueta da estação não
+      // volta para a fila dos PDVs (`imprime_na_estacao`) — só registra.
       AppLogger.instance.warning(
         'scale_ticket_confirm_failed',
         data: {'job': job['id'], 'message': erro.message},

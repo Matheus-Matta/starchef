@@ -60,12 +60,16 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
     formas = documento["formas_pagamento"]
     for n, pagamento in enumerate(formas, start=1):
         campos = _pagamento(pagamento)
-        # O troco vai DENTRO da seção do pagamento: é só ali que a ACBrLib o lê
-        # (`ACBrNFe.IniReader.pas`, `Ler_Pagamento`). Numa seção `[pag]` à
-        # parte ele era ignorado, e toda venda com troco voltava 866.
+        # O troco vai DENTRO da seção do pagamento: é ali que a ACBrLib atual o
+        # lê (`ACBrNFe.IniReader.pas`, `Ler_Pagamento`). Só na `[pag]` à parte
+        # ele era ignorado, e toda venda com troco voltava 866.
         if n == len(formas) and documento.get("valor_troco"):
             campos["vTroco"] = documento["valor_troco"]
         secao(f"pag{n:03d}", campos)
+    # E repetido na `[pag]`, que versões antigas da lib leem depois do laço:
+    # com o mesmo valor nos dois lugares, qualquer ordem de leitura acerta.
+    if documento.get("valor_troco"):
+        secao("pag", {"vTroco": documento["valor_troco"]})
     return "\n".join(linhas)
 
 
@@ -74,6 +78,8 @@ def _pagamento(pagamento):
     campos = {"tPag": pagamento["forma_pagamento"], "vPag": pagamento["valor_pagamento"]}
     if pagamento.get("tipo_integracao"):
         campos["tpIntegra"] = pagamento["tipo_integracao"]
+    if pagamento.get("descricao_pagamento"):
+        campos["xPag"] = pagamento["descricao_pagamento"]
     return campos
 
 

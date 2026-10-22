@@ -16,6 +16,7 @@ mixin _ShellSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
   PdvInputRouter get inputRouter;
+  MenuController get notificacoes;
   PdvUpdateStatus get versionStatus;
   NetworkStatus get networkStatus;
   Map<String, dynamic>? get activeOrder;
@@ -219,7 +220,7 @@ mixin _ShellSection on _HomePageShared {
                     // sucesso e aviso não têm outro lugar para existir. Sem o
                     // sino montado, "venda concluída" e "impressora indisponível"
                     // são gravados no histórico e nunca vistos por ninguém.
-                    trailing: const NotificationBell(),
+                    trailing: NotificationBell(controller: notificacoes),
                   ),
                   Expanded(
                     child: Stack(

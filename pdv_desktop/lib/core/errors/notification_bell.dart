@@ -14,7 +14,24 @@ import 'notification_entry.dart';
 /// lidas uma a uma". A pergunta que o operador faz de relance é "apareceu coisa
 /// nova?", e abrir a lista responde isso por inteiro.
 class NotificationBell extends StatelessWidget {
-  const NotificationBell({super.key});
+  const NotificationBell({super.key, this.controller});
+
+  /// Quem mais abre a lista: o atalho F9 (`pdv_shortcuts.dart`) usa o mesmo
+  /// controlador do clique, e assim os dois caminhos marcam como visto.
+  final MenuController? controller;
+
+  /// Abre ou fecha a lista — o gesto do clique e o do atalho.
+  static void alternar(MenuController controller, ErrorCenter centro) {
+    if (controller.isOpen) {
+      controller.close();
+      return;
+    }
+    controller.open();
+    // Marcar ao ABRIR, não ao fechar: se o operador abre e a tela some por
+    // outro caminho (um diálogo, uma troca de aba), o que ele já viu não pode
+    // voltar a contar como novo.
+    centro.markAllSeen();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,23 +40,14 @@ class NotificationBell extends StatelessWidget {
     final novas = centro.unreadCount;
 
     return MenuAnchor(
+      controller: controller,
       alignmentOffset: const Offset(-260, 6),
       menuChildren: [_PainelDeNotificacoes(centro: centro)],
       builder: (context, controller, _) => IconButton(
         tooltip: novas > 0
             ? '$novas ${novas == 1 ? 'notificação nova' : 'notificações novas'}'
             : 'Notificações',
-        onPressed: () {
-          if (controller.isOpen) {
-            controller.close();
-            return;
-          }
-          controller.open();
-          // Marcar ao ABRIR, não ao fechar: se o operador abre e a tela some
-          // por outro caminho (um diálogo, uma troca de aba), o que ele já viu
-          // não pode voltar a contar como novo.
-          centro.markAllSeen();
-        },
+        onPressed: () => alternar(controller, centro),
         icon: Stack(
           clipBehavior: Clip.none,
           children: [

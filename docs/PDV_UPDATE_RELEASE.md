@@ -723,16 +723,37 @@ O caminho seguro é:
 4. validar em homologação;
 5. distribuir o novo patch.
 
-Se for necessário voltar imediatamente um terminal, feche o aplicativo e
-restaure o instalador/pasta anterior que já tenha sido homologado. A versão
-anterior pode aparecer como desatualizada porque o manifesto continuará
-apontando para o release mais novo; isso é esperado até a publicação da
-correção.
+### Voltar um terminal a uma versão anterior (pelo próprio PDV)
+
+A partir da `v3.1.0`, **Mais opções › Versão do PDV** (perfil que gerencia
+equipamentos) lista os releases da MESMA linha da versão instalada (3.x com
+3.x — a 1.8.x é outro programa) que publicaram o `latest-desktop.json`, e
+instala o escolhido — mais antigo ou mais novo. É o MESMO caminho da
+atualização (`core/update/pdv_troca_de_versao.dart`): o manifesto DAQUELE
+release, o ZIP com tamanho e SHA-256 conferidos, a troca com o PDV fechado e a
+volta automática se a versão não abrir.
+
+A versão escolhida fica **fixa** (`versao_fixada` em `preferences.json`): a
+abertura continua consultando o `latest-desktop.json` e mostra "Atualização
+disponível", mas **não troca**. A fixação sai com **Buscar atualizações** ou
+com **Voltar a atualizar sozinho** na mesma tela. Sem isto, a próxima abertura
+subiria de novo para a versão que se queria evitar.
+
+Destino anterior à `v3.1.0` não conhece a versão fixada: ele mesmo se
+atualiza na abertura seguinte. Para ficar nele, é preciso que o destino seja
+`v3.1.0` ou mais nova.
+
+Sem o PDV (terminal que nem abre), feche o aplicativo e restaure o
+instalador/pasta anterior que já tenha sido homologado. A versão anterior pode
+aparecer como desatualizada porque o manifesto continuará apontando para o
+release mais novo; isso é esperado até a publicação da correção.
 
 ## Arquivos relacionados
 
 - `.github/workflows/pdv_desktop.yml`: build, manifesto e publicação;
 - `pdv_desktop/pubspec.yaml`: versão do PDV;
+- `pdv_desktop/lib/core/update/versoes_do_pdv.dart` e `pdv_troca_de_versao.dart`:
+  lista de versões publicadas, troca e versão fixada;
 - `pdv_desktop/lib/core/update/pdv_update_service.dart`: leitura e validação do
   manifesto;
 - `pdv_desktop/lib/features/home/presentation/pdv_navigation_shell.dart`: indicador

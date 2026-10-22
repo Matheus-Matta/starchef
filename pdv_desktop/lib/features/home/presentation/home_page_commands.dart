@@ -43,6 +43,7 @@ mixin _CommandSection on _HomePageShared {
   Future<void> _load();
   bool _isOfflinePending(Map<String, dynamic>? value);
   Future<void> _refreshOrder();
+  void _aplicarPedido(Map<String, dynamic> pedido);
   Future<void> _openTable(Map<String, dynamic> table);
   Map<String, dynamic> _completeOfflineOrder(
     Map<String, dynamic> order, {
@@ -304,8 +305,10 @@ mixin _CommandSection on _HomePageShared {
       await _work(() async {
         selectedCommand = command;
         selectedTable = tableForCommand;
-        activeOrder = await api.get('/orders/$currentId/', accessToken: token);
-        await _refreshOrder();
+        // Uma leitura só: `_aplicarPedido` põe na tela o que acabou de chegar.
+        _aplicarPedido(
+          await api.get('/orders/$currentId/', accessToken: token),
+        );
         flowStep = 'order';
       });
     }

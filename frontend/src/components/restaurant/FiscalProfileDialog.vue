@@ -80,6 +80,10 @@
       <AppFormField label="Tributos aprox. (Lei 12.741) (%)" name="approx_tax_rate" :error="fieldErrors.approx_tax_rate" full>
         <template #default="{ fieldId, invalid }">
           <InputNumber :id="fieldId" v-model="form.approx_tax_rate" :class="{ 'p-invalid': invalid }" :min-fraction-digits="2" @update:model-value="dirty = true" />
+          <!-- A Lei 12.741 obriga o cupom a mostrar os tributos: com 0% ele sai R$ 0,00. -->
+          <small v-if="!Number(form.approx_tax_rate)" class="fpd__aviso" role="note">
+            Obrigatório por lei: com 0% o cupom mostra R$ 0,00 de tributos. Use o percentual da tabela do IBPT para o NCM.
+          </small>
         </template>
       </AppFormField>
       <AppFormField label="Sugerir como padrão">
@@ -199,5 +203,6 @@ async function save() {
 
 <style scoped>
 .fpd__cosmos { margin: 0 0 16px; }
+.fpd__aviso { display: block; margin-top: 6px; padding: 6px 8px; border-radius: 4px; background: var(--warning-subtle); color: var(--warning-text); font: var(--weight-medium) 12px/1.35 var(--font-sans); }
 .fpd__switch { display: flex; align-items: center; gap: 10px; height: var(--control-h); color: var(--text-body); font: var(--weight-semibold) 13px/1 var(--font-sans); }
 </style>

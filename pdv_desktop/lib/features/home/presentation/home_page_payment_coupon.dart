@@ -33,6 +33,9 @@ mixin _PaymentCouponSection on _HomePageShared {
   /// de "Desconto" logo acima.
   Widget _paymentSummaryRow(String label, String value, {bool strong});
   void _valorSugeridoDoNovoTotal();
+  String get _percentualDaTaxa;
+  FotoDoFechamento _fotoDoFechamento();
+  void _empilharVoltaDoFechamento(FotoDoFechamento antes, String rotulo);
 
   /// O código que o pedido carrega agora, vazio quando não há cupom.
   String get _appliedCoupon => '${activeOrder?['coupon_code'] ?? ''}'.trim();
@@ -61,18 +64,15 @@ mixin _PaymentCouponSection on _HomePageShared {
       couponBusy = true;
       couponError = '';
     });
-    // Venda simulada: o cupom entra no fechamento e o servidor recalcula,
-    // ainda sem gravar. Recusado, o erro vem igual.
+    // Venda nova: o servidor só CONFERE o cupom, e a conta é feita aqui
+    // (`cupom_local.dart`). Antes, cada cupom simulava a venda inteira lá.
     final simulada = draft.simulada;
     final fechamento = {...?draft.fechamento, 'coupon_code': codigo};
+    final antes = _fotoDoFechamento();
     await calculoDoTotal.rodar<Map<String, dynamic>>(
       calcular: () async => Map<String, dynamic>.from(
         simulada
-            ? await OrderDraftMaterializer(api, accessToken: token).simular(
-                draft,
-                restaurantId: restaurantId,
-                fechamento: fechamento,
-              )
+            ? await _cupomNaVendaNova(codigo, fechamento)
             : await api.post(
                 '/orders/${activeOrder!['id']}/apply-coupon/',
                 body: {'code': codigo},
@@ -80,7 +80,13 @@ mixin _PaymentCouponSection on _HomePageShared {
               ),
       ),
       aplicar: (atualizado) {
-        if (simulada) draft.fechamento = fechamento;
+        if (simulada) {
+          draft.fechamento = fechamento;
+          _empilharVoltaDoFechamento(
+            antes,
+            codigo.trim().isEmpty ? 'Cupom retirado' : 'Cupom $codigo',
+          );
+        }
         if (!mounted) return;
         // O pedido volta com o total JÁ refeito, e é dele que o teclado
         // desenha o restante e o troco. Recalcular no terminal faria a tela
@@ -98,11 +104,43 @@ mixin _PaymentCouponSection on _HomePageShared {
       falhar: (falha) {
         if (!mounted) return;
         setState(() {
-          couponError = falha is ApiException ? falha.message : '$falha';
+          couponError = switch (falha) {
+            ApiException() => falha.message,
+            FechamentoRecusado() => falha.motivo,
+            _ => '$falha',
+          };
           couponBusy = false;
         });
       },
     );
+  }
+
+  /// O cupom da venda nova: conferido no servidor e calculado aqui
+  /// (`cupom_local.dart`). Servidor que ainda não confere sem pedido (versão
+  /// anterior) recebe a venda inteira simulada, como antes — o PDV atualizado
+  /// não pode esperar o servidor ser atualizado primeiro.
+  Future<Map<String, dynamic>> _cupomNaVendaNova(
+    String codigo,
+    Map<String, dynamic> fechamento,
+  ) async {
+    try {
+      return await aplicarCupomLocal(
+        api,
+        accessToken: token,
+        codigo: codigo,
+        pedido: activeOrder!,
+        fechamento: fechamento,
+        draft: draft,
+        percentualDaTaxa:
+            '${activeOrder!['service_fee_percent'] ?? _percentualDaTaxa}',
+        restaurantId: restaurantId,
+      );
+    } on ConferenciaSemPedidoIndisponivel {
+      return OrderDraftMaterializer(
+        api,
+        accessToken: token,
+      ).simular(draft, restaurantId: restaurantId, fechamento: fechamento);
+    }
   }
 
   /// O campo de cupom, no ALTO do resumo do pagamento: digitar, Aplicar ou

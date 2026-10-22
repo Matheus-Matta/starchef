@@ -120,7 +120,9 @@ class PaymentCouponInput extends StatelessWidget {
                         key: const Key('payment-coupon-remove'),
                         onPressed: onRemove,
                         style: botao.merge(
-                          OutlinedButton.styleFrom(foregroundColor: cores.error),
+                          OutlinedButton.styleFrom(
+                            foregroundColor: cores.error,
+                          ),
                         ),
                         child: const Text('Retirar'),
                       ),

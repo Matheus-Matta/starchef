@@ -105,7 +105,11 @@ void main() {
   });
 
   test('as telas que não leem código ignoram o leitor', () async {
-    for (final screen in [PdvScreen.payment, PdvScreen.cash, PdvScreen.settings]) {
+    for (final screen in [
+      PdvScreen.payment,
+      PdvScreen.cash,
+      PdvScreen.settings,
+    ]) {
       context = PdvInputContext(screen: screen);
       typeFast('7891000100103');
       pressEnter();
@@ -128,7 +132,7 @@ void main() {
   // ── atalhos ──────────────────────────────────────────────────────────
 
   test('uma tecla de função dispara o atalho', () async {
-    router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.f1));
+    router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.f12));
     await Future<void>.delayed(Duration.zero);
 
     expect(shortcuts.single.id, PdvAction.help);
@@ -137,7 +141,7 @@ void main() {
   test('atalho que exige pedido fica inerte sem pedido', () async {
     context = const PdvInputContext(screen: PdvScreen.order);
 
-    router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.f9));
+    router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.enter));
     await Future<void>.delayed(Duration.zero);
 
     expect(shortcuts, isEmpty);
@@ -159,13 +163,14 @@ void main() {
       hasTextFocus: true,
     );
 
-    // F8 continua valendo: o operador não perde a leitura enquanto digita.
-    router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.f8));
+    // A tecla de função continua valendo: o operador não perde a página
+    // enquanto digita.
+    router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.f3));
     // `+` pertence ao campo.
     router.handleKeyEvent(keyOf('+', key: LogicalKeyboardKey.add));
     await Future<void>.delayed(Duration.zero);
 
-    expect(shortcuts.map((item) => item.id), [PdvAction.readClipboard]);
+    expect(shortcuts.map((item) => item.id), [PdvAction.goTables]);
   });
 
   test('nenhum atalho dispara por baixo de um modal', () async {
@@ -186,7 +191,7 @@ void main() {
 
   test('tecla presa não dispara duas vezes o que cobra ou imprime', () async {
     for (var index = 0; index < 5; index++) {
-      router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.f10));
+      router.handleKeyEvent(keyOf('', key: LogicalKeyboardKey.enter));
     }
     await Future<void>.delayed(Duration.zero);
 
@@ -217,12 +222,7 @@ void main() {
   });
 
   test('um texto qualquer colado não vira código', () async {
-    for (final text in [
-      'a senha é 12345',
-      'linha um\nlinha dois',
-      '',
-      '   ',
-    ]) {
+    for (final text in ['a senha é 12345', 'linha um\nlinha dois', '', '   ']) {
       clipboard = text;
       expect(await router.readFromClipboard(), isFalse, reason: text);
     }
@@ -238,7 +238,10 @@ void main() {
   });
 
   test('a leitura serial passa pelo mesmo caminho', () async {
-    final accepted = router.submit('789100010010 3\n', source: CodeSource.serial);
+    final accepted = router.submit(
+      '789100010010 3\n',
+      source: CodeSource.serial,
+    );
     final valid = router.submit('7891000100103\r\n', source: CodeSource.serial);
     await Future<void>.delayed(Duration.zero);
 

@@ -6,6 +6,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/errors/app_error_host.dart';
+import '../core/input/teclado_sem_navegacao.dart';
 import '../core/errors/error_center.dart';
 import '../core/storage/local_preferences.dart';
 import '../core/theme/app_theme.dart';
@@ -120,6 +121,8 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> with WindowListener {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+    // Teclado = atalhos; navegar e clicar é com o mouse (`teclado_sem_navegacao.dart`).
+    shortcuts: atalhosSemNavegacao(),
     navigatorKey: _navigatorKey,
     title: 'StarChef · Balança Rápida',
     debugShowCheckedModeBanner: false,

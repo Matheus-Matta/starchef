@@ -61,6 +61,9 @@ def mark_failure(event, erro, *, save=True, dependencia=False):
         event.next_attempt_at = next_attempt_at(event.attempts)
     if save:
         event.save(update_fields=["attempts", "last_error", "status", "next_attempt_at"])
+    from apps.synchronization.services import registro
+
+    registro.falhou(event)
     return event
 
 

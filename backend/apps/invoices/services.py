@@ -32,7 +32,7 @@ from apps.invoices.fiscal import (
     format_access_key,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
-from apps.invoices import contingencia_offline, numero_ja_usado
+from apps.invoices import contingencia_offline, lei_da_transparencia, numero_ja_usado
 from apps.invoices.providers import (
     FiscalAmbiguous,
     provider_class_for,
@@ -444,6 +444,9 @@ def fiscal_emission_skipped_reason(order):
         motivo = motivo_para_a_nuvem_nao_emitir(order, config)
         if motivo:
             return motivo
+        if config.document_model == FiscalConfig.MODEL_NFCE and order.total <= 0:
+            # Sem valor não há meio de pagamento que a SEFAZ aceite (899).
+            return "Pedido de valor zero não gera NFC-e."
         if not provider_class.transmits:
             return provider_class().unavailable_reason(config)
         return None
@@ -523,6 +526,7 @@ def apply_fiscal_profile_issues(invoice, config):
     Devolve `(issues, blocked)`. Vale para a emissao e para o reenvio: um flag
     que so e checado numa das duas portas nao e um flag, e uma sugestao.
     """
+    lei_da_transparencia.registrar_aviso(invoice)
     issues = fiscal_invoice_issues(invoice, config)
     payload = dict(invoice.fiscal_payload or {})
     if issues:
@@ -976,6 +980,15 @@ def resend_fiscal_invoice(invoice, *, user=None):
                 # emissão inteira — que reaproveita esta nota.
                 return nota_com_erro.emitir_de_novo(locked, user=user)
 
+            # O pedido pela metade (venda da nuvem ainda chegando) seria
+            # recusado de novo: diz o que falta em vez de reenviar.
+            if locked.order_id and locked.document_model == FiscalConfig.MODEL_NFCE:
+                from apps.invoices.pedido_completo import motivo_do_pedido_incompleto
+
+                motivo = motivo_do_pedido_incompleto(locked.order)
+                if motivo:
+                    raise ValidationError(motivo)
+
             # A nota nunca foi transmitida, entao o retrato dela pode (e deve)
             # ser refeito com o cadastro de agora: e o que faz "corrigi o perfil
             # fiscal e reenviei" funcionar. Sem isso o reenvio repetia o NCM
@@ -1265,8 +1278,9 @@ def _danfe_nfce_text(invoice, config):
     lines.append(_danfe_linha_valor("VALOR TOTAL R$", invoice.total_amount))
     if invoice.discount_total:
         lines.append(_danfe_linha_valor("DESCONTO R$", invoice.discount_total))
-    if invoice.tax_approx_total:
-        lines.append(_danfe_linha_valor("TRIBUTOS APROX. R$", invoice.tax_approx_total))
+    # Sempre, mesmo zerada: é a Lei 12.741 (ver `lei_da_transparencia.py`).
+    lines.append(_danfe_linha_valor(lei_da_transparencia.ROTULO, invoice.tax_approx_total or 0))
+    lines.append(lei_da_transparencia.FONTE)
     lines.append("-" * _DANFE_WIDTH)
 
     lines.append("FORMA DE PAGAMENTO" + "VALOR PAGO".rjust(_DANFE_WIDTH - len("FORMA DE PAGAMENTO")))

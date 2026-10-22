@@ -1,5 +1,8 @@
 import '../../../core/data/local_id.dart';
+import '../../../core/input/pilha_de_desfazer.dart';
 import 'order_draft.dart';
+
+part 'order_draft_cart_desfazer.dart';
 
 /// O rascunho inteiro: para onde vai e o que tem dentro.
 ///
@@ -10,7 +13,7 @@ class OrderDraftCart {
   OrderDraftCart();
 
   /// O UUID do pedido que este rascunho vai virar, dado AQUI: todo envio da
-  /// venda (F9, conclusão, o reenvio depois de uma falha) leva o mesmo, e o
+  /// venda (Ctrl + E, conclusão, o reenvio depois de uma falha) leva o mesmo, e o
   /// servidor reconhece a mesma venda. Rascunho novo, UUID novo.
   String get orderId => _orderId ??= LocalId.uuid();
   String? _orderId;
@@ -134,33 +137,6 @@ class OrderDraftCart {
   ///
   /// Agrupar importa na tela: três cafés viram "3 × Café" em vez de três
   /// linhas iguais que o operador tem de contar com o dedo para conferir.
-  void add(OrderDraftLine line) {
-    final pronta = line.id.isEmpty
-        ? OrderDraftLine(
-            id: LocalId.uuid(),
-            productId: line.productId,
-            productName: line.productName,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            variationId: line.variationId,
-            addonIds: line.addonIds,
-            customerNote: line.customerNote,
-            weightKg: line.weightKg,
-            scaleReadingId: line.scaleReadingId,
-            pricingUnit: line.pricingUnit,
-          )
-        : line;
-
-    final indice = _lines.indexWhere((atual) => atual.matches(pronta));
-    if (indice >= 0) {
-      _lines[indice] = _lines[indice].copyWith(
-        quantity: _lines[indice].quantity + pronta.quantity,
-      );
-      return;
-    }
-    _lines.add(pronta);
-  }
-
   /// Muda a quantidade de uma linha. Zero ou menos REMOVE.
   ///
   /// Remover ao chegar em zero é o que o operador espera do botão de menos, e
@@ -182,7 +158,12 @@ class OrderDraftCart {
   /// Chamado DEPOIS que a navegação para o pedido aberto deu certo. Limpar
   /// antes custaria o carrinho inteiro se a tela seguinte falhasse ao carregar
   /// — e o operador teria de digitar tudo de novo com o cliente na frente.
+  /// O que o Esc desfaz nesta venda (`pilha_de_desfazer.dart`). Mora aqui
+  /// porque é da venda: acabou a venda, acabou o que desfazer nela.
+  final desfazer = PilhaDeDesfazer();
+
   void clear() {
+    desfazer.esquecerTudo();
     _orderId = null;
     simulada = false;
     fechamento = null;

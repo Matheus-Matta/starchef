@@ -21,6 +21,7 @@ from django.utils import timezone
 from apps.invoices.fiscal import build_access_key
 from apps.invoices.models import Invoice
 from apps.invoices.services import emit_fiscal_invoice
+from apps.invoices.tests.quitacao import desfazer_quitacao
 from apps.invoices.tests.test_acbrlib_provider import (  # noqa: F401 — fixture
     XML,
     Comunicador,
@@ -41,6 +42,7 @@ def _campo(ini, nome):
 
 def _pagar(ambiente, tipo, valor, troco="0.00"):
     pedido = ambiente.pedido
+    desfazer_quitacao(pedido)
     metodo = PaymentMethod.objects.create(
         account=pedido.account, restaurant=pedido.restaurant, branch=pedido.branch,
         name=tipo, method_type=tipo,

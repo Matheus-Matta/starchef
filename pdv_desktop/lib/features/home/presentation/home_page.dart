@@ -29,6 +29,8 @@ import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/update/pdv_auto_updater.dart';
+import '../../../core/update/versoes_do_pdv.dart';
+import '../../settings/presentation/versoes_do_pdv_dialog.dart';
 import '../../../core/update/pdv_update_service.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_dialog.dart';
@@ -68,10 +70,13 @@ import '../../../core/input/pdv_input_router.dart';
 import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
+import '../data/cupom_local.dart';
 import '../data/decisoes_do_danfe.dart';
 import '../data/forma_vizinha.dart';
 import '../data/nota_do_pedido.dart';
 import '../data/pdv_repository.dart';
+import 'atalhos_das_paginas.dart';
+import 'destaque_da_grade.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_navigation_rail.dart';
 import 'pdv_operational_chrome.dart';
@@ -150,6 +155,7 @@ class HomePage extends StatefulWidget {
     required this.controller,
     required this.autoUpdater,
     required this.onCheckForUpdates,
+    required this.onInstalarVersao,
     required this.isDark,
     required this.onToggleTheme,
     required this.isFullScreen,
@@ -161,6 +167,9 @@ class HomePage extends StatefulWidget {
   final AuthController controller;
   final PdvAutoUpdater autoUpdater;
   final Future<void> Function() onCheckForUpdates;
+
+  /// Instala a versão escolhida em "Versão do PDV" (fecha e reabre o PDV).
+  final Future<void> Function(PdvVersaoDisponivel versao) onInstalarVersao;
   final bool isDark;
   final VoidCallback onToggleTheme;
   final bool isFullScreen;
@@ -339,6 +348,20 @@ class _HomePageState extends State<HomePage>
   final commandSearchFocus = FocusNode(debugLabel: 'command-search');
   @override
   final catalogSearchFocus = FocusNode(debugLabel: 'catalog-search');
+
+  /// O produto da grade em que as setas pararam (`destaque_da_grade.dart`), e
+  /// quantas colunas a grade desenha agora (o passo de ↑ ↓).
+  @override
+  int? produtoDestacado = 0;
+  @override
+  int colunasDaVenda = 1;
+
+  /// Só a primeira página de produtos chegou; o resto vem por trás.
+  @override
+  bool carregandoMaisProdutos = false;
+  // O sino do topo, aberto também pelo atalho F9.
+  @override
+  final notificacoes = MenuController();
   @override
   Timer? ordersSearchDebounce;
   @override
@@ -442,6 +465,11 @@ class _HomePageState extends State<HomePage>
   /// percorria o gesto inteiro duas vezes — dois recibos e dois DANFEs.
   @override
   bool completingOrder = false;
+
+  /// "Ir para pagamento" em curso: o botão mostra "Abrindo pagamento..." e
+  /// o segundo clique (ou Enter) é ignorado.
+  @override
+  bool abrindoPagamento = false;
 
   /// Notas cuja autorização já está sendo aguardada nesta tela. Dois
   /// vigias sobre a mesma nota mandariam o DANFE para a impressora duas vezes.
@@ -658,17 +686,19 @@ class _HomePageState extends State<HomePage>
         realtimeRefreshQueued = false;
         final topics = Set<String>.from(pendingRealtimeTopics);
         pendingRealtimeTopics.clear();
-        final reloadCatalog = topics.any(
-          const {
-            'tables',
-            'menu',
-            'payments',
-            'cash',
-            'session',
-            'pdv',
-          }.contains,
+        // Recarga INTEIRA só para sessão e o aviso geral. Mesas, comandas,
+        // cardápio, formas e caixa relêem SÓ o catálogo (o que o aviso marcou
+        // como velho) — cada item lançado numa comanda da loja recarregava a
+        // tela toda em todos os PDVs, o servidor engasgava e o caixa travava.
+        final recarregarTudo = topics.any(const {'session', 'pdv'}.contains);
+        final recarregarCatalogo = topics.any(
+          const {'tables', 'menu', 'payments', 'cash'}.contains,
         );
-        if (reloadCatalog) await _load();
+        if (recarregarTudo) {
+          await _load();
+        } else if (recarregarCatalogo) {
+          await _recarregarCatalogo(caixa: topics.contains('cash'));
+        }
         if (topics.contains('cash_auth')) {
           await widget.controller.syncSupervisorPassword(
             restaurantId: restaurantId,
@@ -872,6 +902,7 @@ class _HomePageState extends State<HomePage>
       final catalog = bootstrap.catalog;
       stations = catalog.cashStations;
       products = catalog.products;
+      carregandoMaisProdutos = catalog.carregandoProdutos;
       categories = catalog.categories;
       tables = catalog.tables;
       commands = catalog.commands;
@@ -965,6 +996,31 @@ class _HomePageState extends State<HomePage>
           );
         }
       }
+    }
+  }
+
+  /// A recarga LEVE de um aviso da loja: só o catálogo (que relê apenas o
+  /// que o aviso marcou como velho) e, se pedido, o caixa. Sem restaurantes,
+  /// senha do supervisor nem reinício do agente de impressão, que a recarga
+  /// inteira (`_load`) faz.
+  Future<void> _recarregarCatalogo({required bool caixa}) async {
+    final restaurante = selectedRestaurantId;
+    if (restaurante == null) return _load();
+    try {
+      final catalog = await repository.loadCatalog(restaurante, porAviso: true);
+      if (!mounted) return;
+      setState(() {
+        stations = catalog.cashStations;
+        products = catalog.products;
+        carregandoMaisProdutos = catalog.carregandoProdutos;
+        categories = catalog.categories;
+        tables = catalog.tables;
+        commands = catalog.commands;
+        paymentMethods = catalog.paymentMethods;
+      });
+      if (caixa) await _refreshCashSession();
+    } catch (_) {
+      // A tela segue com o que tem; o próximo aviso relê.
     }
   }
 
@@ -1194,6 +1250,16 @@ class _HomePageState extends State<HomePage>
         api.terminalLabel = _terminalName;
       }
     }
+    if (selection == 'versions' && mounted) {
+      final escolha = await VersoesDoPdvDialog.show(
+        context,
+        widget.autoUpdater,
+      );
+      if (escolha == 'atualizar') await widget.onCheckForUpdates();
+      if (escolha is PdvVersaoDisponivel) {
+        await widget.onInstalarVersao(escolha);
+      }
+    }
     if (selection == 'print_queue' && mounted) {
       await PrintQueueDialog.show(context, deviceAgent);
     }
@@ -1206,7 +1272,7 @@ class _HomePageState extends State<HomePage>
       if (!mounted || !saved) return;
 
       final config = await AppConfig.load(
-        manualOverrideUrl: widget.preferences.apiBaseUrlOverride,
+        manualOverrideUrl: widget.preferences.enderecoDeAbertura,
       );
       await widget.controller.updateApiBaseUrl(config.apiBaseUrl);
       // O token pertence ao servidor anterior. Encerrar a sessão força a
@@ -1410,6 +1476,7 @@ class _HomePageState extends State<HomePage>
       paymentDigits = '0';
       couponError = '';
       search = '';
+      produtoDestacado = 0;
       category = null;
       catalogSearchGeneration++;
       orderType = 'counter';
@@ -1424,6 +1491,18 @@ class _HomePageState extends State<HomePage>
   @override
   void _goBack() {
     if (completingOrder) return; // `conclusao_em_andamento.dart`
+    // ANTES de voltar, o Esc desfaz o que foi feito nesta tela, do mais
+    // recente para o mais antigo (`pilha_de_desfazer.dart`). Na venda, a busca
+    // com texto é a primeira a se apagar.
+    if (flowStep == 'order' && search.isNotEmpty) {
+      setState(() {
+        search = '';
+        catalogSearchGeneration++;
+      });
+      return;
+    }
+    final tela = flowStep == 'payment' ? 'payment' : flowStep;
+    if (draft.desfazer.desfazerUltimo(tela) != null) return;
     if (flowStep == 'payment' && activeOrder != null) {
       // Recebimento montado não existe fora desta tela: voltar o descarta. O
       // operador precisa saber disso ANTES, senão sairia achando que o

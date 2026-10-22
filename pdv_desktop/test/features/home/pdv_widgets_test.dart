@@ -363,7 +363,7 @@ void main() {
 
       expect(find.text('O pedido está vazio'), findsOneWidget);
       expect(
-        find.text('Selecione um produto ou pressione F2 para buscar.'),
+        find.text('Selecione um produto ou pressione Tab para buscar.'),
         findsOneWidget,
       );
       // Antes do primeiro item há apenas contexto visual; nenhum número de

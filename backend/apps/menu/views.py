@@ -9,6 +9,7 @@ from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.modules import MODULE_ECOMMERCE
 from apps.core.viewsets import BaseTenantViewSet
+from apps.menu.estoque_do_produto import estoque_do_produto
 from apps.menu.models import (
     Ingredient,
     Menu,
@@ -81,8 +82,14 @@ class ProductViewSet(BaseTenantViewSet):
         queryset = self.soft_delete_scope(
             Product.all_objects
             .filter(account=account)
-            .select_related("restaurant", "branch", "category", "sector", "logo_image")
-            .prefetch_related("variations__logo_image", "restaurants", "product_images__image")
+            .select_related("restaurant", "branch", "category", "sector", "logo_image", "recipe")
+            # Receita, itens e adicionais de TODA a página de uma vez: eram
+            # consultas por produto (`test_lista_de_produtos_sem_n_mais_1`).
+            .prefetch_related(
+                "variations__logo_image", "restaurants", "product_images__image",
+                "addons", "recipe__items__ingredient",
+            )
+            .annotate(estoque_atual=estoque_do_produto())
         )
         profile = getattr(self.request.user, "profile", None)
         restaurant_id = self.request.query_params.get("restaurant")
@@ -136,8 +143,8 @@ class ProductViewSet(BaseTenantViewSet):
                 elif selected_restaurant:
                     deleted_prod.restaurants.add(selected_restaurant)
 
-                from apps.core.models import AuditLog
                 from apps.core.mixins import record_audit
+                from apps.core.models import AuditLog
                 record_audit(action=AuditLog.ACTION_UPDATED, instance=deleted_prod, actor=request.user, request=request)
 
                 return Response(self.get_serializer(deleted_prod).data, status=status.HTTP_201_CREATED)
@@ -249,10 +256,10 @@ class IngredientViewSet(BaseTenantViewSet):
     def to_product(self, request, pk=None):
         """Cria um produto com os dados do insumo (ver `services.ingredient_to_product`)."""
         from django.core.exceptions import ValidationError
-        from apps.menu.services.ingredient_to_product import transformar_em_produto
-        from apps.restaurants.models import Restaurant
 
         from apps.inbound_nfe.tenant_scope import restaurante_escolhido
+        from apps.menu.services.ingredient_to_product import transformar_em_produto
+        from apps.restaurants.models import Restaurant
 
         # O do corpo, senão o da barra lateral (validado), senão o único da conta.
         rid = request.data.get("restaurant") or restaurante_escolhido(request)

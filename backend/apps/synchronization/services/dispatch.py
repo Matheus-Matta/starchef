@@ -84,6 +84,10 @@ def mark_sent(eventos):
     agora = timezone.now()
     ids = [e.pk for e in eventos]
     SyncEvent.objects.filter(pk__in=ids).update(status=EventStatus.SENT, sent_at=agora)
+    if eventos:
+        from apps.synchronization.services import registro
+
+        registro.enviado(eventos, getattr(eventos[0], "target_node", None))
     return len(ids)
 
 
@@ -135,6 +139,9 @@ def apply_ack(source_node, ack_payload, *, target_node=None):
             if evento is not None:
                 retry.mark_failure(evento, item.get("error", "NACK sem detalhe"))
 
+    from apps.synchronization.services import registro
+
+    registro.confirmado(target_node or source_node, confirmados, recebidos, falhos)
     return len(confirmados) + len(recebidos) + len(falhos)
 
 

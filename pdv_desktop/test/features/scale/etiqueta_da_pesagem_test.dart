@@ -52,6 +52,7 @@ void main() {
     );
 
     await etiqueta.imprimir(job: job, impressora: impressora);
+    await etiqueta.confirmando;
 
     expect(enviados.single.content, contains('COMANDA 17'));
     expect(

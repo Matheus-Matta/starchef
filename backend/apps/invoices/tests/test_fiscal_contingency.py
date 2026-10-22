@@ -28,6 +28,7 @@ from apps.invoices.services import (
     reprocess_pending_fiscal_invoices,
     resend_fiscal_invoice,
 )
+from apps.invoices.tests.quitacao import quitar_pedido
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -113,6 +114,7 @@ def _make_fiscal_config(account, restaurant, branch, provider):
 def _make_order_with_item(restaurant, branch, product, user):
     order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER, user=user)
     add_order_item(order=order, product=product, quantity=1, user=user)
+    quitar_pedido(order)
     return order
 
 

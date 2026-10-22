@@ -61,7 +61,7 @@ Future<void> main(List<String> arguments) async {
   final preferences = LocalPreferences();
   await preferences.load();
   final config = await AppConfig.load(
-    manualOverrideUrl: preferences.apiBaseUrlOverride,
+    manualOverrideUrl: preferences.enderecoDeAbertura,
   );
   installGlobalErrorHandlers();
   AppLogger.instance.info(
@@ -181,7 +181,7 @@ Future<void> main(List<String> arguments) async {
           authRepository: repository,
           preferences: preferences,
           errorCenter: errorCenter,
-          autoUpdater: PdvAutoUpdater(),
+          autoUpdater: PdvAutoUpdater(versaoFixada: preferences.guardaDaVersao),
         );
 
   // Sentry só é inicializado se houver DSN configurada (--dart-define ou

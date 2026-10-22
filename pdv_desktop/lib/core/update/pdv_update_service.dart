@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'versoes_do_pdv.dart';
+
 // `latest-desktop.json`, e NÃO o `latest.json` do PDV 1.8.x.
 //
 // As duas linhagens convivem: o PDV antigo, que opera offline, continua em
@@ -295,7 +297,7 @@ class PdvUpdateService {
   /// chama volta a tratar o 404 original, então o PDV nunca fica pior do que
   /// já estava.
   Future<Map<String, dynamic>?> _manifestFromReleasesApi() async {
-    final origem = _githubReleaseAsset(manifestUri);
+    final origem = RepositorioDoManifesto.de(manifestUri);
     if (origem == null) return null;
 
     try {
@@ -339,6 +341,31 @@ class PdvUpdateService {
       return null;
     }
     return null;
+  }
+
+  /// O manifesto de UMA versão (o `latest-desktop.json` do release dela).
+  Future<PdvReleaseManifest> manifestDe(Uri url) async {
+    final resposta = await _client
+        .get(url, headers: const {'Accept': 'application/json'})
+        .timeout(timeout);
+    if (resposta.statusCode != 200) {
+      throw HttpException(
+        'GitHub respondeu HTTP ${resposta.statusCode}',
+        uri: url,
+      );
+    }
+    return PdvReleaseManifest.fromJson(_decodeManifest(resposta.bodyBytes));
+  }
+
+  /// As versões publicadas que este terminal pode instalar (`versoes_do_pdv.dart`).
+  Future<List<PdvVersaoDisponivel>> listarVersoes() async {
+    final instalada = await _installedVersionLoader();
+    return listarVersoesDoPdv(
+      _client,
+      manifestUri: manifestUri,
+      instalada: instalada.version,
+      timeout: timeout,
+    );
   }
 
   Future<PdvDownloadedArtifact> downloadAndVerify(
@@ -495,28 +522,4 @@ Map<String, dynamic> _decodeManifest(List<int> bytes) {
     throw const FormatException('Manifesto não é um objeto JSON');
   }
   return Map<String, dynamic>.from(decoded);
-}
-
-class _GithubReleaseAsset {
-  const _GithubReleaseAsset(this.owner, this.repository, this.asset);
-
-  final String owner;
-  final String repository;
-  final String asset;
-}
-
-/// Reconhece `https://github.com/{dono}/{repo}/releases/latest/download/{asset}`.
-///
-/// Qualquer outro formato devolve `null`: uma instalação que aponta o
-/// manifesto para um servidor próprio não tem API de releases para consultar.
-_GithubReleaseAsset? _githubReleaseAsset(Uri uri) {
-  if (uri.host != 'github.com') return null;
-  final partes = uri.pathSegments;
-  if (partes.length != 6) return null;
-  if (partes[2] != 'releases' ||
-      partes[3] != 'latest' ||
-      partes[4] != 'download') {
-    return null;
-  }
-  return _GithubReleaseAsset(partes[0], partes[1], partes[5]);
 }

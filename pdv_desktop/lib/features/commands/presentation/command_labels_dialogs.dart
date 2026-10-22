@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'command_labels.dart';
+import '../../../core/widgets/teclas_do_dialogo.dart';
 
 /// Escolhe a faixa de números: "da comanda 10 até a 100".
 class FaixaDeEtiquetasDialog extends StatefulWidget {
@@ -48,7 +49,7 @@ class _FaixaDeEtiquetasDialogState extends State<FaixaDeEtiquetasDialog> {
   );
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => AlertaComTeclas(
     title: const Text('Imprimir etiquetas de comanda'),
     content: SizedBox(
       width: 420,
@@ -108,7 +109,7 @@ class ProgressoDasEtiquetas extends StatelessWidget {
   final VoidCallback onParar;
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => AlertaComTeclas(
     title: const Text('Imprimindo etiquetas'),
     content: SizedBox(
       width: 380,

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'pdv_screen.dart';
 import 'pdv_shortcuts.dart';
 import 'scanner_keyboard_capture.dart';
+import 'toque_de_modificador.dart';
 
 /// De onde veio o código.
 enum CodeSource {
@@ -14,7 +15,7 @@ enum CodeSource {
   /// Leitor ligado à porta serial (o mesmo da balança).
   serial,
 
-  /// Texto colado pelo operador, com F8 ou Ctrl + Shift + V.
+  /// Texto colado pelo operador, com Ctrl + Shift + V.
   clipboard,
 }
 
@@ -61,7 +62,8 @@ class PdvInputContext {
   /// O diálogo aberto declarou que entende códigos lidos.
   final bool modalAcceptsScanner;
 
-  /// Existe um pedido em edição (habilita F9, F10, F12, +, -, Delete).
+  /// Existe um pedido em edição, ou um carrinho montado (habilita Enter na
+  /// venda, Ctrl + E, Ctrl + P, +, -, Delete).
   final bool hasOrder;
 
   /// O campo focado USA as setas (a lista de opções do cupom): os atalhos de
@@ -86,12 +88,12 @@ class PdvInputContext {
   ///
   /// Com um campo focado, quase tudo pertence ao campo. As teclas de função
   /// continuam valendo porque não produzem texto — sem elas, o operador
-  /// perderia F1 e F8 justamente enquanto digita.
+  /// perderia as páginas (F1 a F8) justamente enquanto digita.
   bool shortcutEnabled(PdvShortcut shortcut) {
     // Com um diálogo aberto, o teclado é dele. Esc precisa fechar o modal
     // superior e parar aí: se o roteador também respondesse, uma tecla
     // fecharia o modal E voltaria de página, e o operador perderia a tela sem
-    // ter pedido. O mesmo vale para F10 disparando um pagamento por trás de
+    // ter pedido. O mesmo vale para o Enter disparando um pagamento por trás de
     // uma confirmação que ainda está na frente do operador.
     if (hasModal) return false;
     if (shortcut.requiresOrder && !hasOrder) return false;
@@ -172,6 +174,16 @@ class PdvInputRouter {
   /// classe: uma segunda lista aqui se desencontraria dele no primeiro atalho
   /// novo, e o sintoma seria uma tecla presa virando duas cobranças.
   final Map<String, DateTime> _lastFired = {};
+  final _toque = ToqueDeModificador();
+
+  // `LogicalKeyboardKey` sobrescreve `==`: o conjunto não pode ser `const`.
+  static final Set<LogicalKeyboardKey> _teclasDeAtalhoNaVenda = {
+    LogicalKeyboardKey.space,
+    LogicalKeyboardKey.add,
+    LogicalKeyboardKey.numpadAdd,
+    LogicalKeyboardKey.minus,
+    LogicalKeyboardKey.numpadSubtract,
+  };
   static const _repeatGuard = Duration(milliseconds: 400);
 
   /// A última tecla que este roteador usou. `PdvKeyBarrier` consulta para a
@@ -199,6 +211,33 @@ class PdvInputRouter {
 
   bool _handle(KeyEvent event) {
     final context = _readContext();
+
+    // Ctrl ou Shift tocado sozinho: troca a categoria na venda.
+    final toque = _toque.ler(event);
+    if (toque != null && !context.hasModal) {
+      final id = toque == 'ctrl'
+          ? PdvAction.categoryNext
+          : PdvAction.categoryPrevious;
+      final atalho = PdvShortcuts.all.firstWhere((item) => item.id == id);
+      if (atalho.appliesTo(context.screen)) _shortcuts.add(atalho);
+      return false;
+    }
+
+    // Espaço, + e −, sem leitura correndo, são atalho (adicionar o produto,
+    // quantidade). O leitor guardava todo caractere como começo de código, e
+    // essas teclas sumiam no buffer. No meio de uma leitura rápida, continuam
+    // sendo do código ("AB-12").
+    if (context.scannerEnabled &&
+        event is KeyDownEvent &&
+        !_capture.lendo &&
+        _teclasDeAtalhoNaVenda.contains(event.logicalKey)) {
+      final atalho = PdvShortcuts.resolve(event, screen: context.screen);
+      if (atalho != null && context.shortcutEnabled(atalho)) {
+        _capture.reset();
+        if (_allowRepeat(atalho)) _shortcuts.add(atalho);
+        return true;
+      }
+    }
 
     // 2. Captura do leitor. Vem antes dos atalhos porque um código pode conter
     //    dígitos e letras que também são atalhos — e porque o terminador
@@ -257,7 +296,7 @@ class PdvInputRouter {
 
   /// Lê a área de transferência e trata o texto como uma leitura.
   ///
-  /// Só por ação do operador (F8 / Ctrl + Shift + V). Vigiar a área de
+  /// Só por ação do operador (Ctrl + Shift + V). Vigiar a área de
   /// transferência em segundo plano interpretaria senha copiada, texto de
   /// conversa e código antigo — coisas que ninguém pediu para o PDV ler.
   Future<bool> readFromClipboard() async {

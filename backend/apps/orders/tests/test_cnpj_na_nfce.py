@@ -123,10 +123,12 @@ def emitivel(pedido, account, restaurant, branch):
 
 def test_nota_leva_o_cnpj_alfanumerico_ate_a_focus_e_ao_danfe(api_client, emitivel, manager_user):
     from apps.invoices.services import _danfe_nfce_text, emit_fiscal_invoice
+    from apps.invoices.tests.quitacao import quitar_pedido
 
     _checkout(api_client, emitivel, fiscal_customer_cpf="", fiscal_customer_cnpj="12.abc.345/01de-35")
     with tenant_context(emitivel.account):
         emitivel.refresh_from_db()
+        quitar_pedido(emitivel)  # a NFC-e exige o pagamento do total (com a taxa)
         emit_fiscal_invoice(emitivel, user=manager_user)
         nota = Invoice.all_objects.get(order=emitivel)
         payload = FocusNfeProvider()._build_payload(nota, nota.fiscal_config if hasattr(nota, "fiscal_config") else FiscalConfig.objects.get(restaurant=emitivel.restaurant))

@@ -47,6 +47,15 @@ class ScannerKeyboardCapture {
   /// O que já foi acumulado nesta leitura, antes do terminador chegar.
   String get partial => _buffer.toString();
 
+  /// Uma leitura está CORRENDO agora: há caracteres guardados e o último
+  /// chegou dentro do intervalo de um leitor.
+  bool get lendo {
+    final ultimo = _lastKeyAt;
+    return _buffer.isNotEmpty &&
+        ultimo != null &&
+        _clock().difference(ultimo) <= interKeyTimeout;
+  }
+
   void reset() {
     _buffer.clear();
     _lastKeyAt = null;
@@ -139,7 +148,8 @@ class ScannerKeyResult {
   static const buffering = ScannerKeyResult._(null, true);
 
   /// Leitura concluída.
-  factory ScannerKeyResult.code(String value) => ScannerKeyResult._(value, true);
+  factory ScannerKeyResult.code(String value) =>
+      ScannerKeyResult._(value, true);
 
   /// O código lido, quando a leitura terminou.
   final String? code;

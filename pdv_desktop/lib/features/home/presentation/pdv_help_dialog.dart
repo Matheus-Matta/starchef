@@ -316,7 +316,7 @@ class _ScannerCard extends StatelessWidget {
           _line(
             scheme,
             'Área de transferência',
-            'F8 ou Ctrl + Shift + V interpretam o texto copiado como uma '
+            'Ctrl + Shift + V interpreta o texto copiado como uma '
                 'leitura. Ctrl + V continua colando normalmente. Nada é lido '
                 'em segundo plano: senhas e textos copiados não viram código.',
           ),

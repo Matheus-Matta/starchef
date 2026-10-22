@@ -131,7 +131,7 @@ void main() {
 
       expect(find.text('Total'), findsOneWidget);
       expect(find.text('Ir para pagamento'), findsOneWidget);
-      expect(find.text('F4'), findsAtLeastNWidgets(1));
+      expect(find.text('Enter'), findsAtLeastNWidgets(1));
       expect(find.text('Impressora pronta'), findsOneWidget);
     });
   }

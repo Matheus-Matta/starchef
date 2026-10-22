@@ -2,7 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
+import 'package:starchef_pdv_desktop/core/network/realtime_client.dart';
 import 'package:starchef_pdv_desktop/core/network/response_cache.dart';
+import 'package:starchef_pdv_desktop/features/home/data/freio_da_releitura.dart';
 import 'package:starchef_pdv_desktop/features/home/data/pdv_repository.dart';
 
 /// O catálogo abre com a última cópia e se corrige sozinho por trás.
@@ -59,13 +61,14 @@ void main() {
       final ouvindo = repo.api.signals.changes.listen(sinais.add);
       await repo.loadCatalog('r1');
       nomeDoProduto = 'X-Salada';
-      agora = agora.add(const Duration(seconds: 30));
+      // Passada a rede de segurança (`catalogRevalidateAfter`), relê.
+      agora = agora.add(const Duration(minutes: 6));
 
       final mostrado = await repo.loadCatalog('r1');
       expect(mostrado.products.single['name'], 'X-Burger');
 
       await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(sinais, contains('realtime:pdv'));
+      expect(sinais, contains('realtime:menu'));
       expect(
         (await repo.loadCatalog('r1')).products.single['name'],
         'X-Salada',
@@ -79,13 +82,27 @@ void main() {
     final sinais = <String>[];
     final ouvindo = repo.api.signals.changes.listen(sinais.add);
     await repo.loadCatalog('r1');
+    agora = agora.add(const Duration(minutes: 6));
+
+    await repo.loadCatalog('r1');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    expect(sinais, isNot(contains('realtime:menu')));
+    await ouvindo.cancel();
+  });
+
+  test('sem aviso, 30 s depois o catálogo NÃO é relido', () async {
+    // Era relido a cada recarga da tela com mais de 10 s: o cardápio inteiro
+    // ia ao servidor o tempo todo e o caixa travava.
+    final repo = repositorio();
+    await repo.loadCatalog('r1');
+    final antes = leituras.length;
     agora = agora.add(const Duration(seconds: 30));
 
     await repo.loadCatalog('r1');
     await Future<void>.delayed(const Duration(milliseconds: 300));
 
-    expect(sinais, isNot(contains('realtime:pdv')));
-    await ouvindo.cancel();
+    expect(leituras.length, antes);
   });
 
   test('depois de uma escrita, a tela abre na hora e rele por tras', () async {
@@ -119,6 +136,31 @@ void main() {
         'GET /api/v1/commands/',
       });
       expect(catalogo.products.single['name'], 'X-Burger');
+    },
+  );
+
+  test(
+    'aviso atrás de aviso relê as comandas UMA vez, e agenda a última',
+    () async {
+      // Cada item lançado numa comanda da loja avisava todos os PDVs, e cada
+      // aviso relia a lista INTEIRA de comandas, em páginas de 300.
+      addTearDown(freioDoAviso.dispose);
+      final repo = repositorio();
+      await repo.loadCatalog('r-freio');
+      const evento = RealtimeEvent('model.updated', {
+        'resource': 'restaurants.command',
+        'id': 'c1',
+      });
+
+      leituras.clear();
+      for (var i = 0; i < 5; i++) {
+        repo.api.applyRealtimeEvent(evento, restaurantId: 'r-freio');
+        await repo.loadCatalog('r-freio', porAviso: true);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+
+      expect(leituras.where((l) => l == 'GET /api/v1/commands/'), hasLength(1));
+      expect(freioDoAviso.temAdiada('r-freio/commands/'), isTrue);
     },
   );
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/linhas_da_comanda.dart';
+import '../../../core/widgets/teclas_do_dialogo.dart';
 
 /// Os três jeitos de pôr uma linha na comanda da pesagem.
 ///
@@ -71,7 +72,7 @@ class _TituloDialogState extends State<_TituloDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => AlertaComTeclas(
     title: const Text('Título da linha'),
     content: SizedBox(
       width: 380,

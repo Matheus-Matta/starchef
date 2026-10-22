@@ -698,10 +698,16 @@ class PrintJobViewSet(BaseTenantViewSet):
     CLAIM_TTL = timedelta(minutes=5)
 
     def _release_stale_claims(self):
+        # A etiqueta da Balança Rápida é DA estação dela (`imprime_na_estacao`):
+        # devolvida à fila, um PDV a imprimia de novo a cada confirmação
+        # (`mark-printed`) perdida — "a comanda 7 saiu umas 5 vezes". Faltando,
+        # o operador usa Reimprimir.
         self.get_queryset().filter(
             status=PrintJob.STATUS_CLAIMED,
             updated_at__lt=timezone.now() - self.CLAIM_TTL,
-        ).update(status=PrintJob.STATUS_PENDING, updated_at=timezone.now())
+        ).exclude(payload__has_key="imprime_na_estacao").update(
+            status=PrintJob.STATUS_PENDING, updated_at=timezone.now(),
+        )
 
     def get_throttles(self):
         if self.action == "list":

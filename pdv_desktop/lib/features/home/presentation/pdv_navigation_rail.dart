@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_theme.dart';
+import '../../../core/input/pdv_shortcuts.dart';
+import 'pdv_navigation_rail_button.dart';
 import 'pdv_navigation_shell.dart';
 
 /// Navegação fixa do posto de venda. A largura nunca muda: o catálogo não
@@ -28,22 +29,22 @@ class PdvNavigationRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final entries = <_RailEntry>[
+    final entries = <RailEntry>[
       // "Venda", igual à barra lateral expandida: o destino é o mesmo, e o
       // trilho e a barra precisam chamá-lo pelo mesmo nome.
-      const _RailEntry(PdvDestination.sale, 'Venda', Icons.grid_view_rounded),
+      const RailEntry(PdvDestination.sale, 'Venda', Icons.grid_view_rounded),
       if (showOrders)
-        const _RailEntry(
+        const RailEntry(
           PdvDestination.orders,
           'Pedidos',
           Icons.receipt_long_outlined,
         ),
-      const _RailEntry(
+      const RailEntry(
         PdvDestination.tables,
         'Mesas',
         Icons.table_restaurant_outlined,
       ),
-      const _RailEntry(
+      const RailEntry(
         PdvDestination.commands,
         'Comandas',
         Icons.qr_code_2_outlined,
@@ -52,19 +53,19 @@ class PdvNavigationRail extends StatelessWidget {
       // tratava e a tela era desenhada por `flowStep == 'customers'` — só não
       // havia botão nenhum que o selecionasse, e o cadastro de cliente ficava
       // inalcançável no desktop inteiro.
-      const _RailEntry(
+      const RailEntry(
         PdvDestination.customers,
         'Clientes',
         Icons.people_outline,
       ),
       if (showFinance)
-        const _RailEntry(
+        const RailEntry(
           PdvDestination.finance,
           'Caixa',
           Icons.account_balance_wallet_outlined,
         ),
-      const _RailEntry(PdvDestination.scale, 'Balança', Icons.scale_outlined),
-      const _RailEntry(PdvDestination.settings, 'Mais', Icons.apps_outlined),
+      const RailEntry(PdvDestination.scale, 'Balança', Icons.scale_outlined),
+      const RailEntry(PdvDestination.settings, 'Mais', Icons.apps_outlined),
     ];
     return Container(
       width: 72,
@@ -95,7 +96,7 @@ class PdvNavigationRail extends StatelessWidget {
                         horizontal: 7,
                         vertical: 3,
                       ),
-                      child: _RailButton(
+                      child: RailButton(
                         entry: entry,
                         selected: _isSelected(entry.destination),
                         onTap: () => onSelected(entry.destination),
@@ -108,9 +109,10 @@ class PdvNavigationRail extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Tooltip(
-              message: 'Ajuda e atalhos: F1',
+              message:
+                  'Ajuda e atalhos: ${PdvShortcuts.teclaDe(PdvAction.help)}',
               child: Text(
-                'F1',
+                PdvShortcuts.teclaDe(PdvAction.help),
                 style: TextStyle(
                   color: scheme.onSurfaceVariant,
                   fontSize: 12,
@@ -125,68 +127,4 @@ class PdvNavigationRail extends StatelessWidget {
   }
 
   bool _isSelected(PdvDestination destination) => selected == destination;
-}
-
-class _RailButton extends StatelessWidget {
-  const _RailButton({
-    required this.entry,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _RailEntry entry;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final foreground = selected ? scheme.primary : scheme.onSurfaceVariant;
-    return Tooltip(
-      message: entry.label,
-      waitDuration: const Duration(milliseconds: 350),
-      child: Material(
-        color: selected ? scheme.primaryContainer : Colors.transparent,
-        borderRadius: AppTheme.radius,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: AppTheme.radius,
-          focusColor: scheme.primaryContainer,
-          child: Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              border: selected
-                  ? Border(left: BorderSide(color: scheme.primary, width: 3))
-                  : null,
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(entry.icon, size: 21, color: foreground),
-                const SizedBox(height: 3),
-                Text(
-                  entry.label,
-                  maxLines: 1,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: 10,
-                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RailEntry {
-  const _RailEntry(this.destination, this.label, this.icon);
-
-  final PdvDestination destination;
-  final String label;
-  final IconData icon;
 }

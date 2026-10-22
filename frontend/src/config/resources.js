@@ -906,7 +906,7 @@ export const resources = [
       { name: "pis_rate", label: "Aliquota PIS (%)", type: "decimal", default: 0, section: "PIS / COFINS" },
       { name: "cofins_cst", label: "CST COFINS", type: "dropdown", options: FISCAL_CST_PIS_COFINS_OPTIONS, default: "49", section: "PIS / COFINS" },
       { name: "cofins_rate", label: "Aliquota COFINS (%)", type: "decimal", default: 0, section: "PIS / COFINS" },
-      { name: "approx_tax_rate", label: "Tributos aprox. (Lei 12.741) (%)", type: "decimal", default: 0, full: true, section: "Outros", hint: "Percentual informado no cupom como tributo aproximado ao consumidor." },
+      { name: "approx_tax_rate", label: "Tributos aprox. (Lei 12.741) (%)", type: "decimal", default: 0, full: true, section: "Outros", hint: "Obrigatório (Lei 12.741): o cupom mostra o tributo aproximado. Com 0% sai R$ 0,00 — use o percentual da tabela do IBPT para o NCM." },
       { name: "is_default", label: "Sugerir como padrao", type: "boolean", default: false, section: "Outros", hint: "Destaca este perfil no cadastro de produtos. Nao altera sozinho a emissao." },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Outros" },
     ],

@@ -332,6 +332,28 @@ que o leitor da lib o lê (`ACBrNFe.IniReader.pas`, `Ler_Pagamento`). Ele ia
 numa seção `[pag]` à parte, que a lib ignorava — e toda venda com troco
 voltava 866 mesmo com o valor certo no arquivo. O teste lê o INI como a ACBr
 lê (`test_rejeicoes_que_voltavam.py`), e não procura a chave em qualquer lugar.
+O 866 voltou a aparecer na loja depois disso, e o `vTroco` passou a ir também
+na `[pag]`, com o mesmo valor: versão da lib que lê de um lugar ou do outro
+chega ao mesmo troco.
+
+**899 — Meio de pagamento incorreto / "a nota nao possui itens fiscais".** A
+NFC-e não aceita tPag=90 ("sem pagamento"), e era isso que o documento levava
+quando o pedido não tinha pagamento aprovado. Os dois erros vinham da mesma
+corrida: a venda feita na nuvem chega à loja em pedaços (pedido, itens e
+pagamentos são eventos separados), e a varredura dos pagos sem nota
+(`emitir_pagos_sem_nota`) montava a nota com o pedido pela metade.
+`pedido_completo.py` responde antes o que falta: a varredura adia o pedido
+incompleto, o reenvio (um ou em massa) devolve o motivo em vez de transmitir,
+e a montagem da NFC-e recusa pagamento ausente ou abaixo do total (865) sem ir
+à SEFAZ. Pedido de valor zero não gera NFC-e (não há tPag com valor que ela
+aceite). O tPag=99 ("outros") leva a descrição (`xPag`, rejeição 441).
+
+**Lei 12.741/2012 — tributos aproximados no cupom.** O valor sai do
+percentual do perfil fiscal (`approx_tax_rate`, tabela do IBPT pelo NCM), vai
+no XML (`vTotTrib`) e no DANFE como "Tributos Totais Incidentes (Lei Federal
+12.741/2012)". A linha sai SEMPRE, mesmo zerada; percentual 0% fica avisado na
+nota (`fiscal_payload["aviso_lei_12741"]`) e no cadastro do perfil, sem
+bloquear a venda (`lei_da_transparencia.py`).
 
 **386 — CFOP não permitido para o CSOSN.** Na NFC-e do Simples, o CSOSN 500
 (ST já recolhida) só aceita CFOP 5405, 5656 ou 5667, e os CSOSN 101, 102, 103,

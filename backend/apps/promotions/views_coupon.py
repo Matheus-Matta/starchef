@@ -60,13 +60,19 @@ class CouponViewSet(BaseTenantViewSet):
 
         codigo = request.data.get("code") or ""
         pedido_id = request.data.get("order")
-        if not pedido_id:
-            return Response({"detail": "Informe o pedido a conferir."}, status=400)
-        pedido = Order.objects.filter(pk=pedido_id).first()
-        if pedido is None:
-            return Response({"detail": "Pedido não encontrado."}, status=404)
-        cupom = buscar_cupom(request.account.id, codigo)
-        motivo, desconto, cliente = avaliar_no_pedido(cupom, pedido)
+        if pedido_id:
+            pedido = Order.objects.filter(pk=pedido_id).first()
+            if pedido is None:
+                return Response({"detail": "Pedido não encontrado."}, status=404)
+            cupom = buscar_cupom(request.account.id, codigo)
+            motivo, desconto, cliente = avaliar_no_pedido(cupom, pedido)
+        else:
+            # A venda nova ainda vive no PDV: ele manda os números dela
+            # (`coupon_sem_pedido.py`), e não um pedido para simular.
+            from apps.promotions.coupon_sem_pedido import avaliar_venda
+
+            cupom = buscar_cupom(request.account.id, codigo)
+            motivo, desconto, cliente = avaliar_venda(cupom, account_id=request.account.id, dados=request.data)
         return Response(
             {
                 "valid": motivo is None,

@@ -75,13 +75,15 @@ void main() {
     expect(find.text('Indisponível'), findsOneWidget);
   });
 
-  testWidgets('Enter na busca adiciona o primeiro resultado', (tester) async {
+  testWidgets('Enter na busca NÃO adiciona produto (é o Espaço)', (
+    tester,
+  ) async {
     Map<String, dynamic>? selected;
     await tester.pumpWidget(catalog(onPressed: (item) => selected = item));
     await tester.tap(find.byType(TextField));
     await tester.enterText(find.byType(TextField), 'picanha');
     await tester.testTextInput.receiveAction(TextInputAction.done);
-    expect(selected?['id'], 'p1');
+    expect(selected, isNull);
   });
 
   testWidgets('imagem remota preserva proporção na decodificação', (

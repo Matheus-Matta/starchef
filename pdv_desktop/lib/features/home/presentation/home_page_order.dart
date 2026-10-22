@@ -14,6 +14,8 @@ part of 'home_page.dart';
 ///
 /// Os métodos foram MOVIDOS, não reescritos.
 mixin _OrderSection on _HomePageShared {
+  bool get abrindoPagamento;
+  set abrindoPagamento(bool value);
   void _leaveActiveOrder({String? except});
   Future<void> _load();
   Future<String?> _autorizarDesconto(String motivo);
@@ -100,10 +102,18 @@ mixin _OrderSection on _HomePageShared {
   Future<void> _refreshOrder() async {
     // A prévia da tela de pagamento ainda não existe no servidor.
     if (!draft.pedidoExisteNoServidor(activeOrder)) return;
-    activeOrder = await api.get(
-      '/orders/${activeOrder!['id']}/',
-      accessToken: token,
+    _aplicarPedido(
+      await api.get('/orders/${activeOrder!['id']}/', accessToken: token),
     );
+  }
+
+  /// Põe na tela o pedido que ACABOU de chegar do servidor.
+  ///
+  /// Quem já tem o pedido em mãos (o detalhe recém-lido, a resposta do
+  /// `/close/`) usa isto em vez de `_refreshOrder`: os dois faziam o mesmo GET
+  /// em seguida, e abrir uma mesa ou comanda custava duas idas ao servidor.
+  void _aplicarPedido(Map<String, dynamic> pedido) {
+    activeOrder = pedido;
     final items = activeOrder!['items'] as List? ?? [];
     orderItems = items
         .cast<Map<String, dynamic>>()
@@ -140,7 +150,18 @@ mixin _OrderSection on _HomePageShared {
   /// três ficam na própria tela de pagamento (`_PaymentAdjustSection` e
   /// `_PaymentCouponSection`), onde o caixa decide vendo o total, e muda
   /// depois sem voltar.
+  /// "Ir para pagamento", com o botão avisando enquanto abre.
   Future<void> _finishOrder() async {
+    if (abrindoPagamento) return; // duplo clique, ou Enter segurado
+    setState(() => abrindoPagamento = true);
+    try {
+      await _abrirPagamento();
+    } finally {
+      if (mounted) setState(() => abrindoPagamento = false);
+    }
+  }
+
+  Future<void> _abrirPagamento() async {
     if (!widget.controller.session!.user.canProcessPayments) return;
     // O outro gesto que faz o pedido nascer: o caixa vai anexar um
     // recebimento, e recebimento se anexa a pedido. A permissão é conferida
@@ -237,8 +258,9 @@ mixin _OrderSection on _HomePageShared {
       // O fechamento já foi confirmado pelo servidor: `api.patch` só retorna
       // depois que ele respondeu. O teclado de pagamento abre sobre um pedido
       // que existe fechado do outro lado.
-      activeOrder = closeResult;
-      await _refreshOrder();
+      // A resposta do `/close/` é o pedido inteiro (o mesmo serializer do
+      // GET): reler logo em seguida só repetia a ida ao servidor.
+      _aplicarPedido(closeResult);
       return activeOrder!;
     }, errorTitle: 'Não foi possível fechar o pedido');
     if (closed == null) return;

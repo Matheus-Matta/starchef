@@ -77,3 +77,19 @@ def test_poucas_consultas(api_client, restaurant, vendas):
     consultas = [q["sql"] for q in ctx.captured_queries if q["sql"].lstrip().startswith("SELECT")]
     pedidos = [q for q in consultas if 'FROM "orders_order"' in q]
     assert len(pedidos) <= 3, f"{len(pedidos)} consultas em orders_order"
+
+
+def test_o_resumo_do_topo_calcula_so_o_que_o_topo_mostra(api_client, restaurant, vendas):
+    """O layout de TODA página pedia o dashboard inteiro a cada 30 s — gráfico
+    do mês e estoque incluídos — para mostrar três números: ~700 ms por vez,
+    por aba aberta, o dia todo."""
+    with CaptureQueriesContext(connection) as ctx:
+        dados = api_client.get(URL, {"restaurant": str(restaurant.pk), "resumo": "1"}).json()
+
+    assert (dados["orders_count"], dados["open_orders"]) == (5, 1)
+    assert "kitchen_open_items" in dados
+    assert "sales_current_month" not in dados and "low_stock" not in dados
+    # O que a requisição autenticada sempre consulta (usuário, perfil) não conta.
+    do_relatorio = [q["sql"] for q in ctx.captured_queries
+                    if '"orders_' in q["sql"] or '"stock_' in q["sql"]]
+    assert len(do_relatorio) == 2, do_relatorio

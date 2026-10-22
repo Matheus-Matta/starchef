@@ -181,7 +181,8 @@ function handleNavMediaChange(event) {
 
 async function loadDashboardSummary() {
   try {
-    const params = {};
+    // Só os números do topo: o dashboard inteiro a cada 30 s pesava no servidor.
+    const params = { resumo: 1 };
     if (canSeeAllRestaurants.value && selectedRestaurantId.value) {
       params.restaurant = selectedRestaurantId.value;
     }

@@ -213,6 +213,11 @@ class ProductSerializer(ProductPromotionReading, ProductImagesMixin, TenantModel
     current_stock_display = serializers.SerializerMethodField()
 
     def get_current_stock(self, obj):
+        # A lista traz o saldo anotado (`estoque_do_produto`); as duas somas
+        # por produto — esta e a do `_display` — eram metade das consultas.
+        anotado = getattr(obj, "estoque_atual", None)
+        if anotado is not None:
+            return float(anotado)
         from apps.stock.models import StockMovement
         from django.db.models import Sum
         val = StockMovement.all_objects.filter(product=obj, deleted_at__isnull=True).aggregate(total=Sum("quantity"))["total"]

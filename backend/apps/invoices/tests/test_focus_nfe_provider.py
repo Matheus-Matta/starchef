@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.providers import FocusNfeProvider
 from apps.invoices.services import emit_fiscal_invoice, reprocess_pending_fiscal_invoices
+from apps.invoices.tests.quitacao import desfazer_quitacao, quitar_pedido
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -46,6 +47,7 @@ def _make_fiscal_config(account, restaurant, branch):
 def _order_with_item(restaurant, branch, product, user):
     order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER, user=user)
     add_order_item(order=order, product=product, quantity=1, user=user)
+    quitar_pedido(order)
     return order
 
 
@@ -89,7 +91,7 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
     assert sent_payload["finalidade_emissao"] == "1"
     assert sent_payload["presenca_comprador"] == "1"
     assert sent_payload["cpf_destinatario"] == "12345678909"
-    assert sent_payload["formas_pagamento"] == [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
+    assert sent_payload["formas_pagamento"] == [{"forma_pagamento": "01", "valor_pagamento": "25.00"}]
     assert len(sent_payload["items"]) == 1
     assert sent_payload["items"][0]["descricao"] == "X-Burger"
 
@@ -140,6 +142,7 @@ def test_payload_maps_approved_payments_and_cash_change(mock_post, account, rest
     product = _make_product(account, restaurant, branch)
     _make_fiscal_config(account, restaurant, branch)
     order = _order_with_item(restaurant, branch, product, manager_user)
+    desfazer_quitacao(order)
     cash = PaymentMethod.objects.create(
         account=account, restaurant=restaurant, branch=branch, name="Dinheiro", method_type="cash"
     )
@@ -180,6 +183,8 @@ def test_payload_maps_order_fees_to_other_expenses(mock_post, account, restauran
     order.discount = Decimal("1.00")
     order.total = Decimal("28.00")
     order.save(update_fields=["service_fee", "delivery_fee", "discount", "total", "updated_at"])
+    desfazer_quitacao(order)
+    quitar_pedido(order)
 
     emit_fiscal_invoice(order, user=manager_user)
 

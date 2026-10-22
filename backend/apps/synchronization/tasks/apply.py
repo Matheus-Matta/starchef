@@ -31,12 +31,12 @@ def apply_pending_events(event_pks=None):
     if event_pks:
         consulta = consulta.filter(pk__in=event_pks)
 
-    aplicados = 0
-    for evento in consulta[:MAX_POR_EXECUCAO]:
-        if apply.apply_event(evento):
-            aplicados += 1
+    feitos = [evento for evento in consulta[:MAX_POR_EXECUCAO] if apply.apply_event(evento)]
+    aplicados = len(feitos)
     if aplicados:
-        logger.info("sync: %s evento(s) aplicados", aplicados)
+        from apps.synchronization.services import registro
+
+        registro.aplicados(feitos)
         # O que acabou de entrar pode ser o pai que alguém esperava.
         retry.acordar_quem_espera_dependencia(proprio)
     return aplicados

@@ -13,8 +13,12 @@ class ProductCatalogTile extends StatelessWidget {
     required this.product,
     required this.money,
     required this.onPressed,
+    this.destacado = false,
   });
 
+  /// O produto em que as setas pararam (`destaque_da_grade.dart`): o Espaço
+  /// adiciona ESTE.
+  final bool destacado;
   final Map<String, dynamic> product;
   final String Function(dynamic) money;
   final VoidCallback onPressed;
@@ -38,7 +42,12 @@ class ProductCatalogTile extends StatelessWidget {
         color: scheme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: AppTheme.radius,
-          side: BorderSide(color: scheme.outlineVariant),
+          side: destacado
+              ? BorderSide(
+                  color: scheme.primary.withValues(alpha: .55),
+                  width: 1.5,
+                )
+              : BorderSide(color: scheme.outlineVariant),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(

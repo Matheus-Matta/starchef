@@ -19,6 +19,8 @@ COM_GRUPO_DO_CARTAO = {"03", "04", "17"}
 #: `tpIntegra=2` é o que dispensa os três. Sem o grupo, a SEFAZ recusava a
 #: NFC-e paga no cartão com 391 ("Não informados os dados do cartão").
 NAO_INTEGRADO = "2"
+#: "Outros": o único tPag que leva a descrição (xPag).
+OUTROS = "99"
 
 
 class DocumentoRegras:
@@ -45,10 +47,21 @@ class DocumentoRegras:
         forma = {"forma_pagamento": cls._payment_code(payment), "valor_pagamento": valor}
         if forma["forma_pagamento"] in COM_GRUPO_DO_CARTAO:
             forma["tipo_integracao"] = NAO_INTEGRADO
+        if forma["forma_pagamento"] == OUTROS:
+            # tPag=99 sem descrição é a 441; descrição em outro tPag, a 442.
+            forma["descricao_pagamento"] = (payment.payment_method.name or "Outros")[:60]
         return forma
 
     def _build_payments(self, invoice):
+        from apps.invoices.pedido_completo import motivo_sem_pagamento
         from apps.payments.models import Payment
+
+        # NFC-e não aceita tPag=90 (899) nem pagamento abaixo do total (865):
+        # recusar aqui diz o que falta, em vez de gastar a ida à SEFAZ.
+        if str(invoice.document_model) == FiscalConfig.MODEL_NFCE:
+            motivo = motivo_sem_pagamento(invoice.order, invoice.total_amount)
+            if motivo:
+                raise FiscalRejection(f"{type(self).rotulo}: {motivo}")
 
         payments = invoice.order.payments.filter(status=Payment.STATUS_APPROVED).select_related("payment_method")
         result = []

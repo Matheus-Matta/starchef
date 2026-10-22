@@ -162,7 +162,15 @@ def emitir_pagos_sem_nota():
         Q(restaurant_id__in=list(nuvem_emite)) & Q(sequence__gte=PRIMEIRO_NUMERO_DA_NUVEM),
     ).select_related("account", "restaurant", "branch")[:100]
     emitidas = 0
+    from apps.invoices.pedido_completo import motivo_do_pedido_incompleto
+
     for pedido in pendentes:
+        # A venda da nuvem chega em pedaços: sem os itens ou os pagamentos, a
+        # nota nasceria recusada. Fica para a próxima volta da varredura.
+        motivo = motivo_do_pedido_incompleto(pedido)
+        if motivo:
+            logger.info("Pedido %s pago ainda incompleto, nota adiada: %s", pedido.pk, motivo)
+            continue
         try:
             if issue_invoice_for_paid_order(pedido, auto_print=True) is not None:
                 emitidas += 1

@@ -48,6 +48,9 @@ def test_na_loja_a_venda_paga_sem_nota_e_emitida(settings, monkeypatch, account,
     pedido = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER,
                           user=manager_user)
     Order.all_objects.filter(pk=pedido.pk).update(status=Order.STATUS_PAID)
+    # Aqui o assunto é QUAL pedido a loja varre; o pedido inteiro (itens e
+    # pagamentos) é conferido em test_nota_de_pedido_incompleto.py.
+    monkeypatch.setattr("apps.invoices.pedido_completo.motivo_do_pedido_incompleto", lambda _p: None)
     emitidos = []
     monkeypatch.setattr("apps.invoices.services.issue_invoice_for_paid_order",
                         lambda pedido, **_k: emitidos.append(pedido.pk) or object())

@@ -23,6 +23,7 @@ from apps.invoices.emissao_da_loja import (
 )
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.serializers import FiscalConfigSerializer
+from apps.invoices.tests.quitacao import quitar_pedido
 from apps.orders.sequence_ranges import PRIMEIRO_NUMERO_DA_NUVEM
 from apps.synchronization.constants import NodeType
 from apps.synchronization.models import SyncNode
@@ -105,6 +106,9 @@ def test_a_loja_nao_varre_a_venda_que_a_nuvem_emite(settings, monkeypatch, accou
                             user=manager_user)
     Order.all_objects.filter(pk=da_nuvem.pk).update(sequence=VENDA_DA_NUVEM)
     Order.all_objects.filter(pk__in=[da_loja.pk, da_nuvem.pk]).update(status=Order.STATUS_PAID)
+    # Aqui o assunto é QUAL pedido a loja varre; o pedido inteiro (itens e
+    # pagamentos) é conferido em test_nota_de_pedido_incompleto.py.
+    monkeypatch.setattr("apps.invoices.pedido_completo.motivo_do_pedido_incompleto", lambda _p: None)
     emitidos = []
     monkeypatch.setattr("apps.invoices.services.issue_invoice_for_paid_order",
                         lambda pedido, **_k: emitidos.append(pedido.pk) or object())
@@ -135,6 +139,7 @@ def test_a_nuvem_numera_na_serie_dela_e_anda_o_contador_dela(nuvem_com_loja, mon
                                      name="Suco", internal_code=f"S{uuid.uuid4().hex[:6]}",
                                      sale_price=Decimal("12.50"))
     add_order_item(order=pedido, product=produto, quantity=1, user=manager_user)
+    quitar_pedido(pedido)
     nota = emit_fiscal_invoice(pedido, user=manager_user)
 
     assert (nota.series, nota.number) == (2, "7")

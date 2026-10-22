@@ -70,6 +70,9 @@ def store_batch(events_payload, *, connection_node, account_id, run=None):
             aceitos.append(evento)
         maior_sequencia = max(maior_sequencia, int(bruto.get("sequence") or 0))
 
+    from apps.synchronization.services import registro
+
+    registro.recebido(aceitos, recusados, connection_node)
     return aceitos, maior_sequencia, recusados
 
 

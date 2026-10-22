@@ -23,7 +23,10 @@ void main() {
   );
 
   /// Digita como um leitor: rápido e sem pausas.
-  ScannerKeyResult scan(String code, {Duration gap = const Duration(milliseconds: 12)}) {
+  ScannerKeyResult scan(
+    String code, {
+    Duration gap = const Duration(milliseconds: 12),
+  }) {
     for (final character in code.split('')) {
       now = now.add(gap);
       capture.handle(keyOf(character), acceptsInput: true);
@@ -75,7 +78,10 @@ void main() {
 
   test('digitação humana não vira leitura', () {
     // Meio segundo entre teclas: ninguém confunde isso com um leitor.
-    final result = scan('7891000100103', gap: const Duration(milliseconds: 500));
+    final result = scan(
+      '7891000100103',
+      gap: const Duration(milliseconds: 500),
+    );
 
     expect(result.hasCode, isFalse);
     // E o Enter continua sendo do operador.

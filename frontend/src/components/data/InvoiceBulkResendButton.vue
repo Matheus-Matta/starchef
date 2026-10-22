@@ -30,6 +30,14 @@ function confirmResend() {
   });
 }
 
+// O mesmo motivo em vinte notas aparece uma vez, com a contagem.
+function motivosDasFalhas(errors = []) {
+  const contagem = new Map();
+  for (const { message } of errors) contagem.set(message, (contagem.get(message) || 0) + 1);
+  const linhas = [...contagem].slice(0, 3).map(([message, n]) => `${message}${n > 1 ? ` (${n} notas)` : ""}`);
+  return linhas.length ? ` Motivo: ${linhas.join(" | ")}` : "";
+}
+
 async function resend() {
   const ids = props.selection.map((row) => row.id);
   if (!ids.length) return;
@@ -43,8 +51,10 @@ async function resend() {
     toast.add({
       severity: data.failed ? "warn" : "success",
       summary: "Reenvio em massa concluido",
-      detail: `${details.join(", ")}.`,
-      life: 6000,
+      detail: `${details.join(", ")}.${motivosDasFalhas(data.errors)}`,
+      // Com falha, o aviso fica até fechar: o motivo ("espere a sincronização",
+      // "pedido de valor zero") é o que diz ao operador o que fazer.
+      life: data.failed ? undefined : 6000,
     });
     emit("completed");
   } catch (error) {

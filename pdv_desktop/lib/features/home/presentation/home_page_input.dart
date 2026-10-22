@@ -16,6 +16,7 @@ part of 'home_page.dart';
 mixin _InputSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   PdvInputRouter get inputRouter;
+  MenuController get notificacoes;
   CodeLookupService? get codeLookup;
   set codeLookup(CodeLookupService? value);
 
@@ -28,6 +29,12 @@ mixin _InputSection on _HomePageShared {
   List<Map<String, dynamic>> get commands;
   List<Map<String, dynamic>> get products;
   List<Map<String, dynamic>> get visibleProducts;
+  int? get produtoDestacado;
+  set produtoDestacado(int? value);
+  int get colunasDaVenda;
+  List<Map<String, dynamic>> get categories;
+  String? get category;
+  set category(String? value);
   List<Map<String, dynamic>> get paymentMethods;
   List<Map<String, dynamic>> get registeredPayments;
   set registeredPayments(List<Map<String, dynamic>> value);
@@ -71,6 +78,7 @@ mixin _InputSection on _HomePageShared {
   Future<void> _finishOrder();
   Future<void> _completePaidOrder();
   Future<void> _addSplitPayment();
+  void _pressPaymentKey(String key);
   Future<void> _voidItem(Map<String, dynamic> item);
   Future<Map<String, dynamic>> _sendPendingItemsToKitchen(
     List<Map<String, dynamic>> pending,
@@ -120,7 +128,10 @@ mixin _InputSection on _HomePageShared {
     // O único modal que entende código é o de configuração de produto: ler o
     // mesmo item de novo soma quantidade lá dentro.
     modalAcceptsScanner: scanningProductId != null,
-    hasOrder: activeOrder != null,
+    // O carrinho da venda nova também é "pedido em edição": sem isto, Enter
+    // (pagamento), Ctrl + E e Ctrl + P ficavam mudos com o carrinho montado,
+    // porque o pedido só existe no servidor depois da conclusão.
+    hasOrder: activeOrder != null || draft.isNotEmpty,
   );
 
   /// ↑ e ↓ na tela de pagamento: a forma anterior ou a seguinte da lista.
@@ -175,16 +186,54 @@ mixin _InputSection on _HomePageShared {
   /// Executa a ação de um atalho.
   Future<void> _onShortcut(PdvShortcut shortcut) async {
     if (completingOrder && !atalhoValeDuranteAConclusao(shortcut.id)) return;
+    // Número no pagamento: a mesma tecla do teclado da tela.
+    if (shortcut.id.startsWith(PdvAction.paymentKeyPrefix)) {
+      _pressPaymentKey(
+        shortcut.id.substring(PdvAction.paymentKeyPrefix.length),
+      );
+      return;
+    }
+    final seta = switch (shortcut.id) {
+      PdvAction.gridLeft => SetaDaGrade.esquerda,
+      PdvAction.gridRight => SetaDaGrade.direita,
+      PdvAction.gridUp => SetaDaGrade.cima,
+      PdvAction.gridDown => SetaDaGrade.baixo,
+      _ => null,
+    };
+    if (seta != null) {
+      setState(
+        () => produtoDestacado = moverDestaque(
+          atual: produtoDestacado,
+          total: visibleProducts.length,
+          colunas: colunasDaVenda,
+          seta: seta,
+        ),
+      );
+      return;
+    }
+    if (shortcut.id == PdvAction.categoryNext ||
+        shortcut.id == PdvAction.categoryPrevious) {
+      _trocarCategoria(shortcut.id == PdvAction.categoryNext ? 1 : -1);
+      return;
+    }
+    if (shortcut.id == PdvAction.addHighlighted) {
+      await _adicionarDestacado();
+      return;
+    }
+    final pagina = paginaDoAtalho[shortcut.id];
+    if (pagina != null) {
+      if (_paginaPermitida(pagina)) await _navigateTo(pagina);
+      return;
+    }
     switch (shortcut.id) {
       case PdvAction.help:
         await _openHelp();
       case PdvAction.readClipboard:
         await inputRouter.readFromClipboard();
-      case PdvAction.home:
       case PdvAction.newSale:
         if (await _confirmLeavingPendingItems()) await _goHome();
-      case PdvAction.orders:
-        await _navigateTo(PdvDestination.orders);
+      case PdvAction.notifications:
+        NotificationBell.alternar(notificacoes, ErrorCenterScope.read(context));
       case PdvAction.refresh:
         await _load();
       case PdvAction.cashCenter:
@@ -210,7 +259,10 @@ mixin _InputSection on _HomePageShared {
       case PdvAction.sendToKitchen:
         await _sendPendingFromShortcut();
       case PdvAction.payment:
-        await _preparePaymentPage();
+        // O MESMO gesto do botão "Ir para pagamento": com o carrinho da venda
+        // nova ainda sem pedido, `_preparePaymentPage` direto quebrava
+        // (`activeOrder!` nulo) — é `_finishOrder` que abre a prévia.
+        await _finishOrder();
       case PdvAction.printReceipt:
         await _printCustomerReceipt();
       case PdvAction.moveSelectionUp:
@@ -230,6 +282,43 @@ mixin _InputSection on _HomePageShared {
       case PdvAction.previousPaymentMethod:
         _trocarFormaDePagamento(-1);
     }
+  }
+
+  /// Ctrl / Shift tocados sozinhos: a categoria seguinte / anterior, dando a
+  /// volta ("Todos" vem antes da primeira).
+  void _trocarCategoria(int passo) {
+    final ids = <String?>[null, for (final c in categories) '${c['id']}'];
+    final atual = ids.indexOf(category);
+    final proximo = ((atual < 0 ? 0 : atual) + passo) % ids.length;
+    setState(() {
+      category = ids[proximo];
+      produtoDestacado = 0;
+    });
+  }
+
+  /// Espaço: o produto destacado pelas setas vai ao carrinho, pelo MESMO
+  /// caminho do clique (variações, peso, indisponível).
+  Future<void> _adicionarDestacado() async {
+    final indice = produtoDestacado;
+    final produtos = visibleProducts;
+    if (indice == null || indice < 0 || indice >= produtos.length) return;
+    final produto = produtos[indice];
+    final disponivel =
+        produto['is_active'] != false &&
+        produto['available'] != false &&
+        produto['is_available'] != false;
+    if (disponivel) await _configureProduct(produto);
+  }
+
+  /// A página só abre pela tecla se o menu a mostra: sem a permissão, F2 e F6
+  /// não fazem nada (o mesmo recorte do `PdvNavigationRail`).
+  bool _paginaPermitida(PdvDestination pagina) {
+    final usuario = widget.controller.session!.user;
+    return switch (pagina) {
+      PdvDestination.orders => usuario.canViewOrders,
+      PdvDestination.finance => usuario.canAccessCash,
+      _ => true,
+    };
   }
 
   /// Confirma o descarte dos recebimentos que ainda não subiram.
@@ -271,7 +360,8 @@ mixin _InputSection on _HomePageShared {
 
   /// Sair do pedido com itens ainda não enviados exige confirmação.
   ///
-  /// F3 e Ctrl + N ficam ao lado de teclas usadas o tempo todo, e um toque
+  /// Ctrl + N e as teclas de página ficam ao lado de teclas usadas o tempo
+  /// todo, e um toque
   /// errado apagaria da tela itens que a cozinha nunca recebeu — sem que
   /// ninguém percebesse até o cliente cobrar.
   @override
@@ -559,23 +649,22 @@ mixin _InputSection on _HomePageShared {
   }
 
   /// Leva o cursor para a busca da tela atual.
+  /// Tab: entra na busca da página; já nela, SAI (o segundo Tab devolve as
+  /// teclas — Espaço, setas — à tela).
   void _focusPageSearch() {
-    if (_currentScreen == PdvScreen.order) {
-      catalogSearchFocus.requestFocus();
-      return;
-    }
-    if (_currentScreen == PdvScreen.orders) {
-      ordersSearchFocus.requestFocus();
-      return;
-    }
-    if (_currentScreen == PdvScreen.context) {
-      commandSearchFocus.requestFocus();
-    }
+    final busca = switch (_currentScreen) {
+      PdvScreen.order => catalogSearchFocus,
+      PdvScreen.orders => ordersSearchFocus,
+      PdvScreen.context => commandSearchFocus,
+      _ => null,
+    };
+    if (busca == null) return;
+    busca.hasFocus ? busca.unfocus() : busca.requestFocus();
   }
 
-  /// F9: manda para a produção só o que ainda está pendente.
+  /// Ctrl + E: manda para a produção só o que ainda está pendente.
   ///
-  /// Sem itens pendentes a tecla não faz nada — e não avisa: apertar F9 duas
+  /// Sem itens pendentes a tecla não faz nada — e não avisa: apertar Ctrl + E duas
   /// vezes é comum, e a segunda não pode virar um alerta.
   Future<void> _sendPendingFromShortcut() async {
     if (busy) return;
@@ -599,7 +688,7 @@ mixin _InputSection on _HomePageShared {
     await PdvHelpDialog.show(
       context,
       screen: _currentScreen,
-      hasOrder: activeOrder != null,
+      hasOrder: activeOrder != null || draft.isNotEmpty,
       scannerStatus: const ScannerStatus(
         connected: false,
         detail: 'Vincule o leitor serial em Balança rápida › Equipamentos.',

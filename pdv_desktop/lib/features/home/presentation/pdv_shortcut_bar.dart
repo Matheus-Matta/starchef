@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/input/pdv_screen.dart';
+import '../../../core/input/pdv_shortcuts.dart';
+
 class PdvShortcutBar extends StatelessWidget {
   const PdvShortcutBar({super.key, this.message});
 
@@ -17,11 +20,16 @@ class PdvShortcutBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _keys('F2 ou /', 'Buscar'),
-          _keys('Enter', 'Adicionar'),
+          // Do catálogo, e não texto solto: "F4  Pagamento" ficou escrito
+          // aqui depois de a tecla mudar.
+          _keys(PdvShortcuts.teclaDe(PdvAction.focusSearch), 'Buscar'),
           _keys('+ / −', 'Quantidade'),
-          _keys('F4', 'Pagamento'),
-          _keys('Esc', 'Voltar'),
+          _keys(
+            PdvShortcuts.teclaDe(PdvAction.payment, screen: PdvScreen.order),
+            'Pagamento',
+          ),
+          _keys(PdvShortcuts.teclaDe(PdvAction.sendToKitchen), 'Cozinha'),
+          _keys(PdvShortcuts.teclaDe(PdvAction.back), 'Voltar'),
           const Spacer(),
           if (message != null)
             Flexible(

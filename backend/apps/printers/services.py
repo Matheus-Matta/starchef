@@ -1257,7 +1257,10 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
                     else PrintJob.STATUS_PENDING),
             printed_at=timezone.now() if offline_printed else None,
             payload={
-                **({"claimed_by_terminal": reservado_para} if reservado_para else {}),
+                # `imprime_na_estacao`: a reserva vencida NÃO devolve este
+                # trabalho à fila dos PDVs (`_release_stale_claims`).
+                **({"claimed_by_terminal": reservado_para, "imprime_na_estacao": True}
+                   if reservado_para else {}),
                 "text_content": texto_da_comanda_da_pesagem(command=command, item=item),
                 "command": str(command.id),
                 "command_number": command.number,

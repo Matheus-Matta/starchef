@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
-import 'product_card_metrics.dart';
+import 'atalho_da_busca.dart';
+import 'grade_de_produtos.dart';
 import 'product_catalog_tile.dart';
 
 class ProductCatalogPanel extends StatelessWidget {
@@ -16,6 +17,9 @@ class ProductCatalogPanel extends StatelessWidget {
     required this.onSearchChanged,
     required this.onCategoryChanged,
     required this.onProductPressed,
+    this.destacado,
+    this.onColunas,
+    this.carregandoMais = false,
     this.searchFocusNode,
     this.searchGeneration = 0,
   });
@@ -29,6 +33,13 @@ class ProductCatalogPanel extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Map<String, dynamic>> onProductPressed;
+
+  /// O produto das setas e quantas colunas a grade tem (`GradeDeProdutos`).
+  final int? destacado;
+  final ValueChanged<int>? onColunas;
+
+  /// O resto do cardápio ainda está chegando (`produtos_em_paginas.dart`).
+  final bool carregandoMais;
   final FocusNode? searchFocusNode;
 
   /// Muda a cada venda nova: o campo é recriado vazio (ver `_resetToNewSale`).
@@ -43,23 +54,10 @@ class ProductCatalogPanel extends StatelessWidget {
     return result;
   }
 
-  bool _available(Map<String, dynamic> product) =>
-      product['is_active'] != false &&
-      product['available'] != false &&
-      product['is_available'] != false;
-
-  Map<String, dynamic>? get _firstAvailable {
-    for (final product in products) {
-      if (_available(product)) return product;
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final counts = _categoryCounts;
-    final firstAvailable = _firstAvailable;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surface,
@@ -78,21 +76,21 @@ class ProductCatalogPanel extends StatelessWidget {
                     key: ValueKey('catalog-search-$searchGeneration'),
                     focusNode: searchFocusNode,
                     onChanged: onSearchChanged,
-                    onSubmitted: (_) {
-                      if (firstAvailable != null) {
-                        onProductPressed(firstAvailable);
-                      }
-                    },
+                    // Enter CONCLUI a busca: o cursor sai do campo e as setas,
+                    // o Espaço e o Enter voltam a ser da venda.
+                    onSubmitted: (_) => searchFocusNode?.unfocus(),
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search_rounded),
                       hintText: 'Buscar produto, código ou categoria',
-                      suffixIcon: _SearchShortcut(),
+                      suffixIcon: AtalhoDaBusca(),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  '${products.length} produtos',
+                  carregandoMais
+                      ? '${products.length} produtos · carregando mais…'
+                      : '${products.length} produtos',
                   style: TextStyle(
                     color: scheme.onSurfaceVariant,
                     fontSize: 12,
@@ -131,46 +129,18 @@ class ProductCatalogPanel extends StatelessWidget {
           Expanded(
             child: products.isEmpty
                 ? ProductCatalogEmptyState(search: search)
-                : GridView.builder(
-                    padding: const EdgeInsets.all(8),
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: ProductCardMetrics.maxCardWidth,
-                          mainAxisExtent: ProductCardMetrics.cardHeight,
-                          crossAxisSpacing: ProductCardMetrics.spacing,
-                          mainAxisSpacing: ProductCardMetrics.spacing,
-                        ),
-                    itemCount: products.length,
-                    itemBuilder: (_, index) => ProductCatalogTile(
-                      product: products[index],
-                      money: money,
-                      onPressed: () => onProductPressed(products[index]),
-                    ),
+                : GradeDeProdutos(
+                    products: products,
+                    money: money,
+                    onProductPressed: onProductPressed,
+                    destacado: destacado,
+                    onColunas: onColunas,
                   ),
           ),
         ],
       ),
     );
   }
-}
-
-class _SearchShortcut extends StatelessWidget {
-  const _SearchShortcut();
-
-  @override
-  Widget build(BuildContext context) => Center(
-    widthFactor: 1,
-    child: Text(
-      'F2  /',
-      style: TextStyle(
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-        fontSize: 11,
-        fontWeight: FontWeight.w800,
-      ),
-    ),
-  );
 }
 
 class _CategoryButton extends StatelessWidget {

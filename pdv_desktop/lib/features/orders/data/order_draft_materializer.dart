@@ -8,7 +8,7 @@ import 'rastro_da_venda.dart';
 ///
 /// Até aqui o carrinho vive só na memória da tela — como num PDV de mercado,
 /// onde passar produtos não abre nada em lugar nenhum. O pedido nasce quando
-/// alguém de fora precisa dele: a COZINHA (F9, que é também o "pagar depois")
+/// alguém de fora precisa dele: a COZINHA (Ctrl + E, que é também o "pagar depois")
 /// ou a CONCLUSÃO da venda, que leva os recebimentos junto.
 ///
 /// Antes eram uma chamada para criar o pedido, uma por item, uma para anexar
@@ -27,7 +27,7 @@ class OrderDraftMaterializer {
 
   /// Faz o pedido EXISTIR com tudo o que está no rascunho. Devolve o pedido.
   ///
-  /// `cozinha` manda à produção no mesmo envio (o F9). O rascunho fica
+  /// `cozinha` manda à produção no mesmo envio (o Ctrl + E). O rascunho fica
   /// intacto em caso de falha: o operador não perde o que digitou.
   Future<Map<String, dynamic>> materialize(
     OrderDraftCart draft, {

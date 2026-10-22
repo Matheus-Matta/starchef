@@ -86,14 +86,14 @@ void main() {
     expect(await press([LogicalKeyboardKey.arrowDown]), isEmpty);
   });
 
-  test('na tela do pedido as setas continuam andando nos itens', () async {
+  test('na venda, com a busca focada, as setas andam pela grade', () async {
     context = const PdvInputContext(
       screen: PdvScreen.order,
       hasOrder: true,
       hasTextFocus: true,
     );
 
-    // No pedido, com a busca focada, as setas seguem sendo do campo.
-    expect(await press([LogicalKeyboardKey.arrowDown]), isEmpty);
+    // O cursor mora na busca: as setas são da grade de produtos.
+    expect(await press([LogicalKeyboardKey.arrowDown]), [PdvAction.gridDown]);
   });
 }

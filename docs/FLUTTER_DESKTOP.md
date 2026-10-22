@@ -281,6 +281,47 @@ A janela "Balança Rápida" **não é um app separado** — `ScaleWindowLauncher
 
 As duas janelas compartilham o mesmo arquivo `offline_data.sqlite` (o `sqlite_async` coordena múltiplos processos no mesmo arquivo) e o mesmo cofre de sessão do SO. No Linux, a transferência efêmera garante a primeira autenticação sem expor o token na linha de comando. Não há supervisor: se a janela de balança travar, nada a reabre sozinha (limitação conhecida, documentada — a fila de impressão/leitura não depende do processo principal continuar aberto).
 
+### Teclado: atalhos fixos, navegação com o mouse
+
+Tab, setas, Enter e Espaço NÃO navegam nem "clicam" botões como num navegador
+(`core/input/teclado_sem_navegacao.dart`, ligado no `shortcuts:` dos dois
+`MaterialApp`). O teclado do PDV são os atalhos de `pdv_shortcuts.dart`
+(lidos pelo `HardwareKeyboard` e segurados pela `PdvKeyBarrier`); dentro de um
+campo de texto as setas movem o cursor e o Enter confirma. No login, o Enter do
+usuário leva à senha (o papel que o Tab fazia).
+
+O mapa (fonte única: `core/input/pdv_shortcuts.dart`; a ajuda, a barra de
+atalhos, os botões e o menu lateral leem a tecla dali com `PdvShortcuts.teclaDe`):
+
+| Tecla | Ação |
+|---|---|
+| F1 a F8 | Venda, Pedidos, Mesas, Comandas, Clientes, Caixa, Balança, Mais — a ordem do menu; sem a permissão da página, a tecla não faz nada |
+| F9 / F10 / F11 / F12 | Notificações / central do caixa / tela cheia / ajuda |
+| Enter (venda) | ir ao pagamento (na busca, só conclui a busca) |
+| Enter (pagamento, comanda) | confirmar a ação principal |
+| Tab, Ctrl + F | focar a busca da página |
+| Ctrl + E / Ctrl + P | enviar à cozinha / imprimir recibo |
+| Ctrl + N / Ctrl + I / Ctrl + R | nova venda / informar comanda / atualizar |
+| Ctrl + Shift + V | ler a área de transferência como leitura do leitor |
+| ↑ ↓ ← → / Espaço (venda) | andam pela grade de produtos / adicionam o destacado (o primeiro, sem seta) — `destaque_da_grade.dart` |
+| Na busca da venda | Espaço digita; Enter CONCLUI a busca (tira o cursor); Tab entra e, de novo, sai |
+| Ctrl / Shift tocados sozinhos (venda) | categoria seguinte / anterior (`toque_de_modificador.dart`); com outra tecla junto não contam |
+| Shift + ↑ ↓ (venda) | item do carrinho (para + − e Delete) |
+| Esc, ↑ ↓ (pagamento), + −, Delete | voltar, forma de pagamento, quantidade, remover item |
+| 0–9, Backspace, Delete (pagamento) | digitam, apagam um dígito e zeram o valor, como o teclado da tela (`PdvShortcuts.digitosDoPagamento`) |
+
+Em todo diálogo (`core/widgets/teclas_do_dialogo.dart`, ligado no `AppDialog`
+e no `AlertaComTeclas`): **Enter** aciona o botão principal (o último botão
+cheio habilitado) e **Esc** o de cancelar (ou só fecha). Num campo de texto de
+uma linha o Enter é do campo (`onSubmitted`).
+
+**Esc desfaz antes de voltar** (`core/input/pilha_de_desfazer.dart`, guardada
+no carrinho da venda): na venda, primeiro apaga a busca, depois tira o último
+item passado; no pagamento, tira o último recebimento montado e desfaz cupom,
+desconto, taxa e CPF da venda nova — do mais recente para o mais antigo. Com
+nada a desfazer, volta como antes. Recebimento já enviado ao servidor não sai
+pelo Esc (é estorno, pela lixeira).
+
 ## 8. Erros e logging
 
 - **`ErrorCenter`** (`core/errors/error_center.dart`) — fila única de erros visíveis, no máximo 3 simultâneos, repetição da mesma falha renova o card em vez de empilhar.

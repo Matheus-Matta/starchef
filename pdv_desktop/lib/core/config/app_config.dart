@@ -30,6 +30,18 @@ class AppConfig {
         : productionApiBaseUrl;
   }
 
+  /// O endereço com que o PDV ABRE, antes de qualquer login.
+  ///
+  /// Em "só nuvem" é a nuvem, sempre. A preferência não devolve o IP da loja
+  /// nesse modo, e a abertura caía no `.env` achado na pasta (127.0.0.1 em
+  /// desenvolvimento): quem reabria o PDV já logado ficava preso em "Dados
+  /// offline ainda não disponíveis" até sair e entrar — só o login apontava
+  /// o cliente para a nuvem, e isso não ficava guardado.
+  static String? enderecoDeAbertura({
+    required bool somenteNuvem,
+    required String? ipDaLoja,
+  }) => somenteNuvem ? ipServerNuvem : ipDaLoja;
+
   final String apiBaseUrl;
   final String? envFilePath;
 

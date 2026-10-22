@@ -68,7 +68,7 @@ class _LoginPageState extends State<LoginPage> {
     if (!mounted || !saved) return;
 
     final config = await AppConfig.load(
-      manualOverrideUrl: widget.preferences.apiBaseUrlOverride,
+      manualOverrideUrl: widget.preferences.enderecoDeAbertura,
     );
     await widget.controller.updateApiBaseUrl(config.apiBaseUrl);
     if (!mounted) return;
@@ -228,6 +228,9 @@ class _LoginForm extends StatelessWidget {
           validator: (value) => value == null || value.trim().isEmpty
               ? 'Informe o usuário ou e-mail.'
               : null,
+          // O Tab não navega mais (`teclado_sem_navegacao.dart`): o Enter do
+          // usuário leva à senha, e o da senha entra.
+          onSubmitted: (_) => FocusScope.of(context).nextFocus(),
         ),
         const SizedBox(height: 20),
         AppTextField(

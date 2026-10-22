@@ -31,10 +31,11 @@ from apps.invoices.services import (
     reprocess_pending_fiscal_invoices,
     resend_fiscal_invoice,
 )
+from apps.invoices.tests.quitacao import quitar_pedido
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
-from apps.printers.models import PrintJob, Printer
+from apps.printers.models import Printer, PrintJob
 
 pytestmark = pytest.mark.django_db
 
@@ -103,6 +104,7 @@ def pending_invoice(account, restaurant, branch, manager_user, fiscal_config):
         restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER, user=manager_user
     )
     add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    quitar_pedido(order)
     invoice = emit_fiscal_invoice(order, user=manager_user)
     assert invoice.status == Invoice.STATUS_PENDING
     return invoice
