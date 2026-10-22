@@ -85,7 +85,7 @@
     "backend/apps/stock/tests/test_stock_lots.py": 468,
     "backend/apps/stock/tests/test_suppliers_and_bulk_ingredients.py": 282,
     "backend/apps/stock/views.py": 560,
-    "backend/apps/synchronization/catalog.py": 431,
+    "backend/apps/synchronization/catalog.py": 432,
     "backend/apps/synchronization/consumer_handlers.py": 250,
     "backend/apps/synchronization/services/apply.py": 499,
     "backend/apps/synchronization/services/bootstrap.py": 220,

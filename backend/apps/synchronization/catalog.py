@@ -381,7 +381,8 @@ _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, dependencies=
 #
 # Ele desce junto da sessão porque o saldo do caixa aberto é a soma deles —
 # sem os movimentos, a sangria e o suprimento do turno sumiriam da conferência.
-_e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, dependencies=("cash_register",),
+# `payment`: o troco e a venda em dinheiro apontam para o recebimento.
+_e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, dependencies=("cash_register", "payment"),
    seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
 # Divergência de vendas: registrada num lado (o gerente, no fechamento) e
 # analisada/regularizada no outro (o contador, na nuvem). `LOJA` ou `MANUAL`
