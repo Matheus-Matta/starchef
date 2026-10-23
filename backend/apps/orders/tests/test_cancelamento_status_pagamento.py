@@ -65,10 +65,14 @@ def test_cancelar_pedido_parcial_cancela_recebimento_e_caixa(
         assert not recebimento.cash_movements.filter(status="approved").exists()
 
 
-def test_cancelar_pedido_pago_marca_reembolso_sem_estornar_recebimento(
+def test_cancelar_pedido_pago_estorna_o_recebimento(
     account, restaurant, branch, produto, manager_user
 ):
-    """O estado avisa sobre reembolso sem executar um estorno financeiro agora."""
+    """Venda paga cancelada é dinheiro devolvido: o recebimento vira estornado.
+
+    Antes ele seguia aprovado e o fechamento do caixa somava a venda desfeita
+    (ver `apps/payments/tests/test_cancelado_sai_do_caixa.py`).
+    """
     restaurant.require_open_cash_register = False
     restaurant.save(update_fields=["require_open_cash_register"])
     pedido = create_order(
@@ -93,7 +97,7 @@ def test_cancelar_pedido_pago_marca_reembolso_sem_estornar_recebimento(
         recebimento.refresh_from_db()
         assert pedido.status == Order.STATUS_CANCELLED
         assert pedido.payment_status == Order.PAYMENT_REFUNDED
-        assert recebimento.status == Payment.STATUS_APPROVED
+        assert recebimento.status == Payment.STATUS_REFUNDED
 
     with pytest.raises(ValidationError, match="cancelado"):
         cancel_payment(payment=recebimento, user=manager_user)

@@ -5,7 +5,7 @@ from decimal import Decimal
 from django.db.models import Q
 
 from apps.payments.models import CashMovement, Payment
-from apps.printers.services import _linha_valor
+from apps.printers.services import LARGURA_CUPOM, _linha_valor
 
 _FORMAS_PRINCIPAIS = ["cash", "card:credit", "card:debit", "pix", "voucher"]
 _FORMAS_EXTRAS = ["card", "other"]
@@ -65,6 +65,31 @@ def vendas_por_forma(session):
         .select_related("payment_method")
         .distinct()
     )
+    totais, total = _por_forma(recebimentos)
+    chaves = [*_FORMAS_PRINCIPAIS, *[chave for chave in _FORMAS_EXTRAS if totais.get(chave)]]
+    return {
+        "linhas": [(_ROTULO_FORMAS[chave], totais.get(chave, 0)) for chave in chaves],
+        "total": total,
+        "dinheiro": totais.get("cash", 0),
+        "quantidade": recebimentos.count(),
+    }
+
+
+def estornos_por_forma(session):
+    """Os pedidos pagos e cancelados da sessão: só as formas que tiveram estorno."""
+    from apps.payments.cash_session_refunds import estornos_da_sessao
+
+    recebimentos = estornos_da_sessao(session)
+    totais, total = _por_forma(recebimentos)
+    chaves = [chave for chave in [*_FORMAS_PRINCIPAIS, *_FORMAS_EXTRAS] if totais.get(chave)]
+    return {
+        "linhas": [(_ROTULO_FORMAS[chave], totais[chave]) for chave in chaves],
+        "total": total,
+        "quantidade": recebimentos.count(),
+    }
+
+
+def _por_forma(recebimentos):
     totais = {}
     total = 0
     for recebimento in recebimentos:
@@ -76,13 +101,21 @@ def vendas_por_forma(session):
         centavos = _em_centavos(recebimento.amount)
         totais[chave] = totais.get(chave, 0) + centavos
         total += centavos
-    chaves = [*_FORMAS_PRINCIPAIS, *[chave for chave in _FORMAS_EXTRAS if totais.get(chave)]]
-    return {
-        "linhas": [(_ROTULO_FORMAS[chave], totais.get(chave, 0)) for chave in chaves],
-        "total": total,
-        "dinheiro": totais.get("cash", 0),
-        "quantidade": recebimentos.count(),
-    }
+    return totais, total
+
+
+def linhas_estornos(session, *, regua):
+    """O bloco do relatório de fechamento; some quando não houve estorno."""
+    estornos = estornos_por_forma(session)
+    if not estornos["quantidade"]:
+        return []
+    return [
+        "ESTORNOS (PEDIDOS CANCELADOS)".center(LARGURA_CUPOM),
+        *[linha_centavos(rotulo, centavos) for rotulo, centavos in estornos["linhas"]],
+        linha_centavos("Total estornado", estornos["total"]),
+        f"Estornos: {estornos['quantidade']}",
+        regua,
+    ]
 
 
 def linha_centavos(rotulo, centavos):

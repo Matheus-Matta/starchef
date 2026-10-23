@@ -19,7 +19,7 @@ from textwrap import wrap
 from django.utils import timezone
 
 from apps.payments.models import CashMovement, CashRegister
-from apps.printers.cash_document_totals import gaveta, linha_centavos, vendas_por_forma
+from apps.printers.cash_document_totals import gaveta, linha_centavos, linhas_estornos, vendas_por_forma
 from apps.printers.services import (
     LARGURA_CUPOM,
     _establishment_info,
@@ -214,6 +214,7 @@ def closing_text(session, *, operator_name=""):
         linha_centavos("Comprovantes (nao dinheiro)", vendas["total"] - vendas["dinheiro"]),
         f"Recebimentos: {vendas['quantidade']}",
         _REGUA,
+        *linhas_estornos(session, regua=_REGUA),
         f"Status: {_ROTULO_STATUS.get(session.status, session.status.upper())}",
         *_linhas_observacao("Obs", session.notes),
         "Assinatura do gerente:",

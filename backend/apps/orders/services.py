@@ -1320,9 +1320,14 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         from apps.invoices.order_cancellation import cancel_invoice_for_order
         cancel_invoice_for_order(order, reason=reason, user=user)
         from apps.payments.models import Payment
+        from apps.payments.estorno_do_pedido import estornar_recebimentos_do_pedido
         from apps.payments.services import cancel_cash_movements_of
 
-        if not pagamento_integral:
+        if pagamento_integral:
+            # Venda paga cancelada é dinheiro devolvido: sai do caixa (e da
+            # gaveta, no dinheiro) e fica registrada como estorno no relatório.
+            estornar_recebimentos_do_pedido(order, user=user, reason=reason)
+        else:
             # Recebimentos parciais precisam sair do caixa ao cancelar a venda.
             for payment in order.payments.select_for_update().filter(
                 status__in=[Payment.STATUS_PENDING, Payment.STATUS_APPROVED]
