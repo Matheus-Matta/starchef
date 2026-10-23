@@ -356,6 +356,34 @@ Um offset fora de ordem devolve **409 com o offset certo** (no cabeçalho
 `X-Sync-Expected-Offset`), para o cliente se realinhar em vez de recomeçar.
 Erro de disco ou permissão devolve **503 com o motivo** — não 500 opaco.
 
+### Quem chama o canal: a rodada de mídia (`sync_midia`)
+
+O canal acima existia e **ninguém o chamava**: a foto enviada na loja ficava
+no disco da loja, o evento da `Image` levava à nuvem só o caminho, e o link da
+nuvem (`https://api.starchef.com.br/media/accounts/.../images/<id>.jpeg`) dava
+404. Agora a LOJA roda `sync.sincronizar_midia` a cada 2 minutos
+(`services/midia.py` e `midia_envio.py`), nos dois sentidos:
+
+- arquivo que só a loja tem **sobe** (`push`);
+- arquivo que só a nuvem tem **desce** (download, com tamanho e SHA-256
+  preenchidos pela nuvem, que é quem tem o arquivo).
+
+Os campos vêm do catálogo: todo `FileField`/`ImageField` que sincroniza
+(`image.file`, `restaurant.logo`, `product.image`, ...). O certificado A1 fica
+de fora pela mesma regra que o tira do payload. O arquivo chega no **mesmo
+caminho** do registro, e o link é montado do caminho: o link quebrado conserta
+sozinho quando o arquivo chega. Por isso **não se apaga** o link na nuvem — a
+limpeza viraria evento e apagaria o caminho também na loja, que tem o arquivo.
+
+Cada transferência fica em `SyncFileTransfer` na loja: o que já foi não é
+refeito, e o que falhou (o arquivo falta nos dois lados) espera 30 minutos.
+
+```
+manage.py sync_midia                  # quais arquivos faltam NESTE servidor
+manage.py sync_midia --agora          # na loja: transfere tudo, sem limite
+manage.py sync_midia --agora --forcar # refaz até o que consta como transferido
+```
+
 ## Rede de segurança: escrita fora do ORM (§11.2)
 
 Signals não veem `QuerySet.update`, `bulk_create` nem SQL direto. Uma promoção

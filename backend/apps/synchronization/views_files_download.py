@@ -17,6 +17,25 @@ logger = logging.getLogger(__name__)
 FATIA_BYTES = 1024 * 1024
 
 
+def fatos_do_arquivo(caminho):
+    """`(bytes, sha256)` do arquivo NESTE servidor, ou `None` se ele não está aqui.
+
+    O caminho vem da outra ponta: conferido antes de tocar no disco.
+    """
+    import hashlib
+
+    from apps.synchronization.services import files
+
+    files._validar_caminho(caminho)
+    if not default_storage.exists(caminho):
+        return None
+    digestor = hashlib.sha256()
+    with default_storage.open(caminho, "rb") as arquivo:
+        for pedaco in iter(lambda: arquivo.read(files.CHUNK_BYTES), b""):
+            digestor.update(pedaco)
+    return default_storage.size(caminho), digestor.hexdigest()
+
+
 class DownloadMixin:
     """`GET .../download/?offset=N` — serve a fatia a partir de N."""
 

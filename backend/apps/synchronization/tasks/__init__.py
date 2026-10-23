@@ -11,6 +11,7 @@ from .bootstrap import run_bootstrap  # noqa: F401
 from .cleanup import prune_acknowledged_events  # noqa: F401
 from .dirty import collect_dirty_rows, prune_dirty_rows  # noqa: F401
 from .dispatch import notify_pending_to_local_nodes  # noqa: F401
+from .midia import sincronizar_midia  # noqa: F401
 from .reconcile import reconcile_nodes  # noqa: F401
 from .retry import retry_failed_events  # noqa: F401
 from .staleness import expire_stale_queues  # noqa: F401

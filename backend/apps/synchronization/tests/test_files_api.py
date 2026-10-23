@@ -175,9 +175,9 @@ def test_download_de_arquivo_inexistente_e_404(como_nuvem, no_loja, settings, tm
     cliente = _cliente(no_loja)
     corpo = _corpo(caminho="produtos/nao-existe.jpg")
     corpo["direction"] = "download"
-    transfer_id = cliente.post("/api/v1/sync/files/", corpo, format="json").json()["id"]
 
-    assert cliente.get(f"/api/v1/sync/files/{transfer_id}/download/").status_code == 404
+    # O 404 sai já na abertura: é ela que lê tamanho e SHA-256 do arquivo.
+    assert cliente.post("/api/v1/sync/files/", corpo, format="json").status_code == 404
 
 
 def test_download_com_offset_invalido_e_400(como_nuvem, no_loja, settings, tmp_path):

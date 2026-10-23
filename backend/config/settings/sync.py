@@ -88,6 +88,12 @@ SYNC_BEAT_SCHEDULE = {
         "task": "sync.reconcile_nodes",
         "schedule": 60.0,
     },
+    # A foto vai por canal próprio, não no evento (`services/midia.py`). Só a
+    # loja age; na nuvem a tarefa volta sem fazer nada.
+    "sync-sincronizar-midia": {
+        "task": "sync.sincronizar_midia",
+        "schedule": 120.0,
+    },
     "sync-prune-acknowledged": {
         "task": "sync.prune_acknowledged_events",
         "schedule": 6 * 60 * 60.0,

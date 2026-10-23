@@ -22,9 +22,16 @@ class OpenTransferSerializer(serializers.Serializer):
     entity_id = serializers.CharField(max_length=64)
     field_name = serializers.CharField(max_length=80)
     storage_path = serializers.CharField(max_length=500)
-    total_bytes = serializers.IntegerField(min_value=1, max_value=files.max_bytes())
-    checksum = serializers.RegexField(r"^[0-9a-f]{64}$", max_length=64)
+    # No DOWNLOAD quem sabe tamanho e SHA-256 é quem TEM o arquivo, e a loja
+    # nem sempre sabe (o logo, a foto antiga do produto): a nuvem preenche.
+    total_bytes = serializers.IntegerField(min_value=1, max_value=files.max_bytes(), required=False)
+    checksum = serializers.RegexField(r"^[0-9a-f]{64}$", max_length=64, required=False)
     content_type = serializers.CharField(max_length=120, required=False, allow_blank=True)
+
+    def validate(self, dados):
+        if dados.get("direction") == UPLOAD and not (dados.get("total_bytes") and dados.get("checksum")):
+            raise serializers.ValidationError("No envio, informe total_bytes e checksum.")
+        return dados
 
 
 class TransferSerializer(serializers.ModelSerializer):

@@ -26,7 +26,7 @@ from apps.synchronization.serializers_files import (
     TransferSerializer,
 )
 from apps.synchronization.services import files, nodes
-from apps.synchronization.views_files_download import DownloadMixin
+from apps.synchronization.views_files_download import DownloadMixin, fatos_do_arquivo
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,15 @@ class SyncFileOpenView(NodeRouteMixin, APIView):
         # para lá — e é isso que define origem e destino do registro.
         proprio = nodes.self_node()
         empurrando = dados["direction"] == UPLOAD
+        if not empurrando:
+            try:
+                fatos = fatos_do_arquivo(dados["storage_path"])
+            except files.TransferRejected as erro:
+                return Response({"detail": str(erro)}, status=status.HTTP_400_BAD_REQUEST)
+            if fatos is None:
+                return Response({"code": "arquivo_ausente", "message": "Este servidor não tem o arquivo."},
+                                status=status.HTTP_404_NOT_FOUND)
+            dados["total_bytes"], dados["checksum"] = fatos
         origem, destino = (no, proprio) if empurrando else (proprio, no)
 
         try:
