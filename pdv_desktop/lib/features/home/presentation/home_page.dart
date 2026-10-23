@@ -71,6 +71,7 @@ import '../../../core/input/pdv_input_router.dart';
 import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
+import '../data/caixa_atual.dart';
 import '../data/cupom_local.dart';
 import '../data/decisoes_do_danfe.dart';
 import '../data/forma_vizinha.dart';

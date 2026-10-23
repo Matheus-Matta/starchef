@@ -396,6 +396,10 @@ mixin _CashOpsSection on _HomePageShared {
         await _showCashDivergence();
       } else {
         await _printCashClosing(closed);
+        // A tela segurava a sessão FECHADA que o servidor devolveu: sem esta
+        // releitura, o bloqueio "Abra o caixa" dependia do aviso do servidor
+        // chegar a este terminal.
+        await _refreshCashSession();
       }
     }
   }

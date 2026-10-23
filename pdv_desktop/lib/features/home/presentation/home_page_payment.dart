@@ -422,7 +422,8 @@ mixin _PaymentSection on _HomePageShared {
       '${payment['method_type'] ?? payment['payment_method_type'] ?? ''}' ==
       'cash';
 
-  /// Relê o saldo da gaveta depois de mexer em dinheiro.
+  /// Relê o caixa: o saldo da gaveta depois de mexer em dinheiro, e o aviso
+  /// de caixa vindo do servidor (fechado aqui ou em outro terminal).
   Future<void> _refreshCashSession() async {
     try {
       cashSession = await api.get(
@@ -432,10 +433,12 @@ mixin _PaymentSection on _HomePageShared {
         },
         accessToken: token,
       );
-      if (mounted) setState(() {});
-    } on ApiException {
-      // O recebimento já foi registrado; a atualização geral tenta de novo.
+    } on ApiException catch (erro) {
+      // Caixa fechado (404) ou com outro (403/409) volta o bloqueio; falha de
+      // rede deixa a tela como está e o próximo aviso tenta de novo.
+      cashSession = caixaAposRecusa(erro, cashSession);
     }
+    if (mounted) setState(() {});
   }
 
   /// Remove um pagamento do pedido, como no frontend web.
