@@ -292,10 +292,15 @@ mixin _PaymentSection on _HomePageShared {
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
     final isCash = method['method_type'] == 'cash';
-    // Qualquer forma pode receber acima do restante e devolver troco. A
-    // restrição a dinheiro travava o caixa em situações reais — a maquininha
-    // cobrou um valor redondo, o cliente pediu parte em espécie de volta — e
-    // a única saída era refazer a venda inteira.
+    // Qualquer forma dá troco, a não ser que o restaurante só o queira em
+    // dinheiro (`troco_so_em_dinheiro.dart`).
+    final recusa = recusaDoTroco(
+      restaurante: selectedRestaurant,
+      forma: method,
+      recebido: paymentValue,
+      restante: remainingTotal,
+    );
+    if (recusa != null) return _error(ApiException(recusa));
     stagedPaymentSequence += 1;
     final staged = <String, dynamic>{
       // Id local: é o que dá o botão de excluir à linha. Ele nunca vai ao

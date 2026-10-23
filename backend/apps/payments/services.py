@@ -17,6 +17,7 @@ from apps.orders.models import Order
 from apps.orders.signals import order_fully_paid
 from apps.payments import recebimento_por_uuid
 from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
+from apps.payments.troco import conferir_troco
 from apps.payments.terminals import (
     CashSessionConflict,
     active_session_for_station,
@@ -623,9 +624,11 @@ def register_payment(
         # Qualquer forma de pagamento pode receber acima do restante e devolver
         # troco. A restricao a dinheiro parava o caixa em situacoes reais — a
         # maquininha cobrou um valor redondo, o cliente pediu parte em especie
-        # de volta — e a unica saida era refazer a venda. O troco continua
-        # saindo da gaveta, entao ele e registrado como retirada abaixo.
+        # de volta — e a unica saida era refazer a venda. O troco sai da
+        # gaveta (retirada abaixo), e o restaurante pode limita-lo ao dinheiro.
         change_amount = max(amount - remaining, Decimal("0.00"))
+        conferir_troco(restaurant=order.restaurant, payment_method=payment_method,
+                       change_amount=change_amount, remaining=remaining)
         accepted_amount = amount - change_amount
         payment_metadata = {
             **payment_metadata,

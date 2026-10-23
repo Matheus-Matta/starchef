@@ -872,6 +872,7 @@
 </template>
 
 <script setup>
+import { recusaDoTroco } from "../services/trocoSoEmDinheiro";
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
@@ -1741,6 +1742,8 @@ function paymentCardSubtype(method) {
 
 async function addPayment() {
   if (!canAddPayment.value) return;
+  payError.value = recusaDoTroco({ restaurante: currentRestaurant.value, forma: selectedPaymentMethod.value, recebido: amountReceived.value, restante: remainingAmount.value });
+  if (payError.value) return;
   paying.value = true;
   payError.value = "";
   try {

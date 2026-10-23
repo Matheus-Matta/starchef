@@ -48,6 +48,7 @@ import '../../../core/data/order_item_status.dart';
 import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/orders_table_metrics.dart';
+import '../../orders/presentation/troco_so_em_dinheiro.dart';
 import '../../commands/data/command_repository.dart';
 import '../../commands/presentation/command_picker.dart';
 import '../../customers/data/customer_repository.dart';

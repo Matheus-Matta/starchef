@@ -38,6 +38,9 @@ class Restaurant(TenantBaseModel):
     )
     default_service_fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     require_open_cash_register = models.BooleanField(default=True)
+    # Desligado, só dinheiro dá troco: o troco de cartão/PIX sai da gaveta sem
+    # nada ter entrado nela (`apps/payments/troco.py`).
+    allow_change_on_non_cash = models.BooleanField(default=True)
     # Diferença de gaveta que o fechamento aceita sem gerente, em falta ou em
     # sobra: centavo de moeda caída não deve exigir aprovação. Os valores
     # reais (esperado, contado, diferença) continuam gravados como são.
