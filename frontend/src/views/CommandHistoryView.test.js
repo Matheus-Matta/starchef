@@ -54,17 +54,18 @@ describe("histórico da comanda", () => {
     expect(tela.find("[role=alert]").text()).toContain("data válida");
   });
 
-  it("pagina pelo servidor: Próxima pede a página 2", async () => {
+  it("carrega todas as páginas e deixa somente a paginação da tabela", async () => {
     pedidos.length = 0;
-    resposta = (params) => Promise.resolve({ data: { count: 120, results: Array.from({ length: 50 }, (_, i) => evento(i + (params.page - 1) * 50)) } });
+    resposta = (params) => Promise.resolve({ data: {
+      count: 250,
+      results: Array.from({ length: params.page === 1 ? 200 : 50 }, (_, i) => evento(i + (params.page - 1) * 200)),
+    } });
     const tela = await montar();
 
-    const proxima = tela.findAll("button").find((b) => b.text().includes("Próxima"));
-    await proxima.trigger("click");
-    await flushPromises();
-
     const historico = pedidos.filter((p) => p.url.endsWith("/history/"));
-    expect(historico.at(-1).params).toMatchObject({ page: 2, page_size: 50 });
-    expect(tela.text()).toContain("Página 2 de 3");
+    expect(historico.map((pedido) => pedido.params.page)).toEqual([1, 2]);
+    expect(historico.every((pedido) => pedido.params.page_size === 200)).toBe(true);
+    expect(tela.findComponent({ name: "ReportDataTable" }).props("rows")).toHaveLength(250);
+    expect(tela.find(".cmd-history__pager").exists()).toBe(false);
   });
 });

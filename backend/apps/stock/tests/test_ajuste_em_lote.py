@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 
 from apps.core.tenant import tenant_context
+from apps.menu.models import Product
 from apps.stock.models import StockMovement
 from apps.stock.tests.test_stock_positions import (  # noqa: F401 — fixtures
     _ingredient,
@@ -38,6 +39,14 @@ def _saldo(account, ingrediente, local):
     with tenant_context(account):
         return sum(
             (m.quantity for m in StockMovement.objects.filter(ingredient=ingrediente, location=local)),
+            Decimal("0"),
+        )
+
+
+def _saldo_produto(account, produto, local):
+    with tenant_context(account):
+        return sum(
+            (m.quantity for m in StockMovement.objects.filter(product=produto, location=local)),
             Decimal("0"),
         )
 
@@ -96,3 +105,38 @@ def test_novo_saldo_igual_ao_atual_nao_gera_movimento(api_client, account_with_l
 
     assert resposta.status_code == 201, resposta.data
     assert resposta.data["created"] == 0
+
+
+def test_ajusta_produto_e_insumo_no_mesmo_lote(
+    api_client, account_with_logistica, restaurant, branch, manager_user, location, insumos,  # noqa: F811
+):
+    """A contagem inclui mercadoria pronta e insumo sem criar dois ajustes separados."""
+    produto = Product.objects.create(
+        account=account_with_logistica,
+        restaurant=restaurant,
+        branch=branch,
+        name="Refrigerante lata",
+        internal_code="REF-350",
+        base_price=Decimal("7"),
+        stock_unit="UN",
+        current_average_cost=Decimal("3.50"),
+        controls_stock=True,
+        created_by=manager_user,
+        updated_by=manager_user,
+    )
+
+    resposta = api_client.post(ROTA, {
+        "location": str(location.pk),
+        "reason": "Contagem geral",
+        "items": [
+            {"product": str(produto.pk), "mode": "set", "quantity": "12"},
+            {"ingredient": str(insumos["feijao"].pk), "mode": "in", "quantity": "3"},
+        ],
+    }, format="json")
+
+    assert resposta.status_code == 201, resposta.data
+    assert _saldo_produto(account_with_logistica, produto, location) == Decimal("12")
+    assert _saldo(account_with_logistica, insumos["feijao"], location) == Decimal("3")
+    movimento = StockMovement.all_objects.get(product=produto)
+    assert movimento.stock_unit == "UN"
+    assert movimento.total_cost == Decimal("42.00")

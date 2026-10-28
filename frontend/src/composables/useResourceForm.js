@@ -147,7 +147,7 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
   function buildMultipartPayload() {
     const payload = new FormData();
     for (const field of formFields) {
-      if (field.header) continue;
+      if (field.header || field.readonly) continue;
       const value = formData[field.name];
       if (field.type === "file") {
         // Sem arquivo novo escolhido, omite a chave: no PATCH (parcial), a
@@ -186,7 +186,7 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
 
     const payload = {};
     for (const field of formFields) {
-      if (field.header) continue; // vira header (ver buildHeaders), não corpo.
+      if (field.header || field.readonly) continue; // leitura não volta para a API.
       let value = formData[field.name];
       const filled = value !== "" && value !== null && value !== undefined;
       if (field.type === "number" && filled) value = parseInt(value, 10);
@@ -226,7 +226,7 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
     // Regras que o servidor aplicaria de qualquer jeito (obrigatorio, inteiro,
     // nao-negativo, CPF/CNPJ, campo <= outro): barrar aqui poupa o round-trip e
     // aponta o campo certo em vez de um erro solto.
-    const clientErrors = validateForm(formFields, formData);
+    const clientErrors = validateForm(formFields.filter((field) => !field.readonly), formData);
     if (Object.keys(clientErrors).length) {
       fieldErrors.value = clientErrors;
       saveError.value = "Corrija os campos destacados antes de salvar.";

@@ -358,8 +358,7 @@ export const resources = [
       { name: "logo_p_upload", label: "Imagem principal", type: "file", uploadMode: "avatar", previewField: "logo_p", full: true, section: "Imagens", hint: "Usada como capa do produto na tela inicial e no cardapio." },
       { name: "photo_uploads", label: "Galeria do produto", type: "file", uploadMode: "gallery", multiple: true, fileLimit: 20, removeField: "photo_remove_ids", previewField: "photo_list", full: true, section: "Imagens", hint: "Arraste ate 20 fotos. Use a lixeira para remover uma foto salva ou ainda pendente." },
       { name: "sector", label: "Setor principal (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", section: "Informações básicas" },
-      // UM CAMPO DE VALOR E UM DE PROMOCIONAL, como sempre foi. Os dois gravam
-      // o CADASTRO: nenhuma tabela de desconto encosta nestes numeros.
+      // UM CAMPO DE VALOR E UM DE PROMOCIONAL, como sempre foi. Os dois gravam o CADASTRO: nenhuma tabela de desconto encosta nestes numeros.
       //
       // O que muda e o AVISO abaixo: o preco que o PDV vai cobrar pode nao ser
       // o que esta digitado aqui, porque uma tabela de desconto ativa tem
@@ -369,6 +368,7 @@ export const resources = [
       { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços", noticeFor: avisoDePreco },
       { name: "promotional_price", label: "Preco promocional (R$)", type: "decimal", section: "Preços", hint: "Promocional do proprio cadastro, sem data. Tabela de desconto tem prioridade sobre ele.", noticeFor: avisoDePreco },
       { name: "pricing_unit", label: "Cobranca", type: "dropdown", options: PRICING_OPTIONS, default: "unit", section: "Preços" },
+      { name: "current_stock_display", label: "Quantidade em estoque", type: "text", readonly: true, default: "0 UN", module: "logistica", section: "Estoque", hint: "Saldo calculado pelo histórico de movimentações. Para corrigir a contagem, use Logística > Ajuste em lote." },
       // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },
       { name: "product_type", label: "Tipo de produto", type: "dropdown", options: PRODUCT_TYPE_OPTIONS, default: "meal", section: "Classificação" },

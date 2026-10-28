@@ -109,3 +109,28 @@ describe("useResourceForm validacao no cliente", () => {
     expect(service.create).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useResourceForm campos somente leitura", () => {
+  it("carrega o saldo para mostrar, mas nao o envia no PATCH", async () => {
+    const service = {
+      retrieve: vi.fn(async () => ({ id: "p1", name: "Lata", current_stock_display: "12 UN" })),
+      update: vi.fn(async () => ({ id: "p1" })),
+    };
+    const form = useResourceForm({
+      service,
+      formFields: [
+        { name: "name", type: "text" },
+        { name: "current_stock_display", type: "text", readonly: true },
+      ],
+      mode: ref("edit"),
+      recordId: ref("p1"),
+      sharedAcrossRestaurants: true,
+    });
+
+    await form.fetchRecord();
+    expect(form.formData.current_stock_display).toBe("12 UN");
+    await form.save();
+
+    expect(service.update).toHaveBeenCalledWith("p1", { name: "Lata" }, undefined);
+  });
+});

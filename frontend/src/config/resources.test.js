@@ -84,7 +84,6 @@ describe("ações de notas fiscais", () => {
 
 describe("configuração do produto", () => {
   const products = resources.find((resource) => resource.name === "cardapio");
-
   it("escolhe o perfil fiscal do catálogo compartilhado (relação 1:N)", () => {
     const fiscal = products.formFields.find((field) => field.name === "fiscal_profile");
 
@@ -97,6 +96,7 @@ describe("configuração do produto", () => {
       .map((field) => field.name);
 
     expect(productionFields).toEqual(["production_sector", "average_preparation_time"]);
+    expect(products.formFields.find((field) => field.name === "current_stock_display")).toMatchObject({ readonly: true, section: "Estoque" });
     expect(products.formFields.map((field) => field.name)).not.toEqual(
       expect.arrayContaining([
         "controls_stock",

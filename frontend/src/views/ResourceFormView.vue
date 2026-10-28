@@ -268,7 +268,7 @@
           >
             <label :for="`f-${field.name}`" class="rpage__label">
               {{ field.label }}
-              <span v-if="field.required && !isView" class="rpage__required" aria-hidden="true">*</span>
+              <span v-if="field.required && !isView && !field.readonly" class="rpage__required" aria-hidden="true">*</span>
               <i v-if="field.hint" v-tooltip.top="field.hint" class="pi pi-question-circle rpage__help-icon" aria-hidden="true" />
             </label>
 
@@ -446,7 +446,7 @@
               :step="field.type === 'decimal' ? '0.01' : '1'"
               :min="field.min ?? '0'"
               :placeholder="fieldPlaceholder(field, '0')"
-              :disabled="isView"
+              :disabled="isView || field.readonly"
               :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
             />
 
@@ -472,7 +472,7 @@
               :type="field.inputType || 'text'"
               :placeholder="fieldPlaceholder(field, field.label)"
               :maxlength="field.maxlength"
-              :disabled="isView"
+              :disabled="isView || field.readonly"
               :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
             />
 

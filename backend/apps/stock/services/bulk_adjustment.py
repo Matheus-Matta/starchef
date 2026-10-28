@@ -4,7 +4,7 @@ Cada linha vira um movimento de "Ajuste de inventário (+/-)" com o motivo e
 quem fez — a trilha de auditoria é o próprio livro de movimentos. O lote é
 uma transação só: uma linha inválida não deixa metade aplicada.
 
-Concorrência: os insumos são travados em ordem de UUID e o saldo é relido
+Concorrência: produtos e insumos são travados em ordem de UUID e o saldo é relido
 DEPOIS da trava. "Novo saldo = 7" calculado sobre um saldo lido antes da
 trava gravaria a diferença errada se uma venda baixasse no meio.
 """
@@ -16,7 +16,7 @@ from django.db.models import Sum
 
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
-from apps.menu.models import Ingredient
+from apps.menu.models import Ingredient, Product
 from apps.stock.models import StockMovement
 
 MODOS = {"in", "out", "set"}
@@ -39,14 +39,45 @@ def _validar(itens):
         modo = str(item.get("mode") or "")
         if modo not in MODOS:
             raise ValidationError(f"Linha {numero}: use entrada, saída ou novo saldo.")
-        if not item.get("ingredient"):
-            raise ValidationError(f"Linha {numero}: escolha o insumo.")
-        linhas.append((str(item["ingredient"]), modo, _quantidade(item.get("quantity"), numero)))
+        alvos = [(tipo, item.get(tipo)) for tipo in ("ingredient", "product") if item.get(tipo)]
+        if len(alvos) != 1:
+            raise ValidationError(f"Linha {numero}: escolha um produto ou insumo.")
+        tipo, alvo_id = alvos[0]
+        linhas.append((tipo, str(alvo_id), modo, _quantidade(item.get("quantity"), numero)))
     if not linhas:
-        raise ValidationError("Inclua pelo menos um insumo no ajuste.")
-    if len({ingrediente for ingrediente, _, _ in linhas}) != len(linhas):
-        raise ValidationError("O mesmo insumo aparece mais de uma vez no lote.")
+        raise ValidationError("Inclua pelo menos um item no ajuste.")
+    if len({(tipo, alvo_id) for tipo, alvo_id, _, _ in linhas}) != len(linhas):
+        raise ValidationError("O mesmo item aparece mais de uma vez no lote.")
     return linhas
+
+
+def _travar_itens(linhas):
+    ingredientes = sorted(alvo_id for tipo, alvo_id, _, _ in linhas if tipo == "ingredient")
+    produtos = sorted(alvo_id for tipo, alvo_id, _, _ in linhas if tipo == "product")
+    travados = {
+        ("ingredient", str(item.pk)): item
+        for item in Ingredient.objects.select_for_update().filter(pk__in=ingredientes).order_by("pk")
+    }
+    travados.update({
+        ("product", str(item.pk)): item
+        for item in Product.objects.select_for_update().filter(pk__in=produtos).order_by("pk")
+    })
+    esperados = {(tipo, alvo_id) for tipo, alvo_id, _, _ in linhas}
+    if esperados - set(travados):
+        raise ValidationError("Produto ou insumo não encontrado neste restaurante.")
+    return travados
+
+
+def _saldos(location, linhas):
+    saldos = {}
+    for tipo in ("ingredient", "product"):
+        ids = [alvo_id for tipo_linha, alvo_id, _, _ in linhas if tipo_linha == tipo]
+        for row in (
+            StockMovement.objects.filter(**{f"{tipo}_id__in": ids}, location=location)
+            .values(f"{tipo}_id").annotate(saldo=Sum("quantity"))
+        ):
+            saldos[(tipo, str(row[f"{tipo}_id"]))] = row["saldo"] or Decimal("0")
+    return saldos
 
 
 def apply_bulk_adjustment(*, location, user, reason, items):
@@ -57,37 +88,28 @@ def apply_bulk_adjustment(*, location, user, reason, items):
     linhas = _validar(items)
 
     with transaction.atomic():
-        ids = sorted(ingrediente for ingrediente, _, _ in linhas)
-        travados = {
-            str(i.pk): i
-            for i in Ingredient.objects.select_for_update().filter(pk__in=ids).order_by("pk")
-        }
-        faltando = set(ids) - set(travados)
-        if faltando:
-            raise ValidationError("Insumo não encontrado neste restaurante.")
-        saldos = {
-            str(row["ingredient_id"]): row["saldo"] or Decimal("0")
-            for row in StockMovement.objects.filter(ingredient_id__in=ids, location=location)
-            .values("ingredient_id").annotate(saldo=Sum("quantity"))
-        }
+        travados = _travar_itens(linhas)
+        saldos = _saldos(location, linhas)
         criados = []
-        for ingrediente_id, modo, quantidade in linhas:
-            insumo = travados[ingrediente_id]
-            atual = saldos.get(ingrediente_id, Decimal("0"))
+        for tipo, alvo_id, modo, quantidade in linhas:
+            item = travados[(tipo, alvo_id)]
+            atual = saldos.get((tipo, alvo_id), Decimal("0"))
             delta = {"in": quantidade, "out": -quantidade, "set": quantidade - atual}[modo]
             if not delta:
                 continue
+            custo = item.average_cost if tipo == "ingredient" else item.current_average_cost
+            unidade = item.unit if tipo == "ingredient" else item.stock_unit
             criados.append(StockMovement.objects.create(
                 account=location.account, restaurant=location.restaurant, branch=location.branch,
-                location=location, ingredient=insumo, operator=user,
+                location=location, operator=user, **{tipo: item},
                 movement_type=(
                     StockMovement.TYPE_INVENTORY_ADJUSTMENT_POSITIVE if delta > 0
                     else StockMovement.TYPE_INVENTORY_ADJUSTMENT_NEGATIVE
                 ),
-                quantity=delta, stock_unit=insumo.unit,
-                unit_cost=insumo.average_cost,
+                quantity=delta, stock_unit=unidade,
+                unit_cost=custo,
                 # Com sinal, como o resto do livro: saída é custo negativo.
-                total_cost=(delta * insumo.average_cost).quantize(CENTAVOS),
+                total_cost=(delta * custo).quantize(CENTAVOS),
                 reason=motivo,
                 created_by=user, updated_by=user,
             ))

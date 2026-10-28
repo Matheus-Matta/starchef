@@ -97,7 +97,8 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
   senha de operação opcional; o resumo diz quais comandas ficaram e por quê.
 - **Histórico da comanda**: `/comandas/:id/historico` (`views/CommandHistoryView.vue`,
   linhas montadas por `services/commandHistory.js`), pela ação "Histórico" da
-  lista e pelo link "Histórico completo" do painel do PDV.
+  lista e pelo link "Histórico completo" do painel do PDV. A tela reúne todas
+  as páginas da API e deixa a paginação somente a cargo da tabela.
 - **Checkout**: `composables/useCheckoutChoices.js` guarda taxa, desconto e
   CPF/CNPJ no pedido pelo `/checkout/` e os restaura ao reabrir (inclusive pelo
   endereço). "Fechar conta" chama `/checkout/`, não `/close/`.
@@ -171,6 +172,11 @@ composição não é cadastrada no produto. **Fichas técnicas de preparo**
 concentram o rendimento, o modo de preparo passo a passo, a baixa automática e
 os insumos com quantidade e unidade. Para um produto vendido pronto, como uma
 lata, a ficha pode ter rendimento 1 e um único insumo de 1 unidade.
+O formulário mostra a quantidade atual em estoque como leitura: o saldo vem do
+livro de movimentos e não pode ser sobrescrito silenciosamente pelo cadastro.
+Para corrigir uma contagem, **Ajuste em lote** permite escolher no topo entre
+insumos, produtos, mercadorias, materiais de consumo, reutilizáveis,
+equipamentos, ativos, embalagens e outros itens; a busca respeita esse tipo.
 
 Logos e fotos usam `ImageUploadField.vue`, um campo reutilizável baseado no
 `FileUpload` do PrimeVue. Restaurante, categoria e imagem principal do produto

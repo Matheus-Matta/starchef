@@ -7,7 +7,7 @@
         <h1>{{ titulo }}</h1>
         <p>Lançamentos, produção, cancelamentos, zeramentos e cobranças — do mais novo para o mais antigo.</p>
       </div>
-      <form class="cmd-history__filters" @submit.prevent="buscar(1)">
+      <form class="cmd-history__filters" @submit.prevent="buscar">
         <label>De <input v-model="depois" class="cmd-history__date" type="date" /></label>
         <label>Até <input v-model="antes" class="cmd-history__date" type="date" /></label>
         <Button type="submit" label="Filtrar" icon="pi pi-filter" severity="secondary" outlined />
@@ -20,12 +20,6 @@
     <Card v-else :title="`${total} ${total === 1 ? 'evento' : 'eventos'}`" padding="none">
       <ReportDataTable :rows="linhas" :columns="colunasDoHistorico" />
     </Card>
-
-    <nav v-if="total > tamanho" class="cmd-history__pager" aria-label="Páginas do histórico">
-      <Button label="Anterior" icon="pi pi-chevron-left" text :disabled="pagina <= 1 || carregando" @click="buscar(pagina - 1)" />
-      <span>Página {{ pagina }} de {{ paginas }}</span>
-      <Button label="Próxima" icon="pi pi-chevron-right" icon-pos="right" text :disabled="pagina >= paginas || carregando" @click="buscar(pagina + 1)" />
-    </nav>
   </main>
 </template>
 
@@ -42,31 +36,34 @@ import { normalizeApiError } from "../utils/apiError";
 
 const props = defineProps({ id: { type: String, required: true } });
 const router = useRouter();
-const tamanho = 50;
+const tamanho = 200;
 
 const comanda = ref(null);
 const linhas = ref([]);
 const total = ref(0);
-const pagina = ref(1);
 const depois = ref("");
 const antes = ref("");
 const carregando = ref(false);
 const erro = ref("");
 
 const titulo = computed(() => (comanda.value ? `Comanda ${comanda.value.number}` : "Comanda"));
-const paginas = computed(() => Math.max(Math.ceil(total.value / tamanho), 1));
 
-async function buscar(numero = 1) {
+async function buscar() {
   carregando.value = true;
   erro.value = "";
   try {
-    const params = { page: numero, page_size: tamanho };
-    if (depois.value) params.after = depois.value;
-    if (antes.value) params.before = antes.value;
-    const { data } = await api.get(`/commands/${props.id}/history/`, { params });
-    linhas.value = (data.results || []).map(linhaDoHistorico);
-    total.value = data.count || 0;
-    pagina.value = numero;
+    const filtros = { page_size: tamanho };
+    if (depois.value) filtros.after = depois.value;
+    if (antes.value) filtros.before = antes.value;
+    const { data: primeira } = await api.get(`/commands/${props.id}/history/`, { params: { ...filtros, page: 1 } });
+    const paginas = Math.ceil((primeira.count || 0) / tamanho);
+    const restantes = await Promise.all(
+      Array.from({ length: Math.max(paginas - 1, 0) }, (_, indice) =>
+        api.get(`/commands/${props.id}/history/`, { params: { ...filtros, page: indice + 2 } })),
+    );
+    const eventos = [primeira, ...restantes.map(({ data }) => data)].flatMap((data) => data.results || []);
+    linhas.value = eventos.map(linhaDoHistorico);
+    total.value = primeira.count || eventos.length;
   } catch (exc) {
     erro.value = normalizeApiError(exc).message || "Não foi possível carregar o histórico.";
   } finally {
@@ -77,7 +74,7 @@ async function buscar(numero = 1) {
 onMounted(async () => {
   // O número do cartão é só o título: se falhar, o histórico ainda aparece.
   api.get(`/commands/${props.id}/`).then(({ data }) => (comanda.value = data)).catch(() => {});
-  await buscar(1);
+  await buscar();
 });
 </script>
 
@@ -94,6 +91,5 @@ onMounted(async () => {
 .cmd-history__date{height:38px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-card);color:var(--text)}
 .cmd-history__state{padding:40px;text-align:center;color:var(--text-muted)}
 .cmd-history__state--error{color:var(--danger-text)}
-.cmd-history__pager{display:flex;align-items:center;justify-content:center;gap:12px}
 @media(max-width:720px){.cmd-history__header{flex-direction:column;align-items:stretch}}
 </style>

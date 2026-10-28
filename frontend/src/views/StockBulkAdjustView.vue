@@ -5,7 +5,7 @@
         <span class="stock-doc__eyebrow">ESTOQUE</span>
         <h1>Ajuste de estoque em lote</h1>
         <p>
-          Some, tire ou informe o saldo contado de vários insumos de uma vez. Cada linha vira um
+          Some, tire ou informe o saldo contado de produtos e insumos. Cada linha vira um
           movimento de ajuste com o motivo e quem fez.
         </p>
       </div>
@@ -26,15 +26,26 @@
             fluid
           />
         </label>
+        <label class="stock-field">
+          <span>Tipo de item</span>
+          <Select
+            v-model="tipoSelecionado"
+            :options="TIPOS_DE_ITEM"
+            option-label="label"
+            option-value="value"
+            fluid
+            @change="busca = ''; sugestoes = []"
+          />
+        </label>
         <label class="stock-field stock-field--wide">
-          <span>Adicionar insumo</span>
+          <span>Adicionar {{ tipoAtual.label.toLowerCase() }}</span>
           <AutoComplete
             v-model="busca"
             :suggestions="sugestoes"
             option-label="name"
-            placeholder="Digite o nome do insumo"
+            placeholder="Digite o nome ou código"
             fluid
-            @complete="buscarInsumos"
+            @complete="buscarItens"
             @item-select="adicionar"
           />
         </label>
@@ -42,13 +53,13 @@
     </section>
 
     <section class="stock-card">
-      <p v-if="!linhas.length" class="stock-empty">Nenhum insumo no ajuste. Busque acima para adicionar.</p>
+      <p v-if="!linhas.length" class="stock-empty">Nenhum item no ajuste. Busque acima para adicionar.</p>
       <table v-else class="bulk-adjust__table">
         <thead>
-          <tr><th>Insumo</th><th>Operação</th><th>Quantidade</th><th /></tr>
+          <tr><th>Item</th><th>Operação</th><th>Quantidade</th><th /></tr>
         </thead>
         <tbody>
-          <tr v-for="(linha, index) in linhas" :key="linha.ingredient">
+          <tr v-for="(linha, index) in linhas" :key="`${linha.kind}:${linha.id}`">
             <td>{{ linha.name }} <small>{{ linha.unit }}</small></td>
             <td>
               <Select v-model="linha.mode" :options="MODOS" option-label="label" option-value="value" />
@@ -82,12 +93,14 @@ import { useToast } from "primevue/usetoast";
 
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
+import { STOCK_ITEM_TYPES, stockItemType } from "../utils/stockBulkAdjustTypes";
 
 const MODOS = [
   { label: "Entrada (+)", value: "in" },
   { label: "Saída (-)", value: "out" },
   { label: "Novo saldo", value: "set" },
 ];
+const TIPOS_DE_ITEM = STOCK_ITEM_TYPES;
 
 const toast = useToast();
 const locations = ref([]);
@@ -95,23 +108,27 @@ const locationId = ref(null);
 const busca = ref("");
 const sugestoes = ref([]);
 const linhas = ref([]);
+const tipoSelecionado = ref("ingredient");
 const motivo = ref("");
 const salvando = ref(false);
 const error = ref("");
+const tipoAtual = computed(() => stockItemType(tipoSelecionado.value));
 
 const podeSalvar = computed(
   () => locationId.value && motivo.value.trim() && linhas.value.length
     && linhas.value.every((linha) => linha.quantity != null),
 );
 
-async function buscarInsumos({ query }) {
-  const { data } = await api.get("/menu/ingredients/", { params: { search: query, is_active: true, page_size: 20 } });
-  const usados = new Set(linhas.value.map((linha) => linha.ingredient));
-  sugestoes.value = (data.results || data).filter((insumo) => !usados.has(String(insumo.id)));
+async function buscarItens({ query }) {
+  const tipo = tipoAtual.value;
+  const params = { search: query, is_active: true, ...(tipo.itemType ? { item_type: tipo.itemType } : {}), page_size: 20 };
+  const { data } = await api.get(tipo.endpoint, { params });
+  const usados = new Set(linhas.value.map((linha) => `${linha.kind}:${linha.id}`));
+  sugestoes.value = (data.results || data).filter((item) => !usados.has(`${tipo.kind}:${item.id}`));
 }
 
-function adicionar({ value }) {
-  linhas.value.push({ ingredient: String(value.id), name: value.name, unit: value.unit, mode: "set", quantity: null });
+function adicionar({ value }, kind = tipoAtual.value.kind) {
+  linhas.value.push({ id: String(value.id), kind, name: value.name, unit: value.unit || value.stock_unit, mode: "set", quantity: null });
   busca.value = "";
 }
 
@@ -122,7 +139,7 @@ async function salvar() {
     const { data } = await api.post("/stock/movements/bulk-adjust/", {
       location: locationId.value,
       reason: motivo.value,
-      items: linhas.value.map(({ ingredient, mode, quantity }) => ({ ingredient, mode, quantity: String(quantity) })),
+      items: linhas.value.map(({ id, kind, mode, quantity }) => ({ [kind]: id, mode, quantity: String(quantity) })),
     });
     toast.add({ severity: "success", summary: "Ajuste aplicado", detail: `${data.created} movimento(s) registrado(s).`, life: 4000 });
     linhas.value = [];
@@ -140,7 +157,7 @@ onMounted(async () => {
   if (locations.value.length === 1) locationId.value = locations.value[0].id;
 });
 
-defineExpose({ linhas, motivo, locationId, salvar, adicionar });
+defineExpose({ linhas, motivo, locationId, tipoSelecionado, salvar, adicionar, buscarItens });
 </script>
 
 <style scoped>
