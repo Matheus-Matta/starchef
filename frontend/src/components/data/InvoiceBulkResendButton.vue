@@ -11,6 +11,7 @@ import { useToast } from "primevue/usetoast";
 
 import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
+import { bulkJobToast } from "./bulkJobToast";
 
 const props = defineProps({ selection: { type: Array, required: true } });
 const emit = defineEmits(["completed"]);
@@ -30,32 +31,13 @@ function confirmResend() {
   });
 }
 
-// O mesmo motivo em vinte notas aparece uma vez, com a contagem.
-function motivosDasFalhas(errors = []) {
-  const contagem = new Map();
-  for (const { message } of errors) contagem.set(message, (contagem.get(message) || 0) + 1);
-  const linhas = [...contagem].slice(0, 3).map(([message, n]) => `${message}${n > 1 ? ` (${n} notas)` : ""}`);
-  return linhas.length ? ` Motivo: ${linhas.join(" | ")}` : "";
-}
-
 async function resend() {
   const ids = props.selection.map((row) => row.id);
   if (!ids.length) return;
   loading.value = true;
   try {
     const { data } = await api.post("/invoices/bulk-resend/", { ids }, { skipRestaurantScope: true });
-    const details = [`${data.resent || 0} reenviada(s)`];
-    if (data.skipped_issued) details.push(`${data.skipped_issued} já emitida(s) ignorada(s)`);
-    if (data.skipped_cancelled) details.push(`${data.skipped_cancelled} cancelada(s) ignorada(s)`);
-    if (data.failed) details.push(`${data.failed} com falha`);
-    toast.add({
-      severity: data.failed ? "warn" : "success",
-      summary: "Reenvio em massa concluido",
-      detail: `${details.join(", ")}.${motivosDasFalhas(data.errors)}`,
-      // Com falha, o aviso fica até fechar: o motivo ("espere a sincronização",
-      // "pedido de valor zero") é o que diz ao operador o que fazer.
-      life: data.failed ? undefined : 6000,
-    });
+    toast.add(bulkJobToast(data, "notas"));
     emit("completed");
   } catch (error) {
     toast.add({

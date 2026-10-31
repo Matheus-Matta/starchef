@@ -36,7 +36,6 @@ import { normalizeApiError } from "../utils/apiError";
 
 const props = defineProps({ id: { type: String, required: true } });
 const router = useRouter();
-const tamanho = 200;
 
 const comanda = ref(null);
 const linhas = ref([]);
@@ -52,18 +51,14 @@ async function buscar() {
   carregando.value = true;
   erro.value = "";
   try {
-    const filtros = { page_size: tamanho };
+    const filtros = { all: "1" };
     if (depois.value) filtros.after = depois.value;
     if (antes.value) filtros.before = antes.value;
-    const { data: primeira } = await api.get(`/commands/${props.id}/history/`, { params: { ...filtros, page: 1 } });
-    const paginas = Math.ceil((primeira.count || 0) / tamanho);
-    const restantes = await Promise.all(
-      Array.from({ length: Math.max(paginas - 1, 0) }, (_, indice) =>
-        api.get(`/commands/${props.id}/history/`, { params: { ...filtros, page: indice + 2 } })),
-    );
-    const eventos = [primeira, ...restantes.map(({ data }) => data)].flatMap((data) => data.results || []);
+    const { data } = await api.get(`/commands/${props.id}/history/`, { params: filtros });
+    const eventos = data.results || [];
+    comanda.value = data.command || comanda.value;
     linhas.value = eventos.map(linhaDoHistorico);
-    total.value = primeira.count || eventos.length;
+    total.value = data.count || eventos.length;
   } catch (exc) {
     erro.value = normalizeApiError(exc).message || "Não foi possível carregar o histórico.";
   } finally {
@@ -71,11 +66,7 @@ async function buscar() {
   }
 }
 
-onMounted(async () => {
-  // O número do cartão é só o título: se falhar, o histórico ainda aparece.
-  api.get(`/commands/${props.id}/`).then(({ data }) => (comanda.value = data)).catch(() => {});
-  await buscar();
-});
+onMounted(buscar);
 </script>
 
 <style scoped>

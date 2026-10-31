@@ -168,7 +168,7 @@ export const resources = [
   },
   {
     name: "kds-estacoes",
-    title: "Estacoes KDS",
+    title: "Estações KDS",
     endpoint: "/kitchen/stations/",
     columns: [
       { key: "name", label: "Estacao" },
@@ -336,7 +336,7 @@ export const resources = [
     },
     columns: [
       { key: "logo_p", label: "Imagem", type: "image" },
-      { key: "internal_code", label: "Codigo" },
+      { key: "internal_code", label: "Código" },
       { key: "ean", label: "Cód. barras" },
       { key: "name", label: "Produto" },
       { key: "restaurant_names", label: "Restaurantes", type: "badges", sortable: false },
@@ -350,7 +350,7 @@ export const resources = [
       // Seções (STC-021): informações básicas, preços, classificação, disponibilidade, produção.
       { name: "name", label: "Nome do produto", type: "text", maxlength: 180, required: true, full: true, section: "Informações básicas" },
       { name: "restaurants", label: "Restaurantes que utilizam o produto", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", globalScope: true, required: true, full: true, section: "Informações básicas", hint: "Disponibilize o mesmo produto em vários restaurantes da franquia." },
-      { name: "internal_code", label: "Codigo interno", type: "text", required: true, maxlength: 60, section: "Informações básicas" },
+      { name: "internal_code", label: "Código interno", type: "text", required: true, maxlength: 60, section: "Informações básicas" },
       // Texto, nunca número: `0000012345670` e `12345670` são códigos
       // diferentes, e perder os zeros faria o leitor não achar o produto.
       { name: "ean", label: "Código de barras (EAN/GTIN)", type: "text", maxlength: 32, placeholder: "7891000100103", section: "Informações básicas", hint: "Opcional e único na conta. O PDV usa este código na leitura do scanner; o dígito verificador é conferido no salvamento." },
@@ -378,10 +378,10 @@ export const resources = [
       { name: "production_sector", label: "Produção", type: "dropdown", options: SECTOR_OPTIONS, default: "kitchen", section: "Produção" },
       { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção" },
       // Switches de disponibilidade — alinhados em grid na seção "Disponibilidade".
-      { name: "available_for_table", label: "Disponivel para mesa", type: "boolean", default: true, section: "Disponibilidade" },
-      { name: "available_for_counter", label: "Disponivel para balcao", type: "boolean", default: true, section: "Disponibilidade" },
+      { name: "available_for_table", label: "Disponível para mesa", type: "boolean", default: true, section: "Disponibilidade" },
+      { name: "available_for_counter", label: "Disponível para balcão", type: "boolean", default: true, section: "Disponibilidade" },
       // Campo do Modulo Entrega: so aparece se a conta tiver o modulo habilitado.
-      { name: "available_for_delivery", label: "Disponivel para delivery", type: "boolean", default: true, module: "entrega", section: "Disponibilidade" },
+      { name: "available_for_delivery", label: "Disponível para entrega", type: "boolean", default: true, module: "entrega", section: "Disponibilidade" },
       // Switches de permissão — alinhados em grid na seção "Permissões".
       { name: "allows_addons", label: "Permite adicionais", type: "boolean", default: true, section: "Permissões" },
       { name: "allows_notes", label: "Permite observacoes", type: "boolean", default: true, section: "Permissões" },
@@ -553,8 +553,8 @@ export const resources = [
       { name: "source_category", label: "Categoria (para \"produtos de uma categoria\")", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma", section: "Conteudo" },
       { name: "item_limit", label: "Maximo de itens (0 = todos)", type: "number", default: 0, section: "Conteudo", hint: "So vale para as origens automaticas." },
       { name: "channel", label: "Canal", type: "dropdown", options: CHANNEL_OPTIONS, default: "all", section: "Disponibilidade" },
-      { name: "available_from", label: "Disponivel de (HH:MM)", type: "text", placeholder: "08:00", section: "Disponibilidade" },
-      { name: "available_until", label: "Disponivel ate (HH:MM)", type: "text", placeholder: "22:00", section: "Disponibilidade" },
+      { name: "available_from", label: "Disponível de (HH:MM)", type: "text", placeholder: "08:00", section: "Disponibilidade" },
+      { name: "available_until", label: "Disponível até (HH:MM)", type: "text", placeholder: "22:00", section: "Disponibilidade" },
     ],
   },
   {
@@ -688,7 +688,7 @@ export const resources = [
       { key: "document_number", label: "Documento" },
       { key: "supplier", label: "Fornecedor" },
       { key: "location_name", label: "Local" },
-      { key: "status", label: "Situacao", type: "status", map: STOCK_DOC_STATUS_LABELS },
+      { key: "status", label: "Situação", type: "status", map: STOCK_DOC_STATUS_LABELS },
     ],
   },
   {
@@ -705,14 +705,14 @@ export const resources = [
       ],
     },
     module: "logistica",
-    title: "Saidas de Estoque",
+    title: "Saídas de estoque",
     endpoint: "/stock/exits/",
     columns: [
       { key: "effective_date", label: "Data", type: "date" },
       { key: "exit_type", label: "Tipo", type: "status", map: STOCK_EXIT_TYPE_LABELS },
       { key: "location_name", label: "Local" },
       { key: "reason", label: "Motivo" },
-      { key: "status", label: "Situacao", type: "status", map: STOCK_DOC_STATUS_LABELS },
+      { key: "status", label: "Situação", type: "status", map: STOCK_DOC_STATUS_LABELS },
     ],
   },
   {
@@ -729,7 +729,7 @@ export const resources = [
       { key: "quantity", label: "Saldo", align: "right" },
       { key: "entered_at", label: "Entrada", type: "date" },
       { key: "expires_at", label: "Validade", type: "date" },
-      { key: "status", label: "Situacao", type: "status", map: STOCK_LOT_STATUS_LABELS },
+      { key: "status", label: "Situação", type: "status", map: STOCK_LOT_STATUS_LABELS },
     ],
   },
   {
@@ -741,7 +741,7 @@ export const resources = [
       { key: "name", label: "Modelo" },
       { key: "width_mm", label: "Largura (mm)", align: "right" },
       { key: "height_mm", label: "Altura (mm)", align: "right" },
-      { key: "code_type", label: "Codigo", type: "status", map: LABEL_CODE_TYPE_LABELS },
+      { key: "code_type", label: "Código", type: "status", map: LABEL_CODE_TYPE_LABELS },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
@@ -946,7 +946,7 @@ export const resources = [
   },
   {
     name: "balancas",
-    title: "Balancas",
+    title: "Balanças",
     endpoint: "/scales/",
     columns: [
       { key: "name", label: "Nome" },
@@ -1079,11 +1079,11 @@ export const resources = [
   },
   {
     name: "usuarios",
-    title: "Usuarios",
+    title: "Usuários",
     endpoint: "/users/",
     globalScope: true,
     columns: [
-      { key: "username", label: "Usuario" },
+      { key: "username", label: "Usuário" },
       { key: "email", label: "Email" },
       { key: "first_name", label: "Nome" },
       { key: "profile.role_name", label: "Cargo" },
@@ -1112,7 +1112,7 @@ export const resources = [
     globalScope: true,
     columns: [
       { key: "name", label: "Perfil" },
-      { key: "code", label: "Codigo" },
+      { key: "code", label: "Código" },
       { key: "is_account_admin", label: "Admin da conta", type: "boolean" },
       { key: "max_discount_percent", label: "Desconto max. (%)" },
       { key: "created_at", label: "Criado em", type: "date" },

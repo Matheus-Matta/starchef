@@ -11,10 +11,13 @@ import pytest
 from django.utils import timezone
 
 from apps.menu.models import Product
+from apps.orders.command_billing import attach_commands_to_order
+from apps.orders.command_items import launch_item
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
 from apps.payments.models import CashMovement, CashRegister, CashStation, PaymentMethod
 from apps.payments.services import register_payment
+from apps.restaurants.models import Command
 
 pytestmark = pytest.mark.django_db
 URL = "/api/v1/reports/overview/"
@@ -60,6 +63,9 @@ def loja(account, restaurant, branch, manager_user):
 def test_o_dia_e_o_padrao_e_traz_um_pouco_de_cada(api_client, restaurant, loja):
     dados = api_client.get(URL, {"restaurant": str(restaurant.pk)}).json()
 
+    assert dados["options"]["restaurants"] == [
+        {"id": str(restaurant.id), "name": restaurant.trade_name},
+    ]
     assert dados["periodo"]["nome"] == "dia"
     assert Decimal(dados["vendas"]["vendido"]) == Decimal("80.00")
     assert dados["vendas"]["pedidos_pagos"] == 2
@@ -73,11 +79,50 @@ def test_o_dia_e_o_padrao_e_traz_um_pouco_de_cada(api_client, restaurant, loja):
     assert [b["rotulo"] for b in dados["grafico"]] == [f"{timezone.localtime().hour:02d}h"]
 
 
-def test_o_que_nao_tem_valor_nao_vem(api_client, restaurant, loja):
-    vendas = api_client.get(URL, {"restaurant": str(restaurant.pk)}).json()["vendas"]
+def test_indicadores_principais_vem_mesmo_quando_sao_zero(api_client, restaurant, loja):
+    dados = api_client.get(URL, {"restaurant": str(restaurant.pk)}).json()
+    vendas = dados["vendas"]
 
-    assert "pedidos_cancelados" not in vendas and "descontos" not in vendas
-    assert "baixas_de_estoque" not in api_client.get(URL, {"restaurant": str(restaurant.pk)}).json()
+    assert vendas["pedidos_cancelados"] == 0
+    assert Decimal(vendas["descontos"]) == Decimal("0.00")
+    assert dados["comandas"]["em_uso"] == 0
+    assert dados["comandas"]["pagas"] == 0
+    assert "baixas_de_estoque" not in dados
+
+
+def test_mostra_comandas_em_uso_pagas_e_usadas_no_dia(
+    api_client, account, restaurant, branch, manager_user, loja,
+):
+    _vender, dinheiro = loja
+    produto = Product.all_objects.get(account=account, name="Prato")
+    em_uso = Command.objects.create(
+        account=account, restaurant=restaurant, branch=branch, number=10,
+    )
+    paga = Command.objects.create(
+        account=account, restaurant=restaurant, branch=branch, number=11,
+    )
+    launch_item(command=em_uso, product=produto, user=manager_user)
+    launch_item(command=paga, product=produto, user=manager_user)
+    pedido = create_order(
+        restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, user=manager_user,
+    )
+    attach_commands_to_order(order=pedido, command_ids=[paga.pk], user=manager_user)
+    pedido.refresh_from_db()
+    register_payment(
+        order=pedido, user=manager_user, payment_method_id=dinheiro.pk, amount=pedido.total,
+    )
+    # A comanda pode atravessar a madrugada: o movimento pertence ao dia em
+    # que foi pago, não ao dia em que a conta começou.
+    Order.all_objects.filter(pk=pedido.pk).update(opened_at=timezone.now() - timedelta(days=1))
+
+    comandas = api_client.get(URL, {"restaurant": str(restaurant.pk)}).json()["comandas"]
+
+    assert comandas["em_uso"] == 1
+    assert Decimal(comandas["em_uso_valor"]) == Decimal("40.00")
+    assert comandas["pagas"] == 1
+    assert Decimal(comandas["pagas_valor"]) == Decimal("40.00")
+    assert comandas["usadas"] == 2
+    assert comandas["itens_lancados"] == 2
 
 
 def test_semana_e_mes_somam_os_dias_anteriores(api_client, restaurant, loja):

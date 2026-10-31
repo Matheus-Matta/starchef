@@ -39,6 +39,11 @@ import { computed } from "vue";
 import Button from "primevue/button";
 import Dialog from "primevue/dialog";
 import Tag from "primevue/tag";
+import {
+  CASH_AUTHORIZATION_LABELS, CASH_MOVEMENT_STATUS_LABELS,
+  CASH_MOVEMENT_TYPE_LABELS,
+} from "../../config/cashLabels";
+import { mapLabel } from "../../utils/format";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -46,11 +51,9 @@ const props = defineProps({
 });
 const emit = defineEmits(["update:visible", "view-session"]);
 
-const TYPES = { opening: "Abertura", sale: "Venda em dinheiro", withdrawal: "Sangria", supply: "Suprimento", closing: "Fechamento", adjustment: "Ajuste", refund: "Estorno" };
-const AUTH = { pending: "Pendente", cash_password: "Senha do caixa", manager: "Gerente", automatic: "Automática" };
-const movementLabel = computed(() => TYPES[props.movement?.movement_type] || props.movement?.movement_type || "Movimentação");
-const authorizationLabel = computed(() => AUTH[props.movement?.authorization] || props.movement?.authorization || "—");
-const statusLabel = computed(() => ({ pending: "Pendente", approved: "Confirmada", cancelled: "Cancelada" }[props.movement?.status] || props.movement?.status || "—"));
+const movementLabel = computed(() => mapLabel(props.movement?.movement_type, CASH_MOVEMENT_TYPE_LABELS));
+const authorizationLabel = computed(() => mapLabel(props.movement?.authorization, CASH_AUTHORIZATION_LABELS));
+const statusLabel = computed(() => mapLabel(props.movement?.status, CASH_MOVEMENT_STATUS_LABELS));
 const statusTone = computed(() => ({ pending: "warning", approved: "success", cancelled: "danger" }[props.movement?.status] || "info"));
 const orderLabel = computed(() => props.movement?.order_sequence ? `#${props.movement.order_sequence}` : "—");
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });

@@ -25,7 +25,7 @@ export const discountTableResource = {
     { key: "name", label: "Tabela" },
     {
       key: "status_label",
-      label: "Situacao",
+      label: "Situação",
       type: "status",
       map: { Ativa: "Ativa", Agendada: "Agendada", Encerrada: "Encerrada", Desligada: "Desligada" },
     },

@@ -2,7 +2,7 @@
   <nav class="mobile-bottom-nav" aria-label="Navegação principal">
     <button type="button" :class="{ 'is-active': active === 'painel' }" @click="$emit('navigate', 'painel')">
       <AppIcon name="home" :size="20" />
-      <span>Home</span>
+      <span>Início</span>
     </button>
     <button type="button" :class="{ 'is-active': active === 'pedidos' }" @click="$emit('navigate', 'pedidos')">
       <AppIcon name="receipt-text" :size="20" />

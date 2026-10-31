@@ -1,5 +1,6 @@
 import pytest
 
+from apps.bulk_jobs.services import run_bulk_job
 from apps.invoices.models import Invoice
 from apps.orders.models import Order
 from apps.orders.services import create_order
@@ -86,8 +87,9 @@ def test_bulk_resend_ignores_already_issued_invoices(
         format="json",
     )
 
-    assert response.status_code == 200, response.data
-    assert response.data == {
+    assert response.status_code == 202, response.data
+    job = run_bulk_job(response.data["id"])
+    assert job.result == {
         "requested": 2,
         "resent": 1,
         "skipped_issued": 1,

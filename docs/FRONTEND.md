@@ -84,7 +84,8 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 - **Notas Fiscais** — a listagem abre da nota mais recente para a mais antiga; os selects de status e tipo de emissão ficam alinhados à busca e permitem reenviar em massa as selecionadas, ignorando documentos já emitidos. O detalhe mostra o número do pedido como link para a tela do próprio pedido.
 - **`KdsView.vue`** — painel de cozinha: troca de estação, filtro por período, indicador "Ao vivo" com refresh manual (reforçado pelo WebSocket genérico, ver §6).
 - **`KdsStationsView.vue`** — cadastro de estações/colunas do KDS, master-detail, mão feita (não usa o CRUD genérico).
-- **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI.
+- **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI. Cada endpoint devolve também `options`, com as opções necessárias aos filtros da própria seção; abrir a tela não dispara chamadas extras aos cadastros.
+- **`DashboardView.vue` / Visão Geral** — separa o placar em **Hoje/Nesta semana/Neste mês** e **Comandas**. Faturamento, pedidos, pedidos pagos, ticket, comandas em uso agora, comandas pagas, comandas usadas e ticket por comanda permanecem visíveis mesmo zerados; cancelamentos, descontos e perdas aparecem quando existem. Abaixo ficam gráfico de vendas, formas de pagamento, caixas abertos e saídas de estoque.
 - **`HomeView.vue`** — home mobile-first, atalhos e navegação condicionados a papel do usuário e módulos habilitados na conta.
 - **`CashRegisterView.vue`** — gestão de caixa (estações, abrir/fechar sessão, sangria/suprimento e aprovação gerencial). Para uma sessão presa a uma máquina indisponível, mostra somente ao administrador a ação **Forçar liberação**, que exige justificativa, cancela a sessão sem simular conferência da gaveta e libera o caixa para outro terminal. Mão feita, fora do CRUD genérico.
 - **Divergência de vendas** — dinheiro que entrou sem venda no PDV. No histórico de sessões de `CashRegisterView.vue` as sessões têm caixa de seleção (marcar não abre o extrato) e o botão **Relatório de divergências** leva a `CashDiscrepancyReportView.vue`: vendas no PDV × divergência × recebido, por sessão e por forma de pagamento, com impressão. O extrato da sessão (`CashSessionDetailView.vue`) lista as divergências e tem **Registrar divergência** (`components/cash/SalesDiscrepancyDialog.vue`: valor por forma, somado em centavos, e motivo). `SalesDiscrepancyList.vue` analisa, regulariza (com a descrição do desfecho fiscal) e cancela; o 409 de outro gerente que decidiu antes recarrega a lista. Nada disso cria pedido ou NFC-e (ver `docs/BACKEND.md`).
@@ -94,11 +95,20 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 - **Zerar comandas**: ação em lote `command-bulk-reset` na lista `comandas`
   (`components/data/CommandBulkResetDialog.vue`) e botão "Zerar comanda" no
   painel do PDV (`components/pdv/CommandItemsPanel.vue`). Motivo obrigatório,
-  senha de operação opcional; o resumo diz quais comandas ficaram e por quê.
+  senha de operação opcional. A tela manda todos os IDs em uma requisição,
+  avisa para aguardar e libera o operador; o worker processa em segundo plano
+  e o resultado final, incluindo o primeiro motivo de recusa, chega pelo sino.
+  Cancelar/excluir pedidos e reenviar NFC-e em massa seguem o mesmo contrato.
+  A conciliação SEFAZ e a importação de XML/ZIP de notas de entrada também
+  ficam em segundo plano. O sino leva de volta à lista quando terminarem.
+- **Venda inteira**: ao transformar o rascunho em pedido, a retaguarda envia
+  pedido, todos os itens e comandas uma única vez para `/orders/submit/`. Por
+  exemplo, uma venda com 20 itens não faz mais 20 chamadas HTTP separadas.
 - **Histórico da comanda**: `/comandas/:id/historico` (`views/CommandHistoryView.vue`,
   linhas montadas por `services/commandHistory.js`), pela ação "Histórico" da
-  lista e pelo link "Histórico completo" do painel do PDV. A tela reúne todas
-  as páginas da API e deixa a paginação somente a cargo da tabela.
+  lista e pelo link "Histórico completo" do painel do PDV. A tela pede
+  `all=1`: uma resposta traz o número da comanda e todos os eventos; a
+  paginação visual fica somente a cargo da tabela.
 - **Checkout**: `composables/useCheckoutChoices.js` guarda taxa, desconto e
   CPF/CNPJ no pedido pelo `/checkout/` e os restaura ao reabrir (inclusive pelo
   endereço). "Fechar conta" chama `/checkout/`, não `/close/`.
@@ -203,6 +213,19 @@ Numa **rajada** (mais de 20 eventos em 1,5 s — uma importação em massa) a li
 Células de relatório (`utils/reportCell.js`): número decimal sai com no máximo 2 casas (`digits` na coluna pede mais, ex.: peso em kg); dinheiro em reais.
 
 Os **relatórios** são soma, então relêem — mas em silêncio (sem tela de carregamento), só no período padrão (mês atual) sem filtro da seção, e o `StatCard` cujo valor mudou anima subindo (`provide("statCardLive")`; trocar filtro não anima).
+
+### Economia de requisições GET
+
+`services/apiGetCache.js` compartilha GETs idênticos que estejam em andamento.
+Catálogos estáveis, como restaurantes, categorias, setores, formas de pagamento
+e locais de estoque, ficam em cache por 60 segundos; relatórios, por 15 segundos.
+Qualquer escrita e qualquer resposta 401 limpam o cache. Atualização manual e
+evento em tempo real forçam uma nova leitura. A chave inclui parâmetros e o
+restaurante selecionado, então dados de escopos diferentes não se misturam.
+
+Os campos remotos do formulário genérico são agrupados por endpoint e escopo:
+dois selects que usam a mesma lista fazem uma chamada, enquanto listas
+diferentes carregam em paralelo.
 
 ## 7. Autenticação no frontend
 

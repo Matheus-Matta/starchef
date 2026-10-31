@@ -9,10 +9,7 @@ const chamadas = [];
 vi.mock("../../services/api", () => ({
   api: {
     post: async (...args) => (chamadas.push(args), {
-      data: {
-        reset: [{ id: "c1", number: 11, items_removed: 2 }],
-        skipped: [{ id: "c2", number: 14, reason: "Está na conta #88, que continua aberta." }],
-      },
+      data: { id: "lote-1", status: "queued", total: 2 },
     }),
   },
 }));

@@ -56,6 +56,8 @@ EXCLUDED = {
     # Efêmero ou derivado: reconstruído no destino, não vale a banda.
     "notifications.Notification": "Aviso de tela, efêmero e por instalação.",
     "imports.ImportJob": "Fila de processamento da importação, local ao nó que a recebeu; o que ela grava sincroniza pelos próprios models.",
+    "bulk_jobs.BulkJob": "Fila local de operações em lote; os registros de negócio alterados pelo worker sincronizam normalmente.",
+    "bulk_jobs.BulkJobFile": "Arquivo temporário local consumido pelo worker do lote e apagado ao terminar.",
     # O COLETOR da SEFAZ: so a nuvem consulta quando ha sincronizacao
     # (`inbound_nfe/services/sefaz_na_nuvem.py`). A nota, os itens, eventos e
     # manifestacoes viajam (`catalog_clone.py`); o cursor, a trava e a fila

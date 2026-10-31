@@ -2465,6 +2465,7 @@ import { useAuthStore } from "../stores/auth";
 import { useRealtimeRows } from "../composables/useRealtimeRows";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
+import { bulkJobToast } from "../components/data/bulkJobToast";
 import OrderBulkCancelDialog from "../components/data/OrderBulkCancelDialog.vue";
 import OrderBulkDeleteDialog from "../components/data/OrderBulkDeleteDialog.vue";
 import CommandBulkResetDialog from "../components/data/CommandBulkResetDialog.vue";
@@ -3968,23 +3969,8 @@ async function reconcileSelectedSefaz() {
     const { data } = await api.post("/inbound-nfe/reconcile-status/", {
       nfe_ids: nfeIds,
     });
-    const { queried = 0, cancelled = 0, authorized = 0, errors = 0 } = data;
-    let detailMsg = `${queried} nota(s) consultada(s): ${authorized} autorizada(s)`;
-    if (cancelled > 0) {
-      detailMsg += `, ${cancelled} cancelada(s) identificada(s)`;
-    }
-    if (errors > 0) {
-      detailMsg += `, ${errors} com erro`;
-    }
-    toast.add({
-      severity: cancelled > 0 ? "warn" : "success",
-      summary: "Reconciliação SEFAZ Concluída",
-      detail: detailMsg,
-      life: 7000,
-    });
+    toast.add(bulkJobToast(data, "notas"));
     selection.value = [];
-    await reload();
-    await fetchInboundStatusCounts();
   } catch (err) {
     const norm = normalizeApiError(err);
     toast.add({
@@ -4290,13 +4276,9 @@ async function submitUploadXmlFiles() {
     });
 
     uploadXmlResult.value = data;
-    toast.add({
-      severity: "success",
-      summary: "Importação Concluída",
-      detail: data.message || "Arquivos XML processados com sucesso.",
-      life: 6000,
-    });
-    await reload();
+    toast.add(bulkJobToast(data, "arquivos"));
+    uploadXmlDialogVisible.value = false;
+    selectedXmlFiles.value = [];
   } catch (err) {
     toast.add({
       severity: "error",

@@ -312,9 +312,11 @@ anotação aberta sai por `void_command_item` — o mesmo cancelamento do item
 unitário, com motivo, prazo do restaurante, autorização e auditoria — e fica no
 histórico; depois `free_command_if_empty` devolve o cartão e solta a mesa.
 
-- Cada comanda numa transação própria, travada antes de ler. A resposta diz o
-  que houve com cada uma: `{"reset": [{id, number, items_removed}],
-  "skipped": [{id, number, reason}]}`.
+- A autorização é validada na requisição, sem guardar a senha. A API responde
+  `202` com o id do job e a tela é liberada; o worker processa cada comanda
+  numa transação própria, travada antes de ler. O resultado
+  `{"reset": [{id, number, items_removed}], "skipped": [...]}` fica no job e
+  chega resumido pelo sino. Se a fila cair, o beat reentrega o job persistido.
 - **Comanda dentro de conta aberta** fica, com o número da conta no motivo:
   cancelar ali deixaria a conta com item que a comanda diz não existir.
 - **Item fora do prazo sem autorização**: a comanda inteira volta (nenhum item

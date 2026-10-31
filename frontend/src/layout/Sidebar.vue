@@ -248,7 +248,7 @@ const groups = computed(() =>
     {
       label: "Operacao",
       items: [
-        { id: "kds-estacoes", label: "Estacoes KDS", icon: "soup" },
+        { id: "kds-estacoes", label: "Estações KDS", icon: "soup" },
         { id: "sla", label: "SLAs", icon: "timer" },
         { id: "mesas", label: "Mesas", icon: "armchair" },
         { id: "comandas", label: "Comandas", icon: "receipt" },
@@ -259,7 +259,7 @@ const groups = computed(() =>
       ].filter(Boolean),
     },
     {
-      label: "Cardapio",
+      label: "Cardápio",
       items: [
         { id: "cardapio", label: "Produtos", icon: "book-open" },
         { id: "categorias", label: "Categorias", icon: "tag" },
@@ -285,7 +285,7 @@ const groups = computed(() =>
       // Cardapio digital: o site publico e o que o alimenta. A visibilidade
       // segue os codigos de permissao que a API exige, e nao o cargo — quem
       // edita o site e o perfil E-commerce (e o administrador), nao o gerente.
-      label: "Cardapio Digital",
+      label: "Cardápio Digital",
       module: "ecommerce",
       items: [
         hasPermission("storefront.edit") ? { id: "menus", label: "Menus", icon: "list" } : null,
@@ -310,9 +310,9 @@ const groups = computed(() =>
         canManage.value ? { id: "estoque-posicao", label: "Posição de estoque", icon: "layers" } : null,
         canManage.value ? { id: "estoque-ajuste", label: "Ajuste em lote", icon: "settings" } : null,
         canManage.value ? { id: "estoque-entradas", label: "Entradas", icon: "package" } : null,
-        canManage.value ? { id: "estoque-saidas", label: "Saidas", icon: "truck" } : null,
+        canManage.value ? { id: "estoque-saidas", label: "Saídas", icon: "truck" } : null,
         canManage.value ? { id: "estoque-lotes", label: "Lotes e validades", icon: "clipboard-list" } : null,
-        canManage.value ? { id: "estoque", label: "Movimentacoes", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "estoque", label: "Movimentações", icon: "clipboard-list" } : null,
         canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "map-pin" } : null,
         canManage.value ? { id: "etiquetas-estoque", label: "Modelos de etiqueta", icon: "tag" } : null,
         canManage.value ? { id: "configuracao-estoque", label: "Configuração do estoque", icon: "settings" } : null,
@@ -333,7 +333,7 @@ const groups = computed(() =>
       ].filter(Boolean),
     },
     {
-      label: "Gestao",
+      label: "Gestão",
       items: [
         canManage.value ? {
           id: "relatorios",
@@ -356,11 +356,11 @@ const groups = computed(() =>
         } : null,
         canSeeAllRestaurants.value ? { id: "restaurantes", label: "Restaurantes", icon: "store" } : null,
         canManage.value ? { id: "setores", label: "Setores", icon: "armchair" } : null,
-        canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
+        canManage.value ? { id: "usuarios", label: "Usuários", icon: "user-cog" } : null,
         canManage.value ? { id: "perfis", label: "Perfis de acesso", icon: "shield-check" } : null,
         canSeeAllRestaurants.value ? { id: "terminais", label: "Terminais do PDV", icon: "monitor" } : null,
         canSeeAllRestaurants.value ? { id: "impressoras", label: "Impressoras", icon: "zap" } : null,
-        canSeeAllRestaurants.value ? { id: "balancas", label: "Balancas", icon: "scale" } : null,
+        canSeeAllRestaurants.value ? { id: "balancas", label: "Balanças", icon: "scale" } : null,
       ].filter(Boolean),
     },
   ]

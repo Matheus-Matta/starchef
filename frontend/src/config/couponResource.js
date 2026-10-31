@@ -21,7 +21,7 @@ export const couponResource = {
   title: "Cupons de desconto",
   endpoint: "/promotions/coupons/",
   columns: [
-    { key: "code", label: "Codigo" },
+    { key: "code", label: "Código" },
     { key: "discount_kind", label: "Tipo", type: "status", map: COUPON_KIND_LABELS },
     { key: "discount_value", label: "Valor", align: "right" },
     { key: "minimum_order_value", label: "Minimo", type: "money", align: "right" },
@@ -32,7 +32,7 @@ export const couponResource = {
   formFields: [
     {
       name: "code",
-      label: "Codigo do cupom",
+      label: "Código do cupom",
       type: "text",
       maxlength: 40,
       required: true,

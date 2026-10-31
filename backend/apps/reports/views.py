@@ -15,6 +15,7 @@ from apps.stock.models import StockMovement
 from apps.reports import dashboard as painel
 from apps.reports.comandas_abertas import resumo as comandas_abertas
 from apps.reports.comandas_nas_vendas import resumo as comandas_nas_vendas
+from apps.reports.filter_options import report_filter_options
 from apps.reports.mapa_de_calor import mapa_de_calor
 from apps.reports.waiter_sales import sales_by_waiter
 
@@ -330,11 +331,9 @@ class SalesReportView(TenantReportMixin, APIView):
         page = self._positive_int(request.query_params.get("page"), 1)
         page_size = min(self._positive_int(request.query_params.get("page_size"), 10), 1000)  # tudo: a tabela ordena no navegador
         pagination = {}
-
         for key in section_keys["sales"]:
             if key not in keys:
                 data.pop(key, None)
-
         for key in keys:
             rows = data.get(key, [])
             count = len(rows)
@@ -360,6 +359,7 @@ class SalesReportView(TenantReportMixin, APIView):
             "product_type": request.query_params.get("product_type"),
             "production_sector": request.query_params.get("production_sector"),
         }
+        data["options"] = report_filter_options(request, self.report_section, self.tenant_filter())
         return data
 
     @staticmethod

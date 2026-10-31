@@ -3,11 +3,10 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ReportsView from "./ReportsView.vue";
-import { api } from "../services/api";
 import { reportService } from "../services/reportService";
 
 vi.mock("primevue/chart", () => ({ default: { template: "<div />" } }));
-vi.mock("../services/api", () => ({ api: { get: vi.fn() }, API_BASE_URL: "/api/v1" }));
+vi.mock("../services/api", () => ({ API_BASE_URL: "/api/v1" }));
 vi.mock("../services/reportService", () => ({
   endpoints: { cash: "/reports/cash-movements/" },
   reportService: { get: vi.fn() },
@@ -16,14 +15,14 @@ vi.mock("../composables/useRealtimeResource", () => ({ useRealtimeResource: vi.f
 
 describe("ReportsView - filtros do relatório de caixa", () => {
   beforeEach(() => {
-    api.get.mockReset();
     reportService.get.mockReset();
-    api.get.mockImplementation((url) => Promise.resolve({
-      data: url === "/cash-stations/"
-        ? [{ id: "cash-1", name: "Caixa Principal", code: "CX01" }]
-        : [],
-    }));
-    reportService.get.mockResolvedValue({ summary: {}, sessions: [], movements: [] });
+    reportService.get.mockResolvedValue({
+      summary: {}, sessions: [], movements: [],
+      options: {
+        restaurants: [],
+        cash_stations: [{ id: "cash-1", name: "Caixa Principal", code: "CX01" }],
+      },
+    });
   });
 
   it("lista os caixas e envia o caixa escolhido ao relatório", async () => {
@@ -46,6 +45,6 @@ describe("ReportsView - filtros do relatório de caixa", () => {
 
     expect(reportService.get).toHaveBeenLastCalledWith("cash", expect.objectContaining({
       cash_station: "cash-1",
-    }));
+    }), {});
   });
 });

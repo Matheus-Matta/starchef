@@ -95,7 +95,7 @@ const today = computed(() =>
   }),
 );
 
-const displayName = computed(() => props.user?.name || props.user?.username || "Usuario");
+const displayName = computed(() => props.user?.name || props.user?.username || "Usuário");
 const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
 const contextLine = computed(() => `${restaurantName.value} - ${today.value}`);
 const roleLabel = computed(() => {

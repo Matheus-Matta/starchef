@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     "apps.sla",
     "apps.notifications",
     "apps.imports",
+    "apps.bulk_jobs",
     "apps.realtime",
     "apps.synchronization",
     "apps.inbound_nfe",
@@ -383,6 +384,10 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "America/Sao_Paulo"
 CELERY_BEAT_SCHEDULE = {
+    "bulk-jobs-recover": {
+        "task": "bulk_jobs.recover",
+        "schedule": 60.0,
+    },
     "dispatch-due-kitchen-batches": {
         "task": "orders.dispatch_due_kitchen_batches",
         "schedule": 5.0,

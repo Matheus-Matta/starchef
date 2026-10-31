@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 const chamadas = [];
 vi.mock("../../services/api", () => ({
   api: {
-    post: async (...args) => (chamadas.push(args), { data: { cancelled: 2, deleted: 1, skipped: [] } }),
+    post: async (...args) => (chamadas.push(args), { data: { id: "lote-1", status: "queued", total: 2 } }),
   },
 }));
 

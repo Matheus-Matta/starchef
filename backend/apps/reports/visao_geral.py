@@ -7,8 +7,8 @@ abria de manhã via o gráfico do mês e não o do dia. Aqui tudo responde ao
 período escolhido (o dia, por padrão), menos o que é estado de AGORA: caixas
 abertos e comandas em aberto.
 
-Seção sem valor não vem: lista vazia ou número zerado fica de fora da
-resposta, e a tela só desenha o que chegou.
+Os placares principais de vendas e comandas vêm até zerados, porque zero
+também responde uma pergunta do operador. Listas auxiliares vazias não vêm.
 """
 from datetime import timedelta
 
@@ -19,6 +19,7 @@ from apps.reports import comandas_abertas, comandas_periodo, visao_geral_caixa
 from apps.reports import visao_geral_estoque as estoque
 from apps.reports import visao_geral_vendas as vendas
 from apps.reports.dashboard import inicio_do_dia
+from apps.reports.filter_options import report_filter_options
 from apps.reports.views import TenantReportMixin
 from apps.reports.visao_geral_periodo import faixa, periodo
 
@@ -51,18 +52,29 @@ class VisaoGeralView(TenantReportMixin, APIView):
         fim = inicio_do_dia(ultimo + timedelta(days=1)) - timedelta(microseconds=1)
         comandas_pagas = comandas_periodo.resumo(escopo, inicio_do_dia(primeiro), fim)
         abertas = comandas_abertas.resumo(escopo)
+        resumo_vendas = vendas.totais(pedidos, Order)
+        resumo_comandas = {
+            "em_uso": abertas["open_commands_count"],
+            "em_uso_valor": abertas["open_commands_total"],
+            "pagas": comandas_pagas["paid"],
+            "pagas_valor": comandas_pagas["paid_total"],
+            "ticket_medio": comandas_pagas["average_ticket"],
+            "usadas": comandas_pagas["used"],
+            "itens_lancados": comandas_pagas["launched_items"],
+            "itens_lancados_valor": comandas_pagas["launched_total"],
+            "tempo_medio_minutos": comandas_pagas["average_stay_minutes"],
+            "itens_perdidos": comandas_pagas["lost_items"],
+            "perdas_valor": comandas_pagas["lost_total"],
+        }
 
         return Response({
             "periodo": {"nome": nome, "de": primeiro, "ate": ultimo},
+            "options": report_filter_options(request, "overview", escopo),
+            # Estes dois blocos são o placar principal e permanecem até
+            # zerados: zero também responde uma pergunta operacional.
+            "vendas": resumo_vendas,
+            "comandas": resumo_comandas,
             **_sem_zeros({
-                "vendas": vendas.totais(pedidos, Order),
-                "comandas": {
-                    "abertas": abertas["open_commands_count"],
-                    "abertas_valor": abertas["open_commands_total"],
-                    "pagas": comandas_pagas["paid"],
-                    "pagas_valor": comandas_pagas["paid_total"],
-                    "ticket_medio": comandas_pagas["average_ticket"],
-                },
                 "formas_de_pagamento": vendas.formas_de_pagamento(pagamentos),
                 "grafico": vendas.grafico(pagos, nome, primeiro, ultimo),
                 "produtos_vendidos": estoque.produtos_vendidos(itens_pagos),

@@ -45,7 +45,7 @@ import AppFormField from "../form/AppFormField.vue";
 import AppFormGrid from "../form/AppFormGrid.vue";
 import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
-import { resumoDoZeramento } from "./commandResetSummary";
+import { bulkJobToast } from "./bulkJobToast";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -83,7 +83,7 @@ async function zerar() {
       reason: reason.value.trim(),
       cash_password: password.value,
     });
-    toast.add(resumoDoZeramento(data.reset, data.skipped));
+    toast.add(bulkJobToast(data, "comandas"));
     emit("update:visible", false);
     emit("completed");
   } catch (error) {

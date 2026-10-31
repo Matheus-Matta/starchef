@@ -17,7 +17,7 @@ import {
   ORDER_TYPE_LABELS,
   TABLE_STATUS_LABELS,
 } from "./enums";
-import { formatMoney } from "../utils/format";
+import { formatMoney, mapLabel } from "../utils/format";
 
 /** Descobre o "tipo de detalhe" a partir do endpoint da API. */
 export function resolveDetailType(endpoint) {
@@ -59,7 +59,7 @@ export const DETAIL_META = {
     eyebrow: "Nota Fiscal de Entrada (NF-e)",
     title: (r) => (r.number ? `NF-e #${r.number} · Série ${r.series || "0"}` : "NF-e de Entrada"),
     subtitle: (r) => r.supplier_name || r.access_key || "-",
-    badge: (r) => INBOUND_NFE_STATUS_LABELS[r.status] || r.status,
+    badge: (r) => mapLabel(r.status, INBOUND_NFE_STATUS_LABELS),
     badgeKey: "status",
     metrics: [
       { label: "Valor Total", key: "total_invoice", type: "money" },
@@ -113,8 +113,8 @@ export const DETAIL_META = {
     ],
   },
   user: {
-    icon: "pi-user", accent: "indigo", eyebrow: "Usuario", badgeKey: "profile.role_name",
-    title: (r) => r.first_name || r.username || "Usuario",
+    icon: "pi-user", accent: "indigo", eyebrow: "Usuário", badgeKey: "profile.role_name",
+    title: (r) => r.first_name || r.username || "Usuário",
     subtitle: (r) => r.email || r.username,
     badge: (r) => r.profile?.role_name || "-",
   },
@@ -146,9 +146,9 @@ export const DETAIL_META = {
   restaurant: { icon: "pi-building", accent: "violet", eyebrow: "Restaurante", title: (r) => r.trade_name || "Restaurante", subtitle: (r) => r.city || r.legal_name || "-" },
   category: { icon: "pi-tags", accent: "indigo", eyebrow: "Categoria", title: (r) => r.name || "Categoria" },
   recipe: { icon: "pi-book", accent: "amber", eyebrow: "Ficha técnica", title: (r) => r.product?.name || "Ficha técnica" },
-  menu: { icon: "pi-bookmark", accent: "indigo", eyebrow: "Cardapio", title: (r) => r.name || "Cardapio" },
+  menu: { icon: "pi-bookmark", accent: "indigo", eyebrow: "Cardápio", title: (r) => r.name || "Cardápio" },
   addon: { icon: "pi-plus-circle", accent: "teal", eyebrow: "Adicional", title: (r) => r.name || "Adicional" },
-  stock: { icon: "pi-database", accent: "amber", eyebrow: "Movimentacao", title: (r) => r.ingredient_name || "Movimentacao" },
+  stock: { icon: "pi-database", accent: "amber", eyebrow: "Movimentação", title: (r) => r.ingredient_name || "Movimentação" },
   location: { icon: "pi-map-marker", accent: "slate", eyebrow: "Local de estoque", title: (r) => r.name || "Local" },
   zone: { icon: "pi-map", accent: "blue", eyebrow: "Zona de entrega", title: (r) => r.name || "Zona" },
   deliveryman: { icon: "pi-truck", accent: "green", eyebrow: "Entregador", title: (r) => r.name || "Entregador" },

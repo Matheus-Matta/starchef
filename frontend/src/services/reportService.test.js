@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./api", () => ({ api: { get: vi.fn(async () => ({ data: {} })) } }));
 
 import { api } from "./api";
-import { LINHAS_DO_RELATORIO, endpoints, reportService } from "./reportService";
+import { LINHAS_DO_RELATORIO, REPORT_CACHE_TTL_MS, endpoints, reportService } from "./reportService";
 
 // A tabela do relatório ordena e pagina no NAVEGADOR. Pedindo 10 linhas, a
 // seção de pagamentos mostrava 10 e a tabela achava que eram todas: ordenar
@@ -20,6 +20,7 @@ describe("reportService", () => {
       expect(params.page_size).toBe(LINHAS_DO_RELATORIO);
       expect(LINHAS_DO_RELATORIO).toBeGreaterThanOrEqual(1000);
       expect(params.date_from).toBe("2026-10-01");
+      expect(api.get.mock.calls[0][1].cacheTtlMs).toBe(REPORT_CACHE_TTL_MS);
     },
   );
 
@@ -28,5 +29,11 @@ describe("reportService", () => {
 
     expect(endpoints.command).toBe("/reports/commands/");
     expect(api.get.mock.calls[0][0]).toBe("/reports/commands/");
+  });
+
+  it("permite que atualização manual ignore o cache curto", async () => {
+    await reportService.get("sales", {}, { forceRefresh: true });
+
+    expect(api.get.mock.calls[0][1].forceRefresh).toBe(true);
   });
 });

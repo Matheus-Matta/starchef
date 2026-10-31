@@ -18,9 +18,9 @@ def responder(viewset, request):
     )
     from apps.payments.views import cash_session_error_response
 
-    restaurante = getattr(getattr(request.user, "profile", None), "restaurant", None)
+    restaurante = _restaurante_da_venda(request)
     if restaurante is None:
-        return Response({"detail": "Usuário sem restaurante vinculado."},
+        return Response({"detail": "Selecione um restaurante dentro do seu acesso."},
                         status=status.HTTP_400_BAD_REQUEST)
     simular = bool(request.data.get("simular"))
     from functools import partial
@@ -70,3 +70,21 @@ def responder(viewset, request):
         return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
     codigo = status.HTTP_201_CREATED if corpo["created"] and not simular else status.HTTP_200_OK
     return Response(corpo, status=codigo)
+
+
+def _restaurante_da_venda(request):
+    """O web pode escolher a unidade; usuário fixo continua preso à própria."""
+    from apps.core.access import is_tenant_admin
+    from apps.restaurants.models import Restaurant
+
+    profile = getattr(request.user, "profile", None)
+    selected = request.data.get("restaurant")
+    if not selected:
+        return getattr(profile, "restaurant", None)
+    restaurant = Restaurant.objects.filter(account=request.account, pk=selected).first()
+    if restaurant is None:
+        return None
+    if profile and profile.restaurant_id and profile.restaurant_id != restaurant.pk:
+        if not is_tenant_admin(request.user):
+            return None
+    return restaurant

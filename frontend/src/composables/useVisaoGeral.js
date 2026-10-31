@@ -41,6 +41,9 @@ export function useVisaoGeral() {
       const config = podeEscolherRestaurante.value ? { params, skipRestaurantScope: true } : { params };
       const { data } = await api.get("/reports/overview/", config);
       dados.value = data || {};
+      restaurantes.value = (data?.options?.restaurants || []).map((item) => ({
+        value: item.id, label: item.name,
+      }));
     } catch {
       erro.value = "Não foi possível carregar a visão geral.";
     } finally {
@@ -48,22 +51,10 @@ export function useVisaoGeral() {
     }
   }
 
-  async function carregarRestaurantes() {
-    if (!podeEscolherRestaurante.value) return;
-    try {
-      const { data } = await api.get("/restaurants/", { skipRestaurantScope: true });
-      restaurantes.value = (data.results || data || []).map((r) => ({
-        value: r.id, label: r.trade_name || r.name || r.legal_name,
-      }));
-    } catch {
-      restaurantes.value = [];
-    }
-  }
-
   watch([periodo, restaurante], () => carregar());
 
   return {
     periodo, restaurante, restaurantes, dados, carregando, erro,
-    podeEscolherRestaurante, carregar, carregarRestaurantes,
+    podeEscolherRestaurante, carregar,
   };
 }

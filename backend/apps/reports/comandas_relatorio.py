@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 
 from apps.reports import comandas_agora, comandas_periodo
 from apps.reports.cash_movements import _period
+from apps.reports.filter_options import report_filter_options
 from apps.reports.views import TenantReportMixin
 
 
@@ -33,6 +34,7 @@ class CommandsReportView(TenantReportMixin, APIView):
             "open_commands": em_uso,
             "period": comandas_periodo.resumo(escopo, inicio, fim),
             "by_command": comandas_periodo.por_comanda(escopo, inicio, fim),
+            "options": report_filter_options(request, "command", escopo),
         })
 
 

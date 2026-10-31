@@ -54,17 +54,20 @@ describe("histórico da comanda", () => {
     expect(tela.find("[role=alert]").text()).toContain("data válida");
   });
 
-  it("carrega todas as páginas e deixa somente a paginação da tabela", async () => {
+  it("carrega todo o histórico e o título em uma única requisição", async () => {
     pedidos.length = 0;
-    resposta = (params) => Promise.resolve({ data: {
+    resposta = Promise.resolve({ data: {
       count: 250,
-      results: Array.from({ length: params.page === 1 ? 200 : 50 }, (_, i) => evento(i + (params.page - 1) * 200)),
+      command: { id: "c1", number: 31 },
+      results: Array.from({ length: 250 }, (_, i) => evento(i)),
     } });
     const tela = await montar();
 
     const historico = pedidos.filter((p) => p.url.endsWith("/history/"));
-    expect(historico.map((pedido) => pedido.params.page)).toEqual([1, 2]);
-    expect(historico.every((pedido) => pedido.params.page_size === 200)).toBe(true);
+    expect(historico).toHaveLength(1);
+    expect(historico[0].params).toEqual({ all: "1" });
+    expect(pedidos).toHaveLength(1);
+    expect(tela.text()).toContain("Comanda 31");
     expect(tela.findComponent({ name: "ReportDataTable" }).props("rows")).toHaveLength(250);
     expect(tela.find(".cmd-history__pager").exists()).toBe(false);
   });

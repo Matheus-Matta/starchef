@@ -71,7 +71,7 @@
         placeholder="Período do relatório"
         @change="loadReport"
       />
-      <button class="reports-view__button" type="button" :disabled="loading" @click="loadReport">
+      <button class="reports-view__button" type="button" :disabled="loading" @click="loadReport({ forceRefresh: true })">
         {{ loading ? "Carregando..." : "Atualizar" }}
       </button>
       <button class="reports-view__button reports-view__button--outline" type="button" :disabled="loading" @click="exportCsv">
@@ -256,12 +256,14 @@ import CommandsReport from "../components/reports/CommandsReport.vue";
 import ProductCostsReport from "../components/reports/ProductCostsReport.vue";
 import SalesHeatmap from "../components/reports/SalesHeatmap.vue";
 import OrdersCancellationsPanel from "../components/reports/OrdersCancellationsPanel.vue";
-import { api, API_BASE_URL } from "../services/api";
+import { API_BASE_URL } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
 import { endpoints, reportService } from "../services/reportService";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { currentMonthRange } from "../utils/dateRange";
 import { productRowsFrom, productSalesRoute, waiterRowsFrom } from "../utils/reportRows";
+import { ORDER_STATUS_LABELS, ORDER_TYPE_LABELS } from "../config/enums";
+import { mapLabel } from "../utils/format";
 
 const props = defineProps({
   section: { type: String, default: "sales" },
@@ -285,7 +287,7 @@ const dateFrom = computed(() => ymd(reportPeriod.value?.[0] || today));
 const dateTo = computed(() => ymd(reportPeriod.value?.[1] || reportPeriod.value?.[0] || today));
 const report = ref({});
 const loading = ref(false);
-const loadingRestaurants = ref(false);
+const loadingRestaurants = ref(true);
 const restaurants = ref([]);
 const categories = ref([]);
 const sectors = ref([]);
@@ -389,31 +391,16 @@ function openProductSales(row) {
   });
   if (target) router.push(target);
 }
-const orderStatusLabels = {
-  open: "Aberto",
-  awaiting_payment: "Aguardando pagamento",
-  paid: "Pago",
-  cancelled: "Cancelado",
-  refunded: "Estornado",
-};
-const orderTypeLabels = {
-  table: "Mesa",
-  command: "Comanda",
-  counter: "Balcão",
-  delivery: "Entrega",
-  takeaway: "Retirada",
-  internal: "Consumo interno",
-};
 const orderStatusRows = computed(() =>
   (report.value.by_status || []).map((row) => ({
-    name: orderStatusLabels[row.status] || row.status,
+    name: mapLabel(row.status, ORDER_STATUS_LABELS),
     count: row.count,
     total: row.total,
   })),
 );
 const orderTypeRows = computed(() =>
   (report.value.by_order_type || []).map((row) => ({
-    name: orderTypeLabels[row.order_type] || row.order_type,
+    name: mapLabel(row.order_type, ORDER_TYPE_LABELS),
     count: row.count,
     total: row.total,
   })),
@@ -514,24 +501,28 @@ const reportAtRest = computed(() => {
 
 async function refreshLive() {
   if (loading.value || !reportAtRest.value) return;
-  const novo = await fetchReport();
+  const novo = await fetchReport({ forceRefresh: true });
   if (!reportAtRest.value) return; // filtrou enquanto a leitura corria
   statCardLive.value = true;
   report.value = novo;
+  applyReportOptions(novo.options);
   await nextTick();
   statCardLive.value = false;
 }
 
-async function loadReport() {
+async function loadReport(options = {}) {
+  const requestOptions = options?.forceRefresh ? { forceRefresh: true } : {};
   loading.value = true;
   try {
-    report.value = await fetchReport();
+    report.value = await fetchReport(requestOptions);
+    applyReportOptions(report.value.options);
   } finally {
     loading.value = false;
+    loadingRestaurants.value = false;
   }
 }
 
-function fetchReport() {
+function fetchReport(options = {}) {
   return reportService.get(props.section, {
       date_from: dateFrom.value,
       date_to: dateTo.value,
@@ -539,58 +530,25 @@ function fetchReport() {
       ...(props.section === "product" ? productFilters : {}),
       ...(props.section === "cash" ? cashFilters : {}),
       ...(props.section === "orders" ? ordersFilters : {}),
-  });
+  }, options);
 }
 
-async function loadProductFilterOptions() {
-  if (props.section !== "product") return;
-  const params = {
-    restaurant: selectedRestaurantId.value,
-    page_size: 100,
-  };
-  const [categoryResponse, sectorResponse] = await Promise.all([
-    api.get("/menu/categories/", { params }),
-    api.get("/tables/sectors/", { params }),
-  ]);
-  categories.value = categoryResponse.data?.results || categoryResponse.data || [];
-  sectors.value = sectorResponse.data?.results || sectorResponse.data || [];
+function applyReportOptions(options = {}) {
+  restaurants.value = options.restaurants || [];
+  categories.value = options.categories || [];
+  sectors.value = options.sectors || [];
+  cashStations.value = options.cash_stations || [];
+  if (
+    selectedRestaurantId.value
+    && !restaurants.value.some((restaurant) => String(restaurant.id) === String(selectedRestaurantId.value))
+  ) selectedRestaurantId.value = "";
 }
 
 async function handleRestaurantChange() {
   productFilters.category = "";
   productFilters.sector = "";
   cashFilters.cash_station = "";
-  await loadProductFilterOptions();
-  await loadCashFilterOptions();
-  await loadReport();
-}
-
-async function loadCashFilterOptions() {
-  if (props.section !== "cash") return;
-  const response = await api.get("/cash-stations/", {
-    params: { restaurant: selectedRestaurantId.value, page_size: 200, ordering: "name" },
-    skipRestaurantScope: true,
-  });
-  cashStations.value = response.data?.results || response.data || [];
-}
-
-async function loadRestaurants() {
-  loadingRestaurants.value = true;
-  try {
-    const response = await api.get("/restaurants/", {
-      params: { page_size: 100 },
-      skipRestaurantScope: true,
-    });
-    restaurants.value = response.data?.results || response.data || [];
-    if (
-      selectedRestaurantId.value
-      && !restaurants.value.some((restaurant) => String(restaurant.id) === String(selectedRestaurantId.value))
-    ) {
-      selectedRestaurantId.value = "";
-    }
-  } finally {
-    loadingRestaurants.value = false;
-  }
+  await loadReport({ forceRefresh: true });
 }
 
 async function exportCsv() {
@@ -639,9 +597,6 @@ function ymd(date) {
 }
 
 onMounted(async () => {
-  await loadRestaurants();
-  await loadProductFilterOptions();
-  await loadCashFilterOptions();
   await loadReport();
 });
 </script>

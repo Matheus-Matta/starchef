@@ -22,11 +22,14 @@ export const endpoints = {
  * (`ReportDataTable`, `total`).
  */
 export const LINHAS_DO_RELATORIO = 1000;
+export const REPORT_CACHE_TTL_MS = 15_000;
 
 export const reportService = {
-  async get(section, filters = {}) {
+  async get(section, filters = {}, { forceRefresh = false } = {}) {
     const response = await api.get(endpoints[section] || endpoints.sales, {
       params: { page: 1, page_size: LINHAS_DO_RELATORIO, ...filters },
+      cacheTtlMs: REPORT_CACHE_TTL_MS,
+      forceRefresh,
     });
     return response.data || {};
   },

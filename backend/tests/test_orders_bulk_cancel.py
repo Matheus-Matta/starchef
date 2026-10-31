@@ -1,12 +1,23 @@
 """Cancelar vários pedidos de uma vez, com a regra do cancelamento de um."""
+from unittest import mock
+
 import pytest
 
+from apps.bulk_jobs.services import run_bulk_job
 from apps.core.tenant import tenant_context
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, cancel_order, create_order, send_order_to_kitchen
 
 pytestmark = pytest.mark.django_db
 URL = "/api/v1/orders/bulk-cancel/"
+
+
+def _run_bulk(client, url, payload):
+    with mock.patch("apps.bulk_jobs.tasks.run_bulk_job_task.delay"):
+        response = client.post(url, payload, format="json")
+    if response.status_code != 202:
+        return response, None
+    return response, run_bulk_job(response.data["id"]).result
 
 
 def _autenticar(api_client):
@@ -40,11 +51,15 @@ def test_sem_senha_nenhum_pedido_com_consumo_e_cancelado(api_client, manager_use
     restaurant.save(update_fields=["cash_action_password"])
     pedidos, _ = _pedidos(restaurant, branch, table, product, manager_user)
 
-    resposta = api_client.post(URL, {"ids": [str(p.id) for p in pedidos], "reason": "Teste"}, format="json")
+    resposta, resultado = _run_bulk(
+        api_client,
+        URL,
+        {"ids": [str(p.id) for p in pedidos], "reason": "Teste"},
+    )
 
-    assert resposta.status_code == 200, resposta.content
-    assert resposta.json()["cancelled"] == 0
-    assert {s["reason"] for s in resposta.json()["skipped"]} == {"precisa da senha de operação"}
+    assert resposta.status_code == 202, resposta.content
+    assert resultado["cancelled"] == 0
+    assert {item["reason"] for item in resultado["skipped"]} == {"precisa da senha de operação"}
     assert not Order.all_objects.filter(pk__in=[p.pk for p in pedidos], status=Order.STATUS_CANCELLED).exists()
 
 
@@ -55,13 +70,15 @@ def test_com_a_senha_cancela_todos_e_pula_o_ja_cancelado(api_client, manager_use
     pedidos, cancelado = _pedidos(restaurant, branch, table, product, manager_user)
     ids = [str(p.id) for p in pedidos] + [str(cancelado.id)]
 
-    resposta = api_client.post(
-        URL, {"ids": ids, "reason": "Fechamento do teste", "cash_password": "caixa123"}, format="json"
+    resposta, resultado = _run_bulk(
+        api_client,
+        URL,
+        {"ids": ids, "reason": "Fechamento do teste", "cash_password": "caixa123"},
     )
 
-    assert resposta.status_code == 200, resposta.content
-    assert resposta.json()["cancelled"] == 2
-    assert [s["reason"] for s in resposta.json()["skipped"]] == ["já estava cancelado"]
+    assert resposta.status_code == 202, resposta.content
+    assert resultado["cancelled"] == 2
+    assert [item["reason"] for item in resultado["skipped"]] == ["já estava cancelado"]
     for pedido in pedidos:
         pedido.refresh_from_db()
         assert pedido.status == Order.STATUS_CANCELLED
@@ -89,13 +106,15 @@ def test_excluir_em_massa_so_apaga_pedido_sem_nota_nem_pagamento(api_client, man
             account=restaurant.account, restaurant=restaurant, order=com_nota, status=Invoice.STATUS_ISSUED
         )
 
-    resposta = api_client.post(
-        "/api/v1/orders/bulk-delete/", {"ids": [str(vazio.id), str(com_nota.id)]}, format="json"
+    resposta, resultado = _run_bulk(
+        api_client,
+        "/api/v1/orders/bulk-delete/",
+        {"ids": [str(vazio.id), str(com_nota.id)]},
     )
 
-    assert resposta.status_code == 200, resposta.content
-    assert resposta.json()["deleted"] == 1
-    assert "nota fiscal" in resposta.json()["skipped"][0]["reason"]
+    assert resposta.status_code == 202, resposta.content
+    assert resultado["deleted"] == 1
+    assert "nota fiscal" in resultado["skipped"][0]["reason"]
     assert Order.all_objects.get(pk=vazio.pk).deleted_at is not None
     assert Order.all_objects.get(pk=com_nota.pk).deleted_at is None
     # A exclusão de UM pedido segue a mesma trava.

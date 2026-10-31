@@ -42,61 +42,18 @@ export async function materializeDraft({
     throw new Error("Não há itens nem comandas para abrir o pedido.");
   }
 
-  const pedido = items.length
-    ? await _criarComPrimeiroItem({
-        orderType: commandIds.length ? "command" : orderType,
-        restaurantId,
-        customerId,
-        items,
-      })
-    : await _criarParaComandas({ restaurantId, customerId });
-
-  // O primeiro item já entrou junto com o pedido; os outros vão em seguida.
-  // Sem item nenhum, `slice(1)` é vazio e o laço não roda.
-  for (const item of items.slice(1)) {
-    await api.post(`/orders/${pedido.id}/items/`, _corpoDoItem(item));
-  }
-
-  // E então as comandas: o pedido PUXA as anotações pendentes dos cartões.
-  if (commandIds.length) {
-    const { data } = await api.post(`/orders/${pedido.id}/attach-commands/`, {
-      commands: commandIds,
-    });
-    return data;
-  }
-  return pedido;
-}
-
-/**
- * Só comandas: o pedido nasce VAZIO e as anotações o preenchem.
- *
- * É o caminho da mesa que chega no caixa sem nada novo para passar.
- * `create-with-item` não serve aqui porque não há item; o pedido vazio dura o
- * tempo de uma chamada, até `attach-commands` puxar o que os cartões anotaram.
- */
-async function _criarParaComandas({ restaurantId, customerId }) {
-  const { data } = await api.post("/orders/", {
-    order_type: "command",
+  // A mesma porta usada pelo PDV envia pedido, itens e comandas numa transação.
+  // Se a rede cair, os UUIDs tornam o reenvio inofensivo.
+  const { data } = await api.post("/orders/submit/", {
+    id: crypto.randomUUID(),
+    order_type: commandIds.length ? "command" : orderType,
     restaurant: restaurantId,
     ...(customerId ? { customer: customerId } : {}),
+    items: items.map((item) => ({ id: item.id || crypto.randomUUID(), ..._corpoDoItem(item) })),
+    commands: commandIds,
+    payments: [],
   });
-  return data;
-}
-
-/**
- * Balcão, entrega e retirada: o pedido nasce COM o primeiro item.
- *
- * `create-with-item` é atômico — pedido e item na mesma transação. É o que
- * garante que uma falha no meio não deixe um pedido vazio para trás.
- */
-async function _criarComPrimeiroItem({ orderType, restaurantId, customerId, items }) {
-  const { data } = await api.post("/orders/create-with-item/", {
-    order_type: orderType,
-    restaurant: restaurantId,
-    ...(customerId ? { customer: customerId } : {}),
-    item: _corpoDoItem(items[0]),
-  });
-  return data;
+  return data.order;
 }
 
 function _corpoDoItem(item) {

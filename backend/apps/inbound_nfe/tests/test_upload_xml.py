@@ -3,6 +3,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIRequestFactory, force_authenticate
 from django.contrib.auth import get_user_model
 from apps.accounts.models import Account
+from apps.bulk_jobs.services import run_bulk_job
 from apps.restaurants.models import Restaurant
 from apps.inbound_nfe.models import InboundNFe, InboundNFeItem
 from apps.inbound_nfe.views import InboundNFeViewSet
@@ -81,9 +82,15 @@ class UploadXMLTestCase(TestCase):
 
         view = InboundNFeViewSet.as_view({"post": "upload_xml"})
         response = view(request)
-        print("DEBUG RESPONSE DATA:", response.data)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["summary"]["total_processed"], 1)
+        self.assertEqual(response.status_code, 202)
+        self.assertFalse(
+            InboundNFe.all_objects.filter(
+                access_key="33260808969770000159550010054463751287194822"
+            ).exists()
+        )
+
+        job = run_bulk_job(response.data["id"])
+        self.assertEqual(job.result["total_processed"], 1)
 
         # Verificar banco
         invoice = InboundNFe.all_objects.filter(access_key="33260808969770000159550010054463751287194822").first()

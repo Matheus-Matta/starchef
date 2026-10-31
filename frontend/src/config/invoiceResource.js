@@ -1,4 +1,4 @@
-import { EMISSION_TYPE_LABELS, INVOICE_STATUS_LABELS } from "./enums";
+import { EMISSION_TYPE_LABELS, INVOICE_PHASE_LABELS, INVOICE_STATUS_LABELS } from "./enums";
 
 const labelOptions = (labels) => Object.entries(labels).map(([value, label]) => ({ value, label }));
 
@@ -31,7 +31,7 @@ export const invoiceProConfig = {
 export const invoiceColumns = [
   { key: "number", label: "Numero" },
   { key: "order_sequence", label: "Pedido", type: "order-link", idKey: "order", showInList: false },
-  { key: "phase", label: "Tipo" },
+  { key: "phase", label: "Tipo", map: INVOICE_PHASE_LABELS },
   { key: "status", label: "Status", type: "status", map: INVOICE_STATUS_LABELS },
   { key: "emission_type", label: "Emissão", type: "status", map: EMISSION_TYPE_LABELS },
   { key: "total_amount", label: "Valor", type: "money", align: "right" },

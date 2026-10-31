@@ -1,12 +1,12 @@
-const TYPES = {
-  opening: "Abertura",
-  sale: "Venda em dinheiro",
-  withdrawal: "Sangria",
-  supply: "Suprimento",
-  closing: "Fechamento",
-  adjustment: "Ajuste",
-  refund: "Estorno",
-};
+import {
+  CASH_AUTHORIZATION_LABELS, CASH_MOVEMENT_STATUS_LABELS,
+  CASH_MOVEMENT_TYPE_LABELS, ORDER_ITEM_STATUS_LABELS, PAYMENT_DETAIL_LABELS,
+} from "../config/cashLabels";
+import {
+  CASH_STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_TYPE_LABELS,
+  PAYMENT_STATUS_LABELS,
+} from "../config/enums";
+import { mapLabel } from "../utils/format";
 
 function cell(value) {
   const text = value === null || value === undefined ? "" : String(value);
@@ -29,7 +29,7 @@ export function downloadCashSessionCsv(statement) {
   add(rows, ["Terminal de fechamento", session.closed_terminal_label]);
   add(rows, ["Abertura", session.opened_at]);
   add(rows, ["Fechamento", session.closed_at]);
-  add(rows, ["Status", session.status]);
+  add(rows, ["Status", mapLabel(session.status, CASH_STATUS_LABELS)]);
   add(rows, ["Valor de abertura", session.opening_amount]);
   add(rows, ["Esperado", session.expected_amount]);
   add(rows, ["Contado", session.actual_amount]);
@@ -45,26 +45,26 @@ export function downloadCashSessionCsv(statement) {
   add(rows, ["Movimentações"]);
   add(rows, ["Data", "Tipo", "Valor", "Saldo após", "Status", "Motivo", "Destino/origem", "Operador", "Terminal", "Autorização", "Autorizado por", "Pedido", "Forma"]);
   for (const movement of session.movements || []) {
-    add(rows, [movement.created_at, TYPES[movement.movement_type] || movement.movement_type, movement.amount, movement.balance_after, movement.status, movement.reason, movement.destination, movement.operator_name, movement.terminal_label, movement.authorization, movement.authorized_by_name, movement.order_sequence, movement.payment_method_name]);
+    add(rows, [movement.created_at, mapLabel(movement.movement_type, CASH_MOVEMENT_TYPE_LABELS), movement.amount, movement.balance_after, mapLabel(movement.status, CASH_MOVEMENT_STATUS_LABELS), movement.reason, movement.destination, movement.operator_name, movement.terminal_label, mapLabel(movement.authorization, CASH_AUTHORIZATION_LABELS), movement.authorized_by_name, movement.order_sequence, movement.payment_method_name]);
   }
   add(rows);
   add(rows, ["Recebimentos"]);
   add(rows, ["Data", "Pedido", "Forma", "Tipo", "Valor", "Troco"]);
   for (const sale of session.sales || []) {
-    add(rows, [sale.paid_at, sale.order_sequence, sale.payment_method_name, sale.card_subtype || sale.method_type, sale.amount, sale.change_amount]);
+    add(rows, [sale.paid_at, sale.order_sequence, sale.payment_method_name, mapLabel(sale.card_subtype || sale.method_type, PAYMENT_DETAIL_LABELS), sale.amount, sale.change_amount]);
   }
   add(rows);
   add(rows, ["Pedidos"]);
   add(rows, ["Pedido", "Referência", "Tipo", "Abertura", "Fechamento", "Operador", "Fechado por", "Status", "Pagamento", "Subtotal", "Serviço", "Desconto", "Entrega", "Total", "Observações", "Falha/cancelamento"]);
   for (const order of statement.orders || []) {
-    add(rows, [order.sequence, order.reference, order.order_type, order.opened_at, order.closed_at, order.operator_name, order.closed_by_name, order.status, order.payment_status, order.subtotal, order.service_fee, order.discount, order.delivery_fee, order.total, order.notes, order.cancel_reason]);
+    add(rows, [order.sequence, order.reference, mapLabel(order.order_type, ORDER_TYPE_LABELS), order.opened_at, order.closed_at, order.operator_name, order.closed_by_name, mapLabel(order.status, ORDER_STATUS_LABELS), mapLabel(order.payment_status, PAYMENT_STATUS_LABELS), order.subtotal, order.service_fee, order.discount, order.delivery_fee, order.total, order.notes, order.cancel_reason]);
   }
   add(rows);
   add(rows, ["Itens vendidos"]);
   add(rows, ["Pedido", "Referência", "Produto", "Quantidade", "Unitário", "Total", "Status", "Setor", "Variações", "Adicionais", "Observação", "Falha/cancelamento"]);
   for (const order of statement.orders || []) {
     for (const item of order.items || []) {
-      add(rows, [order.sequence, order.reference, item.product_name, item.quantity, item.unit_price, item.total_price, item.status, item.production_sector, JSON.stringify(item.variations || {}), (item.addons || []).map((addon) => `${addon.quantity}x ${addon.name}`).join(" | "), item.customer_note, item.void_reason]);
+      add(rows, [order.sequence, order.reference, item.product_name, item.quantity, item.unit_price, item.total_price, mapLabel(item.status, ORDER_ITEM_STATUS_LABELS), item.production_sector, JSON.stringify(item.variations || {}), (item.addons || []).map((addon) => `${addon.quantity}x ${addon.name}`).join(" | "), item.customer_note, item.void_reason]);
     }
   }
 
@@ -91,10 +91,10 @@ function table(headers, rows) {
 
 export function printCashSessionStatement(statement) {
   const session = statement.session || {};
-  const movementRows = (session.movements || []).map((item) => [item.created_at, TYPES[item.movement_type] || item.movement_type, item.amount, item.balance_after, item.status, item.reason, item.destination, item.operator_name, item.terminal_label]);
-  const saleRows = (session.sales || []).map((item) => [item.paid_at, `#${item.order_sequence}`, item.payment_method_name, item.card_subtype || item.method_type, item.amount, item.change_amount]);
-  const orderRows = (statement.orders || []).map((order) => [`#${order.sequence}`, order.reference, order.order_type, order.opened_at, order.closed_at, order.operator_name, order.closed_by_name, order.status, order.payment_status, order.subtotal, order.service_fee, order.discount, order.delivery_fee, order.total, order.notes || order.cancel_reason]);
-  const itemRows = (statement.orders || []).flatMap((order) => (order.items || []).map((item) => [`#${order.sequence}`, order.reference, item.product_name, item.quantity, item.unit_price, item.total_price, item.status, JSON.stringify(item.variations || {}), (item.addons || []).map((addon) => `${addon.quantity}x ${addon.name}`).join(" | "), item.customer_note || item.void_reason]));
+  const movementRows = (session.movements || []).map((item) => [item.created_at, mapLabel(item.movement_type, CASH_MOVEMENT_TYPE_LABELS), item.amount, item.balance_after, mapLabel(item.status, CASH_MOVEMENT_STATUS_LABELS), item.reason, item.destination, item.operator_name, item.terminal_label]);
+  const saleRows = (session.sales || []).map((item) => [item.paid_at, `#${item.order_sequence}`, item.payment_method_name, mapLabel(item.card_subtype || item.method_type, PAYMENT_DETAIL_LABELS), item.amount, item.change_amount]);
+  const orderRows = (statement.orders || []).map((order) => [`#${order.sequence}`, order.reference, mapLabel(order.order_type, ORDER_TYPE_LABELS), order.opened_at, order.closed_at, order.operator_name, order.closed_by_name, mapLabel(order.status, ORDER_STATUS_LABELS), mapLabel(order.payment_status, PAYMENT_STATUS_LABELS), order.subtotal, order.service_fee, order.discount, order.delivery_fee, order.total, order.notes || order.cancel_reason]);
+  const itemRows = (statement.orders || []).flatMap((order) => (order.items || []).map((item) => [`#${order.sequence}`, order.reference, item.product_name, item.quantity, item.unit_price, item.total_price, mapLabel(item.status, ORDER_ITEM_STATUS_LABELS), JSON.stringify(item.variations || {}), (item.addons || []).map((addon) => `${addon.quantity}x ${addon.name}`).join(" | "), item.customer_note || item.void_reason]));
   const totalRows = [...(statement.payment_totals || []).map((item) => [item.payment_method_name, item.count, item.change, item.amount]), ["Total geral", statement.payments_count || 0, "", statement.payments_total || "0.00"]];
   const popup = window.open("", "_blank");
   if (!popup) return false;

@@ -11,6 +11,7 @@ from decimal import Decimal
 
 import pytest
 
+from apps.core.tenant import tenant_context
 from apps.orders.command_item_launch import launch_item
 from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment
@@ -126,3 +127,32 @@ def test_pagar_depois_cria_o_pedido_e_o_pagamento_vem_noutro_envio(
     assert resposta.status_code in (200, 201), resposta.content
     assert Order.all_objects.get(pk=sem_pagamento["id"]).payment_status == "paid"
     assert OrderItem.all_objects.filter(order_id=sem_pagamento["id"]).count() == 2
+
+
+def test_admin_web_pode_materializar_na_unidade_escolhida(admin_client, account):
+    """O payload do web decide a unidade; antes o backend ignorava esse campo."""
+    from apps.restaurants.models import Restaurant
+
+    with tenant_context(account):
+        outra = Restaurant.objects.create(
+            account=account,
+            legal_name="Outra unidade",
+            trade_name="Outra unidade",
+        )
+    order_id = str(uuid.uuid4())
+
+    response = admin_client.post(
+        URL,
+        {
+            "id": order_id,
+            "restaurant": str(outra.pk),
+            "order_type": "counter",
+            "items": [],
+            "commands": [],
+            "payments": [],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.content
+    assert Order.all_objects.get(pk=order_id).restaurant_id == outra.pk

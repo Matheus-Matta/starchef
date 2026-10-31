@@ -113,7 +113,7 @@ def montar_historico(comanda, *, after=None, before=None):
 
 
 def pagina_do_historico(request, comanda):
-    """`?page`, `?page_size` (até 200) e `?after`/`?before` (AAAA-MM-DD)."""
+    """Paginação normal ou `?all=1`, com filtros `after`/`before`."""
     from django.utils.dateparse import parse_date
     from rest_framework.exceptions import ValidationError
 
@@ -136,6 +136,15 @@ def pagina_do_historico(request, comanda):
         raise ValidationError({"page": "Página e tamanho são números."}) from exc
 
     eventos = montar_historico(comanda, **datas)
+    resumo = {"id": str(comanda.pk), "number": comanda.number}
+    if request.query_params.get("all") == "1":
+        return {
+            "command": resumo,
+            "count": len(eventos),
+            "next": None,
+            "previous": None,
+            "results": eventos,
+        }
     inicio = (pagina - 1) * tamanho
 
     def link(numero):
@@ -144,6 +153,7 @@ def pagina_do_historico(request, comanda):
         return request.build_absolute_uri(f"{request.path}?{consulta.urlencode()}")
 
     return {
+        "command": resumo,
         "count": len(eventos),
         "next": link(pagina + 1) if inicio + tamanho < len(eventos) else None,
         "previous": link(pagina - 1) if pagina > 1 else None,

@@ -1,10 +1,10 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.assets.bulk import transfer_assets, update_asset_status
 from apps.core.viewsets import BaseTenantViewSet
 from apps.assets.models import Asset, AssetDisposal, AssetLocationHistory
 from apps.assets.serializers import (
@@ -146,12 +146,13 @@ class AssetViewSet(BaseTenantViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        queryset = self.filter_queryset(self.get_queryset()).filter(id__in=ids)
-        updated_count = queryset.update(status=new_status, updated_at=timezone.now())
+        assets = update_asset_status(
+            self.filter_queryset(self.get_queryset()), ids=ids, new_status=new_status
+        )
 
         return Response({
             "success": True,
-            "updated": updated_count,
+            "updated": len(assets),
             "status": new_status,
         })
 
@@ -180,41 +181,23 @@ class AssetViewSet(BaseTenantViewSet):
             id=to_location_id,
         )
 
-        assets = list(self.filter_queryset(self.get_queryset()).filter(id__in=ids))
+        assets = transfer_assets(
+            self.filter_queryset(self.get_queryset()),
+            ids=ids,
+            to_location=to_location,
+            user=request.user,
+            reason=reason,
+            notes=notes,
+        )
         if not assets:
             return Response(
                 {"error": "Nenhum ativo encontrado para os identificadores fornecidos."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        history_records = []
-        asset_ids_to_update = []
-        for asset in assets:
-            history_records.append(
-                AssetLocationHistory(
-                    account=request.account,
-                    restaurant=asset.restaurant,
-                    branch=asset.branch,
-                    asset=asset,
-                    from_location=asset.location,
-                    to_location=to_location,
-                    moved_by=request.user,
-                    reason=reason,
-                    notes=notes,
-                )
-            )
-            asset_ids_to_update.append(asset.id)
-
-        with transaction.atomic():
-            AssetLocationHistory.objects.bulk_create(history_records)
-            Asset.objects.filter(id__in=asset_ids_to_update).update(
-                location=to_location,
-                updated_at=timezone.now(),
-            )
-
         return Response({
             "success": True,
-            "transferred": len(asset_ids_to_update),
+            "transferred": len(assets),
             "to_location": {
                 "id": str(to_location.id),
                 "name": to_location.name,

@@ -229,51 +229,20 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         if to_table.status == Table.STATUS_CLEANING:
             raise ValidationError({"to_table_id": "A mesa de destino aguarda limpeza."})
 
-        commands = list(from_table.active_commands.all())
+        commands = list(from_table.active_commands.select_for_update().order_by("pk"))
         if not commands:
             raise ValidationError({"detail": "Não há comandas vinculadas a esta mesa para transferir."})
         assert_table_accepts_commands(to_table, adding=len(commands))
 
-        from apps.orders.models import Order
-        from apps.restaurants.models import CommandMovementLog
+        from apps.restaurants.table_transfer import transfer_all_commands
 
-        logs = []
-        for cmd in commands:
-            cmd.current_table = to_table
-            cmd.save(update_fields=["current_table", "updated_at"])
-            if cmd.current_order_id:
-                Order.objects.filter(
-                    pk=cmd.current_order_id,
-                    status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
-                ).update(
-                    table=to_table,
-                    updated_by=request.user,
-                    updated_at=timezone.now(),
-                )
-            logs.append(
-                CommandMovementLog(
-                    account=cmd.account,
-                    restaurant=cmd.restaurant,
-                    branch=cmd.branch,
-                    command=cmd,
-                    action=CommandMovementLog.ACTION_TRANSFERRED,
-                    table=to_table,
-                    from_table=from_table,
-                    waiter=request.user,
-                )
-            )
-
-        CommandMovementLog.objects.bulk_create(logs)
-
-        to_table.status = Table.STATUS_OCCUPIED
-        to_table.current_order_id = None
-        to_table.save(update_fields=["status", "current_order_id", "updated_at"])
-
-        from apps.orders.services import free_table_if_empty
-
-        free_table_if_empty(from_table)
-
-        return Response({"transferred": len(commands)})
+        count = transfer_all_commands(
+            from_table=from_table,
+            to_table=to_table,
+            user=request.user,
+            commands=commands,
+        )
+        return Response({"transferred": count})
 
 
 class CommandFilterSet(django_filters.FilterSet):
@@ -827,9 +796,9 @@ class CommandViewSet(ResumoDosItensMixin, ScannableCodesMixin, BaseTenantViewSet
     @action(detail=False, methods=["post"], url_path="bulk-reset")
     def bulk_reset(self, request):
         """Zera várias comandas sem apagar histórico — ver `command_reset.py`."""
-        from .command_reset import zerar_do_request
+        from .command_reset import enqueue_command_reset
 
-        return Response(zerar_do_request(request, self.get_queryset()), status=200)
+        return Response(enqueue_command_reset(request, self.get_queryset()), status=202)
 
 
 class DeliveryZoneViewSet(BaseTenantViewSet):

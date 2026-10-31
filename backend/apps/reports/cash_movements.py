@@ -22,6 +22,7 @@ from apps.payments.models import CashMovement, CashRegister
 from apps.payments.serializers import CashMovementSerializer
 from apps.payments.terminals import operator_label
 from apps.payments.views_cash_movements import AUTHORIZATION_LABELS, MOVEMENT_LABELS
+from apps.reports.filter_options import report_filter_options
 from apps.reports.views import TenantReportMixin
 
 
@@ -200,7 +201,6 @@ class CashMovementsReportView(TenantReportMixin, APIView):
         ordered = movements.order_by("-created_at")
         count = ordered.count()
         rows = CashMovementSerializer(ordered[(page - 1) * page_size : page * page_size], many=True).data
-
         data = {
             "summary": summary,
             "by_type": by_type,
@@ -209,9 +209,7 @@ class CashMovementsReportView(TenantReportMixin, APIView):
             "by_day": by_day,
             "sessions": sessions,
             "movements": rows,
-            "pagination": {
-                "movements": {"page": page, "page_size": page_size, "count": count, "pages": max(1, (count + page_size - 1) // page_size)}
-            },
+            "pagination": {"movements": {"page": page, "page_size": page_size, "count": count, "pages": max(1, (count + page_size - 1) // page_size)}},
             "filters": {
                 "date_from": request.query_params.get("date_from"),
                 "date_to": request.query_params.get("date_to"),
@@ -220,6 +218,7 @@ class CashMovementsReportView(TenantReportMixin, APIView):
                 "operator": operator,
                 "movement_type": movement_type,
             },
+            "options": report_filter_options(request, "cash", filters),
         }
         if request.query_params.get("export") == "csv":
             return self._csv(data, CashMovementSerializer(ordered[:5000], many=True).data)

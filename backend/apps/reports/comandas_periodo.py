@@ -1,8 +1,7 @@
 """O que as comandas fizeram no PERÍODO: pagas, ticket, uso, perdas, tempo.
 
-* **Pagas** e **ticket médio** vêm de `comandas_nas_vendas.py`, a mesma conta
-  do relatório de vendas: uma comanda paga duas vezes no dia (dois clientes)
-  conta duas, e o ticket divide só o valor dos pedidos que tiveram comanda.
+* **Pagas** e **ticket médio** vêm de `comandas_nas_vendas.py`. O período usa
+  o fechamento: uma comanda aberta ontem e paga hoje pertence a hoje.
 * **Usadas** é cartão distinto com algum lançamento no período.
 * **Perda** é o consumo encerrado SEM venda: a conta cancelada leva as
   anotações a `cancelado` (`conclude_items_of_order(billed=False)`).
@@ -34,7 +33,7 @@ def resumo(escopo, inicio, fim):
 
     pagos = Order.objects.filter(
         Q(payment_status=Order.PAYMENT_PAID) | Q(status=Order.STATUS_PAID),
-        **escopo, **_entre("opened_at", inicio, fim),
+        **escopo, **_entre("closed_at", inicio, fim),
     )
     pagas = pagas_nas_vendas(pagos)
     lancados = _valendo(CommandItem.objects.filter(**escopo, **_entre("launched_at", inicio, fim)))

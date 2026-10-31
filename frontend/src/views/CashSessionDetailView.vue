@@ -68,11 +68,21 @@ import SalesDiscrepancyDialog from "../components/cash/SalesDiscrepancyDialog.vu
 import SalesDiscrepancyList from "../components/cash/SalesDiscrepancyList.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
 import Card from "../components/display/Card.vue";
+import {
+  CASH_AUTHORIZATION_LABELS, CASH_MOVEMENT_STATUS_LABELS,
+  CASH_MOVEMENT_TYPE_LABELS, CASH_STATUS_TONES, ORDER_ITEM_STATUS_LABELS,
+  PAYMENT_DETAIL_LABELS,
+} from "../config/cashLabels";
+import {
+  CASH_STATUS_LABELS, ORDER_STATUS_LABELS, ORDER_TYPE_LABELS,
+  PAYMENT_STATUS_LABELS,
+} from "../config/enums";
 import { api } from "../services/api";
 import { listDiscrepancies } from "../services/cashDiscrepancies";
 import { downloadCashSessionCsv, printCashSessionStatement } from "../services/cashSessionExport";
 import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
+import { mapLabel } from "../utils/format";
 
 const route = useRoute(), router = useRouter();
 const statement = ref({}), loading = ref(true), error = ref("");
@@ -83,24 +93,18 @@ const canDecide = computed(() => auth.user?.is_superuser || ["admin", "owner", "
 const session = computed(() => statement.value.session || null);
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const dateTime = (value) => value ? new Date(value).toLocaleString("pt-BR") : "—";
-const TYPES = { opening: "Abertura", sale: "Venda em dinheiro", withdrawal: "Sangria", supply: "Suprimento", closing: "Fechamento", adjustment: "Ajuste", refund: "Estorno" };
-const AUTH = { pending: "Pendente", cash_password: "Senha do caixa", manager: "Gerente", automatic: "Automática" };
-const ORDER_TYPE = { table: "Mesa", command: "Comanda", counter: "Balcão", delivery: "Entrega", takeaway: "Retirada", internal: "Interno" };
-const ORDER_STATUS = { open: "Aberto", awaiting_payment: "Aguardando pagamento", paid: "Pago", cancelled: "Cancelado", refunded: "Estornado" };
-const PAYMENT_STATUS = { pending: "Pendente", partial: "Parcial", paid: "Pago", refunded: "Estornado" };
-const ITEM_STATUS = { pending: "Pendente", queued: "Na fila", sent: "Enviado", preparing: "Em preparo", ready: "Pronto", delivered: "Entregue", cancelled: "Cancelado", comped: "Cortesia" };
 const holderLabel = computed(() => `${session.value?.opened_by_name || 'Operador não identificado'} · ${session.value?.terminal_label || 'terminal não identificado'}`);
-const statusLabel = (value) => ({ open: "Aberto", pending_manager_approval: "Aguardando aprovação", closed: "Fechado", closed_with_difference: "Fechado com diferença", cancelled: "Cancelado", blocked: "Bloqueado" }[value] || value);
-const statusTone = (value) => ({ open: "success", closed: "info", closed_with_difference: "warning", pending_manager_approval: "warning", cancelled: "danger" }[value] || "secondary");
+const statusLabel = (value) => mapLabel(value, CASH_STATUS_LABELS);
+const statusTone = (value) => CASH_STATUS_TONES[value] || "secondary";
 const movementColumns = [{ key: "when", label: "Data" }, { key: "type", label: "Movimento" }, { key: "amount", label: "Valor", type: "money", align: "right" }, { key: "balance_after", label: "Saldo após", type: "money", align: "right" }, { key: "status_label", label: "Status" }, { key: "reason", label: "Motivo" }, { key: "destination", label: "Destino/origem" }, { key: "operator_name", label: "Operador" }, { key: "terminal_label", label: "Terminal" }, { key: "authorization_label", label: "Autorização" }, { key: "order_label", label: "Pedido" }];
 const saleColumns = [{ key: "when", label: "Data" }, { key: "order_label", label: "Pedido" }, { key: "payment_method_name", label: "Forma" }, { key: "subtype", label: "Tipo" }, { key: "amount", label: "Valor", type: "money", align: "right" }, { key: "change_amount", label: "Troco", type: "money", align: "right" }];
 const orderColumns = [{ key: "order_label", label: "Pedido" }, { key: "reference", label: "Referência" }, { key: "type_label", label: "Tipo" }, { key: "opened", label: "Abertura" }, { key: "closed", label: "Fechamento" }, { key: "operator_name", label: "Operador" }, { key: "closed_by_name", label: "Fechado por" }, { key: "status_label", label: "Status" }, { key: "payment_status_label", label: "Pagamento" }, { key: "subtotal", label: "Subtotal", type: "money", align: "right" }, { key: "service_fee", label: "Serviço", type: "money", align: "right" }, { key: "discount", label: "Desconto", type: "money", align: "right" }, { key: "delivery_fee", label: "Entrega", type: "money", align: "right" }, { key: "total", label: "Total", type: "money", align: "right" }, { key: "details", label: "Observações/falhas" }];
 const itemColumns = [{ key: "order_label", label: "Pedido" }, { key: "reference", label: "Referência" }, { key: "product_name", label: "Produto" }, { key: "quantity", label: "Qtd.", type: "decimal", align: "right" }, { key: "unit_price", label: "Unitário", type: "money", align: "right" }, { key: "total_price", label: "Total", type: "money", align: "right" }, { key: "status_label", label: "Status" }, { key: "production_sector", label: "Setor" }, { key: "details", label: "Observações/falhas" }];
-const movementRows = computed(() => (session.value?.movements || []).map((row) => ({ ...row, when: dateTime(row.created_at), type: TYPES[row.movement_type] || row.movement_type, status_label: statusLabel(row.status), authorization_label: AUTH[row.authorization] || row.authorization, order_label: row.order_sequence ? `#${row.order_sequence}` : "—" })));
-const saleRows = computed(() => (session.value?.sales || []).map((row) => ({ ...row, when: dateTime(row.paid_at), order_label: `#${row.order_sequence}`, subtype: row.card_subtype || row.method_type })));
+const movementRows = computed(() => (session.value?.movements || []).map((row) => ({ ...row, when: dateTime(row.created_at), type: mapLabel(row.movement_type, CASH_MOVEMENT_TYPE_LABELS), status_label: mapLabel(row.status, CASH_MOVEMENT_STATUS_LABELS), authorization_label: mapLabel(row.authorization, CASH_AUTHORIZATION_LABELS), order_label: row.order_sequence ? `#${row.order_sequence}` : "—" })));
+const saleRows = computed(() => (session.value?.sales || []).map((row) => ({ ...row, when: dateTime(row.paid_at), order_label: `#${row.order_sequence}`, subtype: mapLabel(row.card_subtype || row.method_type, PAYMENT_DETAIL_LABELS) })));
 const variationText = (value) => value && Object.keys(value).length ? `Variações: ${JSON.stringify(value)}` : "";
-const orderRows = computed(() => (statement.value.orders || []).map((order) => ({ ...order, order_label: `#${order.sequence}`, type_label: ORDER_TYPE[order.order_type] || order.order_type, opened: dateTime(order.opened_at), closed: dateTime(order.closed_at), status_label: ORDER_STATUS[order.status] || order.status, payment_status_label: PAYMENT_STATUS[order.payment_status] || order.payment_status, details: [order.notes, order.cancel_reason].filter(Boolean).join(" · ") || "—" })));
-const itemRows = computed(() => (statement.value.orders || []).flatMap((order) => (order.items || []).map((item) => ({ ...item, order_label: `#${order.sequence}`, reference: order.reference, status_label: ITEM_STATUS[item.status] || item.status, details: [variationText(item.variations), ...(item.addons || []).map((addon) => `+ ${addon.quantity}x ${addon.name}`), item.customer_note, item.void_reason].filter(Boolean).join(" · ") || "—" }))));
+const orderRows = computed(() => (statement.value.orders || []).map((order) => ({ ...order, order_label: `#${order.sequence}`, type_label: mapLabel(order.order_type, ORDER_TYPE_LABELS), opened: dateTime(order.opened_at), closed: dateTime(order.closed_at), status_label: mapLabel(order.status, ORDER_STATUS_LABELS), payment_status_label: mapLabel(order.payment_status, PAYMENT_STATUS_LABELS), details: [order.notes, order.cancel_reason].filter(Boolean).join(" · ") || "—" })));
+const itemRows = computed(() => (statement.value.orders || []).flatMap((order) => (order.items || []).map((item) => ({ ...item, order_label: `#${order.sequence}`, reference: order.reference, status_label: mapLabel(item.status, ORDER_ITEM_STATUS_LABELS), details: [variationText(item.variations), ...(item.addons || []).map((addon) => `+ ${addon.quantity}x ${addon.name}`), item.customer_note, item.void_reason].filter(Boolean).join(" · ") || "—" }))));
 const occurrences = computed(() => [...movementRows.value.filter((row) => row.status !== "approved").map((row) => ({ key: `m-${row.id}`, kind: row.status_label, tone: row.status === "pending" ? "warning" : "danger", text: `${row.type}: ${money(row.amount)} — ${row.reason || 'sem motivo'}` })), ...orderRows.value.filter((row) => row.status === "cancelled").map((row) => ({ key: `o-${row.id}`, kind: "Pedido cancelado", tone: "danger", text: `${row.order_label} · ${row.reference} — ${row.cancel_reason || 'sem motivo'}` })), ...itemRows.value.filter((row) => ["cancelled", "comped"].includes(row.status)).map((row) => ({ key: `i-${row.id}`, kind: row.status === "comped" ? "Cortesia" : "Cancelado", tone: "danger", text: `Pedido ${row.order_label}: ${row.product_name} — ${row.details}` }))]);
 
 function openMovement(row) { selectedMovement.value = row; movementDialog.value = true; }

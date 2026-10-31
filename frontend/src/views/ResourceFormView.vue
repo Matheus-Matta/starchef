@@ -64,7 +64,7 @@
       </div>
 
       <section class="detail-section">
-        <h3 class="detail-section__title">Informacoes</h3>
+        <h3 class="detail-section__title">Informações</h3>
         <div class="detail-fields">
           <ResourceDetailField v-for="field in detailFields" :key="field.key" :field="field" :record="record" />
         </div>
@@ -990,7 +990,7 @@ import { useToast } from "primevue/usetoast";
 import { useConfirm } from "primevue/useconfirm";
 import { useInboundItemUnlink } from "../composables/useInboundItemUnlink";
 import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
-import { formatDateTime, formatMoney, formatPercent, formatQuantity, roundUpToCent } from "../utils/format";
+import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel, roundUpToCent } from "../utils/format";
 import { getByPath, resolveColumnValue } from "../utils/object";
 
 const props = defineProps({
@@ -1725,7 +1725,7 @@ function formatField(row, key, type, map) {
   if (type === "percent") return formatPercent(cellValue);
   if (type === "boolean") return cellValue ? "Ativo" : "Inativo";
   if (cellValue == null || cellValue === "") return "-";
-  return map ? map[cellValue] || cellValue : cellValue;
+  return mapLabel(cellValue, map);
 }
 
 /* ── Helpers de exibicao (delegam aos utils) ─────────────────────────── */

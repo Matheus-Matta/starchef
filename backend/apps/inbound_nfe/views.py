@@ -460,7 +460,6 @@ class InboundNFeViewSet(BaseTenantViewSet):
         Recebe um ou múltiplos arquivos XML de NF-e (ou pacote .zip), processa
         as notas e seus produtos, atualizando ou criando registros no banco.
         """
-        from apps.inbound_nfe.services.importer import import_uploaded_files
         from apps.restaurants.models import Restaurant
         from django.core.files.uploadedfile import SimpleUploadedFile
 
@@ -494,21 +493,20 @@ class InboundNFeViewSet(BaseTenantViewSet):
         if not restaurant:
             restaurant = Restaurant.all_objects.filter(account=request.account).first()
 
+        from django.core.exceptions import ValidationError
+        from apps.bulk_jobs.services import queued_response
+        from apps.inbound_nfe.bulk_jobs import enqueue_xml_import
+
         try:
-            summary = import_uploaded_files(
-                files=files,
+            job = enqueue_xml_import(
                 account=request.account,
+                user=request.user,
+                files=files,
                 restaurant=restaurant,
             )
-            return Response({
-                "message": f"{summary['total_processed']} nota(s) processada(s) com sucesso.",
-                "summary": summary,
-            })
-        except Exception as e:
-            return Response(
-                {"error": f"Erro ao processar arquivos XML: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        except ValidationError as exc:
+            return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(queued_response(job), status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=["post"], url_path="register-science")
     def register_science_action(self, request, pk=None, *args, **kwargs):
@@ -659,41 +657,16 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
     @action(detail=False, methods=["post"], url_path="reconcile-status")
     def reconcile_status(self, request, *args, **kwargs):
-        """
-        Reconcilia a situação de um lote de notas fiscais na SEFAZ.
-        Pode receber 'ids' ou 'nfe_ids': list[str]. Se omitido, consulta até 20 notas pendentes.
-        """
-        from apps.inbound_nfe.services.status_query import query_nfe_status_sefaz
+        """Entrega ao worker as consultas individuais à SEFAZ."""
+        from django.core.exceptions import ValidationError
+        from apps.bulk_jobs.services import queued_response
+        from apps.inbound_nfe.bulk_jobs import enqueue_reconcile
 
-        ids = request.data.get("ids") or request.data.get("nfe_ids", [])
-        qs = self.get_queryset()
-        if ids:
-            qs = qs.filter(id__in=ids)
-        else:
-            qs = qs.exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED).filter(status__in=[
-                InboundNFe.STATUS_PENDING_MAPPING,
-                InboundNFe.STATUS_PENDING_RECEIPT,
-                InboundNFe.STATUS_SUMMARY,
-            ])[:20]
-
-        results = []
-        for inv in qs:
-            if inv.access_key and len(inv.access_key) == 44:
-                res = query_nfe_status_sefaz(inv, actor=request.user)
-                results.append({
-                    "id": str(inv.id),
-                    "access_key": inv.access_key,
-                    "number": inv.number,
-                    "cstat": res.get("cstat"),
-                    "is_cancelled": res.get("is_cancelled", False),
-                    "fiscal_status": res.get("fiscal_status"),
-                    "reason": res.get("reason"),
-                })
-
-        return Response({
-            "total_checked": len(results),
-            "results": results,
-        })
+        try:
+            job = enqueue_reconcile(request, self.get_queryset())
+        except ValidationError as exc:
+            return Response({"error": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(queued_response(job), status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=["post"], url_path="cancel-manual")
     def cancel_manual(self, request, pk=None, *args, **kwargs):
@@ -794,19 +767,27 @@ class InboundNFeViewSet(BaseTenantViewSet):
         ids = request.data.get("ids", [])
         if not ids or not isinstance(ids, list):
             return Response({"error": "Informe a lista de IDs das notas para ignorar."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(ids) > 500:
+            return Response({"error": "Selecione no máximo 500 notas."}, status=status.HTTP_400_BAD_REQUEST)
 
         reason = (request.data.get("reason") or "Ignoradas em lote pelo operador").strip()
         now = timezone.now()
 
         qs = self.get_queryset().filter(id__in=ids).exclude(status__in=[InboundNFe.STATUS_RECEIVED, InboundNFe.STATUS_CANCELLED])
-        count = 0
-        for inv in qs:
+        invoices = list(qs)
+        for inv in invoices:
             inv.status = InboundNFe.STATUS_IGNORED
             inv.ignored_at = now
             inv.ignored_reason = reason
             inv.ignored_by = request.user
-            inv.save(update_fields=["status", "ignored_at", "ignored_reason", "ignored_by"])
-            count += 1
+        from apps.core.lote import atualizar_em_lote
+
+        atualizar_em_lote(
+            InboundNFe,
+            invoices,
+            ["status", "ignored_at", "ignored_reason", "ignored_by", "updated_at"],
+        )
+        count = len(invoices)
 
         return Response({
             "success": True,

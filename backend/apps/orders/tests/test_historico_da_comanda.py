@@ -7,10 +7,12 @@ auditoria (zeramento). A rota de histórico junta tudo, do mais novo para o
 mais antigo, com autor, código do operador e motivo.
 """
 from decimal import Decimal
+from unittest import mock
 
 import pytest
 from django.utils import timezone
 
+from apps.bulk_jobs.services import run_bulk_job
 from apps.core.tenant import tenant_context
 from apps.orders.command_billing import attach_commands_to_order
 from apps.orders.command_item_void import void_command_item
@@ -74,7 +76,13 @@ def test_conta_o_ciclo_inteiro_do_mais_novo_ao_mais_antigo(api_client, ciclo):
 def test_zeramento_aparece_com_motivo(api_client, ciclo, restaurant, branch, manager_user, produto):
     comanda, _conta = ciclo
     launch_item(command=comanda, product=produto, user=manager_user, quantity=1)
-    api_client.post("/api/v1/commands/bulk-reset/", {"ids": [str(comanda.pk)], "reason": "Fim do dia"}, format="json")
+    with mock.patch("apps.bulk_jobs.tasks.run_bulk_job_task.delay"):
+        response = api_client.post(
+            "/api/v1/commands/bulk-reset/",
+            {"ids": [str(comanda.pk)], "reason": "Fim do dia"},
+            format="json",
+        )
+    run_bulk_job(response.data["id"])
 
     eventos = _historico(api_client, comanda)["results"]
 
@@ -93,6 +101,15 @@ def test_paginado(api_client, ciclo):
     assert primeira["count"] >= 4
     assert primeira["next"]
     assert primeira["results"] != segunda["results"]
+
+
+def test_retorna_todo_historico_e_resumo_da_comanda_em_uma_requisicao(api_client, ciclo):
+    comanda, _conta = ciclo
+
+    historico = _historico(api_client, comanda, all="1")
+
+    assert historico["count"] == len(historico["results"])
+    assert historico["command"] == {"id": str(comanda.pk), "number": comanda.number}
 
 
 def test_comanda_de_outra_conta_nao_aparece(api_client):

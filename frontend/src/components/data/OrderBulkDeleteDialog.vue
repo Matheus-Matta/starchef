@@ -27,7 +27,7 @@ import { useToast } from "primevue/usetoast";
 import AppEntityDialog from "../form/AppEntityDialog.vue";
 import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
-import { resumoDoLote } from "./orderBulkSummary";
+import { bulkJobToast } from "./bulkJobToast";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -43,7 +43,7 @@ async function excluir() {
   loading.value = true;
   try {
     const { data } = await api.post("/orders/bulk-delete/", { ids: ids.value }, { skipRestaurantScope: true });
-    toast.add(resumoDoLote(data.deleted, "excluído(s)", data.skipped));
+    toast.add(bulkJobToast(data, "pedidos"));
     emit("update:visible", false);
     emit("completed");
   } catch (error) {

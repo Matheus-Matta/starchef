@@ -33,7 +33,40 @@ function flatten(value) {
   if (value == null) return "";
   if (Array.isArray(value)) return value.map(flatten).filter(Boolean).join(" ");
   if (typeof value === "object") return Object.values(value).map(flatten).filter(Boolean).join(" ");
-  return String(value);
+  return translateApiMessage(String(value));
+}
+
+const API_MESSAGE_TRANSLATIONS = {
+  "Not found.": "Registro não encontrado.",
+  "This field is required.": "Este campo é obrigatório.",
+  "This field may not be blank.": "Este campo não pode ficar vazio.",
+  "This field may not be null.": "Este campo não pode ser nulo.",
+  "Invalid input.": "Valor inválido.",
+  "A valid integer is required.": "Informe um número inteiro válido.",
+  "A valid number is required.": "Informe um número válido.",
+  "Enter a valid email address.": "Informe um endereço de e-mail válido.",
+  "Authentication credentials were not provided.": "Sua sessão não foi identificada. Entre novamente.",
+  "You do not have permission to perform this action.": "Você não tem permissão para realizar esta ação.",
+};
+
+/** Traduz mensagens padrão do Django REST Framework sem esconder mensagens de negócio. */
+export function translateApiMessage(message) {
+  const translated = API_MESSAGE_TRANSLATIONS[message];
+  if (translated) return translated;
+
+  const patterns = [
+    [/^Ensure this field has no more than (\d+) characters\.$/, "Este campo pode ter no máximo $1 caracteres."],
+    [/^Ensure this field has at least (\d+) characters\.$/, "Este campo deve ter pelo menos $1 caracteres."],
+    [/^Ensure this value is greater than or equal to (.+)\.$/, "O valor deve ser maior ou igual a $1."],
+    [/^Ensure this value is less than or equal to (.+)\.$/, "O valor deve ser menor ou igual a $1."],
+    [/^Invalid pk .+ - object does not exist\.$/, "O registro selecionado não existe."],
+    [/^No .+ matches the given query\.$/, "Registro não encontrado."],
+    [/^Method .+ not allowed\.$/, "Esta operação não é permitida nesta tela."],
+  ];
+  for (const [pattern, replacement] of patterns) {
+    if (pattern.test(message)) return message.replace(pattern, replacement);
+  }
+  return message;
 }
 
 /**

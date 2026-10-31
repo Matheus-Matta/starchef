@@ -6,12 +6,14 @@ repete algumas vezes para a colisão acontecer de verdade.
 """
 import threading
 from functools import partial
+from unittest import mock
 import uuid
 from decimal import Decimal
 
 import pytest
 from django.db import connection
 
+from apps.bulk_jobs.services import run_bulk_job
 from apps.core.tenant import tenant_context
 from apps.orders.command_items import launch_item
 from apps.orders.models import CommandItem, Order, OrderItem
@@ -69,14 +71,17 @@ def test_dois_terminais_zerando_a_mesma_comanda(restaurant, branch, manager_user
         corpo = {"ids": [str(cartao.pk)], "reason": "Fim do dia"}
         a, b = _cliente(manager_user), _cliente(manager_user)
 
-        r1, r2 = _ao_mesmo_tempo(
-            partial(a.post, "/api/v1/commands/bulk-reset/", corpo, format="json"),
-            partial(b.post, "/api/v1/commands/bulk-reset/", corpo, format="json"),
+        with mock.patch("apps.bulk_jobs.tasks.run_bulk_job_task.delay"):
+            r1 = a.post("/api/v1/commands/bulk-reset/", corpo, format="json")
+            r2 = b.post("/api/v1/commands/bulk-reset/", corpo, format="json")
+        j1, j2 = _ao_mesmo_tempo(
+            partial(run_bulk_job, r1.data["id"]),
+            partial(run_bulk_job, r2.data["id"]),
         )
 
-        assert {r1.status_code, r2.status_code} == {200}, (r1.content, r2.content)
-        retirados = sum(z["items_removed"] for r in (r1, r2) for z in r.data["reset"])
-        assert retirados == 2, (r1.data, r2.data)
+        assert {r1.status_code, r2.status_code} == {202}, (r1.content, r2.content)
+        retirados = sum(z["items_removed"] for job in (j1, j2) for z in job.result["reset"])
+        assert retirados == 2, (j1.result, j2.result)
         with tenant_context(restaurant.account):
             from apps.core.models import AuditLog
 
@@ -97,8 +102,14 @@ def test_zerar_e_anexar_a_conta_ao_mesmo_tempo(restaurant, branch, manager_user,
             conta = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, user=manager_user)
         a, b = _cliente(manager_user), _cliente(manager_user)
 
+        with mock.patch("apps.bulk_jobs.tasks.run_bulk_job_task.delay"):
+            response = a.post(
+                "/api/v1/commands/bulk-reset/",
+                {"ids": [str(cartao.pk)], "reason": "x"},
+                format="json",
+            )
         _ao_mesmo_tempo(
-            partial(a.post, "/api/v1/commands/bulk-reset/", {"ids": [str(cartao.pk)], "reason": "x"}, format="json"),
+            partial(run_bulk_job, response.data["id"]),
             partial(b.post, f"/api/v1/orders/{conta.pk}/attach-commands/", {"commands": [str(cartao.pk)]}, format="json"),
         )
 

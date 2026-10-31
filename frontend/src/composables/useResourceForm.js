@@ -1,6 +1,7 @@
 import { computed, reactive, ref, unref } from "vue";
 
 import { api } from "../services/api";
+import { loadRemoteOptions as fetchRemoteOptions } from "../services/remoteOptions";
 import { applyTenantDefaults } from "../utils/tenantDefaults";
 import { normalizeApiError } from "../utils/apiError";
 import { validateForm } from "../utils/formValidation";
@@ -297,30 +298,10 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
     saveError.value = parts.filter(Boolean).join(" ");
   }
 
-  // Tipos de campo cujas opcoes vem de um endpoint remoto (dropdown simples ou multiplo).
-  const REMOTE_OPTION_TYPES = ["remote-dropdown", "remote-multiselect"];
-
   /** Carrega as opcoes dos dropdowns remotos — necessario tanto no form quanto no modo
    * "ver" (a view reusa o mesmo form desabilitado e precisa dos rotulos, nao so dos ids). */
   async function loadRemoteOptions() {
-    for (const field of formFields) {
-      if (!REMOTE_OPTION_TYPES.includes(field.type) || !field.endpoint) continue;
-      try {
-        // globalScope: ignora o filtro automático por restaurante (ex.: o próprio
-        // seletor de restaurante deve listar todos, não só o do escopo atual).
-        const res = await api.get(field.endpoint, { params: { page_size: 200 }, skipRestaurantScope: !!field.globalScope });
-        const rows = res.data.results || res.data || [];
-        remoteOptions[field.name] = rows.map((row) => ({
-          label: String(row[field.optionLabel ?? "name"] ?? row.id),
-          value: row[field.optionValue ?? "id"],
-          // Rótulo do grupo (usado por campos `grouped`, ex.: catálogo de permissões).
-          group: row[field.optionGroup ?? "group"] ?? "",
-          description: String(row.description ?? ""),
-        }));
-      } catch {
-        remoteOptions[field.name] = [];
-      }
-    }
+    Object.assign(remoteOptions, await fetchRemoteOptions(formFields, api.get));
   }
 
   return {

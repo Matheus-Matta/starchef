@@ -45,7 +45,7 @@ import AppFormField from "../form/AppFormField.vue";
 import AppFormGrid from "../form/AppFormGrid.vue";
 import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
-import { resumoDoLote } from "./orderBulkSummary";
+import { bulkJobToast } from "./bulkJobToast";
 
 // `idField` é "order" na lista de notas fiscais: a nota cancela pelo pedido
 // dela, e o cancelamento do pedido já cancela a nota.
@@ -87,7 +87,7 @@ async function cancelar() {
       { ids: ids.value, reason: reason.value.trim(), cash_password: password.value },
       { skipRestaurantScope: true },
     );
-    toast.add(resumoDoLote(data.cancelled, "cancelado(s)", data.skipped));
+    toast.add(bulkJobToast(data, "pedidos"));
     emit("update:visible", false);
     emit("completed");
   } catch (error) {

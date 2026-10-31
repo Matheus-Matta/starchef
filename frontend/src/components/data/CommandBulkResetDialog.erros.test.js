@@ -65,7 +65,7 @@ describe("zerar comandas com a rede falhando", () => {
     await botaoZerar(tela).trigger("click");
 
     expect(envios).toHaveLength(1);
-    envios[0].resolve({ data: { reset: [], skipped: [] } });
+    envios[0].resolve({ data: { id: "lote-1", status: "queued", total: 2 } });
     await flushPromises();
     expect(tela.emitted("completed")).toBeTruthy();
   });

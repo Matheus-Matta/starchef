@@ -55,6 +55,9 @@ import CashMovementDetailsDialog from "../cash/CashMovementDetailsDialog.vue";
 import Card from "../display/Card.vue";
 import StatCard from "../data/StatCard.vue";
 import ReportDataTable from "../data/ReportDataTable.vue";
+import { CASH_AUTHORIZATION_LABELS, CASH_MOVEMENT_TYPE_LABELS } from "../../config/cashLabels";
+import { CASH_STATUS_LABELS } from "../../config/enums";
+import { mapLabel } from "../../utils/format";
 
 const props = defineProps({
   report: { type: Object, required: true },
@@ -80,31 +83,6 @@ const summary = computed(() => props.report.summary || {});
 const money = (value) =>
   Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const dateTime = (value) => (value ? new Date(value).toLocaleString("pt-BR") : "—");
-
-const MOVEMENT_LABELS = {
-  opening: "Abertura",
-  sale: "Venda em dinheiro",
-  withdrawal: "Sangria",
-  supply: "Suprimento",
-  closing: "Fechamento",
-  adjustment: "Ajuste",
-  refund: "Estorno",
-};
-const AUTHORIZATION_LABELS = {
-  pending: "Pendente",
-  cash_password: "Senha do caixa",
-  manager: "Gerente",
-  automatic: "Automática",
-};
-const SESSION_STATUS = {
-  open: "Aberto",
-  pending_manager_approval: "Aguardando aprovação",
-  pending_closing: "Aguardando fechamento",
-  closed: "Fechado",
-  closed_with_difference: "Fechado com diferença",
-  cancelled: "Cancelado",
-  blocked: "Bloqueado",
-};
 
 const summaryColumns = [
   { key: "label", label: "Rubrica", sortable: false },
@@ -150,7 +128,7 @@ const sessionRows = computed(() =>
     ...row,
     opened: dateTime(row.opened_at),
     closed: dateTime(row.closed_at),
-    status: SESSION_STATUS[row.status] || row.status,
+    status: mapLabel(row.status, CASH_STATUS_LABELS),
   })),
 );
 const movementColumns = [
@@ -170,8 +148,8 @@ const movementRows = computed(() =>
   (props.report.movements || []).map((row) => ({
     ...row,
     when: dateTime(row.created_at),
-    type: MOVEMENT_LABELS[row.movement_type] || row.movement_type,
-    authorization: AUTHORIZATION_LABELS[row.authorization] || row.authorization,
+    type: mapLabel(row.movement_type, CASH_MOVEMENT_TYPE_LABELS),
+    authorization: mapLabel(row.authorization, CASH_AUTHORIZATION_LABELS),
     order: row.order_sequence ? `#${row.order_sequence}${row.payment_method_name ? ` · ${row.payment_method_name}` : ""}` : "—",
   })),
 );

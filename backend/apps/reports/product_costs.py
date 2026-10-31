@@ -23,6 +23,7 @@ from rest_framework.views import APIView
 
 from apps.orders.models import Order, OrderItem
 from apps.reports.cash_movements import _between, _period
+from apps.reports.filter_options import report_filter_options
 from apps.reports.views import TenantReportMixin
 from apps.stock.models import StockMovement
 
@@ -71,7 +72,11 @@ class ProductCostsReportView(TenantReportMixin, APIView):
         totais = {campo: sum((linha[campo] for linha in resultado), ZERO) for campo in ("revenue", "cost", "margin")}
         if request.query_params.get("export") == "csv":
             return self._csv(resultado)
-        return Response({"by_product": resultado, "totals": totais})
+        return Response({
+            "by_product": resultado,
+            "totals": totais,
+            "options": report_filter_options(request, "cost", self.tenant_filter()),
+        })
 
     @staticmethod
     def _linha(dados):

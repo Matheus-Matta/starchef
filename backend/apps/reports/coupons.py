@@ -21,6 +21,7 @@ from rest_framework.views import APIView
 from apps.orders.models import Order
 from apps.promotions.models import CouponRedemption
 from apps.reports.cash_movements import _between, _period
+from apps.reports.filter_options import report_filter_options
 from apps.reports.views import TenantReportMixin
 
 ZERO = Decimal("0.00")
@@ -59,7 +60,11 @@ class CouponsReportView(TenantReportMixin, APIView):
         }
         if request.query_params.get("export") == "csv":
             return self._csv(linhas, totais, request)
-        return Response({"by_coupon": linhas, "totals": totais})
+        return Response({
+            "by_coupon": linhas,
+            "totals": totais,
+            "options": report_filter_options(request, "coupon", self.tenant_filter()),
+        })
 
     @staticmethod
     def _por_cupom(resgates):

@@ -7,6 +7,7 @@ import {
 } from "./terminalIdentity";
 import { prepareMultipartHeaders } from "./multipart";
 import { getBrowserValue } from "./browserPersistence";
+import { installGetPolicy } from "./apiGetPolicy";
 
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
@@ -30,10 +31,12 @@ export const api = axios.create({
   withCredentials: true,
   timeout: 15_000,
 });
+installGetPolicy(api);
 
 let refreshPromise = null;
 
 api.interceptors.request.use((config) => {
+  if (String(config.method || "get").toLowerCase() !== "get") api.get.clearCache();
   prepareMultipartHeaders(config);
   // O access token vai automaticamente pelo cookie httpOnly. Só mexemos no
   // Authorization quando o chamador o define explicitamente (sessão temporária).
@@ -77,6 +80,7 @@ api.interceptors.response.use(
     // 403 significa autenticado porem sem permissao (ex.: modulo desabilitado):
     // isso NAO deve deslogar o usuario — apenas propaga o erro para a tela tratar.
     if (status === 401) {
+      api.get.clearCache();
       clearSession();
       window.dispatchEvent(new CustomEvent("auth:unauthorized"));
     }

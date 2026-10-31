@@ -20,8 +20,8 @@ from apps.core.tenant import tenant_context
 MAXIMO = 500
 
 
-def zerar_do_request(request, visiveis):
-    """O lote do endpoint: só o que o usuário enxerga, autorizado por restaurante.
+def enqueue_command_reset(request, visiveis):
+    """Valida o lote e entrega ao worker sem guardar nenhuma senha.
 
     A senha do caixa (ou o login do supervisor) é conferida uma vez por
     restaurante, como no cancelamento em massa de pedidos. Id fora do escopo
@@ -34,6 +34,12 @@ def zerar_do_request(request, visiveis):
     if not isinstance(ids, list) or not ids or len(ids) > MAXIMO:
         raise ValidationError({"ids": f"Selecione de 1 a {MAXIMO} comandas."})
     ids = list(dict.fromkeys(str(i) for i in ids))
+    reason = request.data.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise ValidationError("O motivo é um texto.")
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValidationError("Informe o motivo para zerar as comandas.")
     # Só UUID vai ao banco: `None`, número ou texto qualquer no `pk__in`
     # estourava ValidationError do Django dentro da consulta — 500 por um id
     # torto no meio de uma lista boa. Os tortos voltam como "não encontrada".
@@ -53,30 +59,40 @@ def zerar_do_request(request, visiveis):
     codigos = effective_permission_codes(request.user)
     pode_cancelar = is_tenant_admin(request.user) or "*" in codigos or "orders.cancel" in codigos
 
-    resultado = {"reset": [], "skipped": []}
+    grupos, pulos = [], []
     for restaurante_id, grupo in por_restaurante.items():
         restaurante = Restaurant.objects.get(pk=restaurante_id)
         autorizado, quem, _como = _can_authorize_cancellation(request, restaurante, restaurante.account_id)
         if not (pode_cancelar or autorizado):
             numeros = {str(pk): n for pk, n in Command.objects.filter(pk__in=grupo).values_list("pk", "number")}
-            resultado["skipped"] += [
+            pulos += [
                 {"id": i, "number": numeros.get(i), "reason": (
                     "Zerar comandas exige gerente: informe a senha de operação ou o login de um supervisor."
                 )}
                 for i in grupo
             ]
             continue
-        parcial = zerar_comandas(
-            grupo, account=restaurante.account, user=request.user, reason=request.data.get("reason"),
-            authorized=autorizado, authorized_by=quem,
-        )
-        resultado["reset"] += parcial["reset"]
-        resultado["skipped"] += parcial["skipped"]
+        grupos.append({
+            "restaurant_id": str(restaurante_id),
+            "ids": grupo,
+            "authorized": autorizado,
+            "authorized_by_id": str(quem.pk) if quem else None,
+        })
     conhecidas = {i for grupo in por_restaurante.values() for i in grupo}
-    resultado["skipped"] += [
+    pulos += [
         {"id": i, "number": None, "reason": "Comanda não encontrada."} for i in ids if i not in conhecidas
     ]
-    return resultado
+    from apps.bulk_jobs.models import BulkJob
+    from apps.bulk_jobs.services import enqueue_bulk_job, queued_response
+
+    job = enqueue_bulk_job(
+        account=request.account,
+        user=request.user,
+        action=BulkJob.COMMAND_RESET,
+        payload={"groups": grupos, "reason": reason, "skipped": pulos},
+        total=len(ids),
+    )
+    return queued_response(job)
 
 
 def _e_uuid(valor):
