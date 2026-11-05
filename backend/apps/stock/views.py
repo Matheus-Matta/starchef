@@ -137,7 +137,7 @@ class StockLotViewSet(ReadOnlyTenantViewSet):
 
     required_module = MODULE_LOGISTICA
     serializer_class = StockLotSerializer
-    queryset = StockLot.objects.select_related("restaurant", "branch", "ingredient", "location").all()
+    queryset = StockLot.objects.select_related("restaurant", "branch", "ingredient", "product", "location").all()
     filterset_fields = ["ingredient", "location", "status"]
     search_fields = ["code", "supplier_lot", "ingredient__name"]
     ordering_fields = ["expires_at", "entered_at", "quantity"]
@@ -175,7 +175,7 @@ class StockEntryViewSet(BaseTenantViewSet):
     serializer_class = StockEntrySerializer
     queryset = (
         StockEntry.objects.select_related("restaurant", "branch", "location")
-        .prefetch_related("items__ingredient", "items__supplier", "items__lots")
+        .prefetch_related("items__ingredient", "items__product", "items__supplier", "items__lots")
         .all()
     )
     filterset_fields = ["status", "location"]
@@ -219,10 +219,10 @@ class StockEntryViewSet(BaseTenantViewSet):
         if template is None:
             template = StockLabelTemplate.objects.filter(is_active=True).first()
 
-        use_qr = not template or template.code_type == StockLabelTemplate.CODE_QR
+        use_qr = bool(template and template.code_type == StockLabelTemplate.CODE_QR)
         only_items = request.query_params.getlist("item")
         labels = []
-        for item in entry.items.select_related("ingredient").prefetch_related("lots"):
+        for item in entry.items.select_related("ingredient", "product").prefetch_related("lots"):
             if only_items and str(item.id) not in only_items:
                 continue
             for lot in item.lots.all():
@@ -237,8 +237,8 @@ class StockEntryViewSet(BaseTenantViewSet):
                             "lot_id": str(lot.id),
                             "code": lot.code,
                             "code_uri": code_uri,
-                            "ingredient_name": lot.ingredient.name,
-                            "unit": lot.ingredient.unit,
+                            "ingredient_name": (lot.product or lot.ingredient).name,
+                            "unit": lot.product.stock_unit if lot.product else lot.ingredient.unit,
                             "supplier_lot": lot.supplier_lot,
                             "entered_at": lot.entered_at,
                             "expires_at": lot.expires_at,

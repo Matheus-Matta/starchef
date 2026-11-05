@@ -39,9 +39,9 @@ _e("stock_label_template", "stock.StockLabelTemplate", conflict_policy=NUVEM,
 _e("stock_entry", "stock.StockEntry", conflict_policy=LOJA,
    dependencies=("stock_location",), include_in_bootstrap=False)
 _e("stock_entry_item", "stock.StockEntryItem", conflict_policy=LOJA,
-   dependencies=("stock_entry", "ingredient", "stock_supplier"), include_in_bootstrap=False)
+   dependencies=("stock_entry", "ingredient", "product", "stock_supplier"), include_in_bootstrap=False)
 _e("stock_lot", "stock.StockLot", conflict_policy=LOJA,
-   dependencies=("ingredient", "stock_location", "stock_entry_item"), include_in_bootstrap=False)
+   dependencies=("ingredient", "product", "stock_location", "stock_entry_item"), include_in_bootstrap=False)
 _e("stock_exit", "stock.StockExit", conflict_policy=LOJA,
    dependencies=("stock_location",), include_in_bootstrap=False)
 _e("stock_exit_item", "stock.StockExitItem", conflict_policy=LOJA,

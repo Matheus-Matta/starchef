@@ -1,6 +1,6 @@
 import datetime
 from decimal import Decimal
-from django.db import models, transaction
+from django.db import transaction
 from django.utils import timezone
 
 from apps.inbound_nfe.models import InboundNFe, InboundNFeItem, SupplierItemMapping
@@ -12,64 +12,8 @@ from apps.stock.models import (
     StockMovement,
 )
 from apps.assets.models import Asset, AssetLocationHistory
-
-
-def calculate_stock_unit_cost(item: InboundNFeItem, stock_quantity: Decimal) -> Decimal:
-    """
-    Calcula o custo unitário real para o estoque com base no valor do produto e despesas acessórias.
-    """
-    if stock_quantity <= 0:
-        return Decimal("0")
-
-    total_item_cost = (
-        item.product_total
-        - item.discount
-        + item.freight
-        + item.insurance
-        + item.other_expenses
-    )
-    return round(total_item_cost / stock_quantity, 4)
-
-
-def update_product_average_cost(product: Product, new_qty: Decimal, new_cost: Decimal):
-    """
-    Atualiza o custo médio ponderado e o último custo de compra do produto.
-    O preço de venda (sale_price) NÃO é alterado pelo recebimento fiscal;
-    permanece o valor cobrado definido pelo gerente.
-    """
-    if not product or new_qty <= 0 or new_cost <= 0:
-        return
-
-    total_balance = (
-        StockMovement.all_objects.filter(product=product)
-        .aggregate(models.Sum("quantity"))["quantity__sum"]
-        or Decimal("0")
-    )
-
-    # O movimento da entrada recém-criado já consta no total_balance.
-    # Subtraímos new_qty para obter o saldo anterior real em estoque.
-    previous_balance = max(Decimal("0"), total_balance - new_qty)
-    current_avg = product.current_average_cost or Decimal("0")
-
-    if previous_balance > Decimal("0") and current_avg > Decimal("0"):
-        new_total_qty = previous_balance + new_qty
-        new_total_val = (previous_balance * current_avg) + (new_qty * new_cost)
-        product.current_average_cost = round(new_total_val / new_total_qty, 4)
-    else:
-        product.current_average_cost = round(new_cost, 4)
-
-    product.last_purchase_cost = round(new_cost, 4)
-    product.estimated_cost = round(product.current_average_cost, 2)
-
-    # Recalcula margem percentual caso o gerente já tenha definido sale_price
-    if product.sale_price and product.sale_price > 0:
-        product.margin_percent = round(
-            ((product.sale_price - product.estimated_cost) / product.sale_price) * 100, 2
-        )
-    else:
-        product.margin_percent = Decimal("0.00")
-
-    product.save(update_fields=["current_average_cost", "last_purchase_cost", "estimated_cost", "margin_percent"])
+from apps.inbound_nfe.services.receiving_costs import calculate_stock_unit_cost, update_product_average_cost
+from apps.inbound_nfe.services.stock_entry import criar_entrada_da_nfe, registrar_linha_e_lote
 
 
 @transaction.atomic
@@ -138,6 +82,9 @@ def receive_invoice(
         status=GoodsReceipt.STATUS_CONFIRMED,
         notes=receipt_notes,
         location=location,
+    )
+    stock_entry = criar_entrada_da_nfe(
+        invoice=invoice, location=location, user=user, notes=receipt_notes,
     )
 
     has_divergence = False
@@ -213,12 +160,20 @@ def receive_invoice(
 
         item.received_quantity = received_quantity
 
-        # Se for item serializado / equipamento patrimonial
-        if product and (
+        is_asset = product and (
             product.tracking_mode == Product.TRACKING_SERIALIZED
             or product.item_type in [Product.ITEM_EQUIPMENT, Product.ITEM_FIXED_ASSET]
             or product.requires_serial_number
-        ):
+        )
+
+        # Se for item serializado / equipamento patrimonial
+        if is_asset:
+            registrar_linha_e_lote(
+                entry=stock_entry, nfe_item=item, accepted_quantity=accepted_quantity,
+                unit_cost=unit_cost, lot_number=lot_number,
+                manufacturing_date=mfg_date_raw, expiration_date=exp_date_raw,
+                user=user, create_lot=False,
+            )
             num_assets = int(accepted_quantity)
             warranty_months = product.default_useful_life_months or 12
             today = timezone.now().date()
@@ -278,6 +233,13 @@ def receive_invoice(
                 if general_loc:
                     target_location = general_loc
 
+            entry_item, stock_lot = registrar_linha_e_lote(
+                entry=stock_entry, nfe_item=item, accepted_quantity=accepted_quantity,
+                unit_cost=unit_cost, lot_number=lot_number,
+                manufacturing_date=mfg_date_raw, expiration_date=exp_date_raw,
+                user=user, create_lot=accepted_quantity > 0, location=target_location,
+            )
+
             lot_obj = None
             if accepted_quantity > 0:
                 if lot_number or exp_date_raw or (product and (product.requires_lot_control or product.requires_expiration_control)):
@@ -320,6 +282,8 @@ def receive_invoice(
                     receipt=receipt,
                     receipt_item=receipt_item,
                     inventory_lot=lot_obj,
+                    entry=stock_entry,
+                    lot=stock_lot,
                     reason=f"Entrada NF-e {invoice.number} - {invoice.supplier_name}",
                 )
                 item.stock_movement = movement
@@ -379,4 +343,5 @@ def receive_invoice(
     invoice.stock_applied_by = user
     invoice.save(update_fields=["status", "stock_applied_at", "stock_applied_by"])
 
+    receipt.generated_stock_entry = stock_entry
     return receipt

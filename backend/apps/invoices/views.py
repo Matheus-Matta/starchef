@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.access import is_tenant_admin
 from apps.core.viewsets import BaseTenantViewSet
-from apps.invoices.bulk import InvoiceBulkResendMixin
+from apps.invoices.bulk import InvoiceBulkResendMixin, BulkInvoiceRecreateMixin
 from apps.invoices.focus import (
     FocusCompanySyncResult,
     FocusNfeApiError,
@@ -38,10 +38,12 @@ from apps.invoices.services import (
     fiscal_emission_skipped_reason,
     fiscal_readiness,
     print_fiscal_invoice,
+    recreate_fiscal_invoice,
     refresh_fiscal_invoice_status,
     resend_fiscal_invoice,
     with_fiscal_state,
 )
+from apps.invoices.bulk_download_xml import BulkDownloadXmlSerializer
 from apps.restaurants.models import Restaurant
 
 
@@ -257,7 +259,7 @@ class FiscalConfigViewSet(BaseTenantViewSet):
         return self._focus_action(delete_focus_company)
 
 
-class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
+class InvoiceViewSet(InvoiceBulkResendMixin, BulkInvoiceRecreateMixin, BaseTenantViewSet):
     required_module = MODULE_FINANCEIRO
     serializer_class = InvoiceSerializer
     queryset = Invoice.objects.select_related("restaurant", "branch", "order").prefetch_related("items").all()
@@ -422,6 +424,146 @@ class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(data)
+
+    @action(detail=True, methods=["post"], url_path="recreate")
+    def recreate(self, request, pk=None):
+        """Recriar nota fiscal quando expirou o prazo.
+
+        Arquiva a nota antiga marcando como `replaced_by` e emite uma nova
+        com numero e chave diferentes. So funciona com notas nao autorizadas.
+        """
+        try:
+            invoice = recreate_fiscal_invoice(self.get_object(), user=request.user)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return self._serialize(invoice)
+
+    @action(detail=True, methods=["get"], url_path="download-xml")
+    def download_xml(self, request, pk=None):
+        """Baixa o XML da nota fiscal como arquivo.
+
+        Retorna o XML bruto com content-type application/xml.
+        """
+        invoice = self.get_object()
+        if not invoice.xml_content:
+            return Response(
+                {"detail": "Esta nota nao possui XML disponivel."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        response = Response(
+            invoice.xml_content,
+            content_type="application/xml",
+        )
+        filename = f"{invoice.access_key or f'nota_{invoice.id}'}.xml"
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    @action(detail=False, methods=["post"], url_path="bulk-download-xml")
+    def bulk_download_xml(self, request):
+        """Gera ZIP com XMLs filtrados por data, status, restaurante, modelo.
+
+        Se ha muitos XMLs (>100), usa worker para nao bloquear. Retorna um
+        status de job que pode ser consultado depois.
+
+        Parametros (opcionais):
+        - date_from: "2024-01-01" ou "2024-01-01T00:00:00"
+        - date_to: "2024-01-31T23:59:59"
+        - status: "issued", "pending", "error"
+        - document_model: "65" (NFC-e) ou "55" (NF-e)
+        - restaurant_id: UUID do restaurante
+        """
+        from apps.bulk_jobs.models import BulkJob
+        from apps.bulk_jobs.services import enqueue_bulk_job, queued_response
+        from apps.invoices.bulk_download_xml import build_download_filters
+
+        payload = BulkDownloadXmlSerializer(data=request.data)
+        if not payload.is_valid():
+            return Response(
+                {"detail": "Parametros invalidos.", "errors": payload.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = payload.validated_data()
+
+        # Valida que o restaurante (se informado) pertence a conta
+        restaurant_id = data.get("restaurant_id")
+        if restaurant_id:
+            rest_qs = Restaurant.objects.all()
+            if self._account():
+                rest_qs = rest_qs.filter(account=self._account())
+            if not rest_qs.filter(pk=restaurant_id).exists():
+                return Response(
+                    {"detail": "Restaurante nao encontrado."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        # Simula a query para saber quantos XMLs haveria
+        queryset = build_download_filters(
+            account_id=self._account().id if self._account() else None,
+            date_from=data.get("date_from"),
+            date_to=data.get("date_to"),
+            status=data.get("status"),
+            document_model=data.get("document_model"),
+            restaurant_id=restaurant_id,
+        )
+        total = queryset.count()
+
+        if total == 0:
+            return Response(
+                {
+                    "status": "empty",
+                    "message": "Nenhum XML encontrado com os filtros especificados.",
+                    "total": 0,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Se poucos XMLs (<50), gera direto. Senao, enfileira worker.
+        if total < 50:
+            from apps.invoices.bulk_download_xml import generate_xml_zip, _send_download_ready_notification
+            from apps.core.storage import storage_service
+            from datetime import datetime
+            from decimal import Decimal
+
+            try:
+                zip_data = generate_xml_zip(queryset)
+                zip_size = len(zip_data)
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                zip_filename = f"notas_fiscais_{timestamp}.zip"
+                zip_path = f"xmls/{zip_filename}"
+
+                url = storage_service().upload_file(zip_data, zip_path)
+
+                return Response({
+                    "status": "completed",
+                    "message": f"{total} XMLs gerados",
+                    "total": total,
+                    "zip_filename": zip_filename,
+                    "zip_size_mb": round(Decimal(zip_size) / (1024 ** 2), 2),
+                    "download_url": url,
+                })
+            except Exception as exc:
+                return Response(
+                    {"detail": f"Erro ao gerar ZIP: {str(exc)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+        else:
+            # Enfileira job
+            job = enqueue_bulk_job(
+                account=self._account(),
+                user=request.user,
+                action=BulkJob.INVOICE_DOWNLOAD_XML,
+                payload={
+                    "date_from": data.get("date_from"),
+                    "date_to": data.get("date_to"),
+                    "status": data.get("status"),
+                    "document_model": data.get("document_model"),
+                    "restaurant_id": str(restaurant_id) if restaurant_id else None,
+                },
+                total=total,
+            )
+            return Response(queued_response(job), status=202)
 
 
 class FocusNfeWebhookView(APIView):

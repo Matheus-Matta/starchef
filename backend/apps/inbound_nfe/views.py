@@ -626,6 +626,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
                 "receipt_id": str(receipt.id),
                 "receipt_number": receipt.receipt_number,
                 "status": receipt.status,
+                "stock_entry_id": str(receipt.generated_stock_entry.id),
             })
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

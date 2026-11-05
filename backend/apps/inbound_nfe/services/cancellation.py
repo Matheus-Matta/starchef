@@ -16,6 +16,7 @@ from apps.stock.models import (
     StockMovement,
 )
 from apps.assets.models import Asset
+from apps.inbound_nfe.services.stock_entry import cancelar_entrada_espelhada
 
 
 @transaction.atomic
@@ -33,14 +34,8 @@ def apply_cancellation(
 
     Efeitos:
     1. Marca fiscal_status = CANCELLED e preenche metadados SEFAZ de cancelamento.
-    2. Se a nota já gerou recebimento / estoque:
-       - Cancela os registros de GoodsReceipt vinculados.
-       - Marca os bens patrimoniais (Asset) como source_nfe_cancelled = True e abre NFeIssue.
-       - Cancela lotes de estoque (InventoryLot).
-       - Estorna movimentos de entrada (StockMovement) via lançamento compensatório
-         TYPE_NFE_CANCELLATION_REVERSAL (reversal_of = entry_movement).
-       - Se o saldo em estoque for inferior à quantidade de entrada (já houve consumo),
-         abre NFeIssue(TYPE_CANCELLED_AFTER_STOCK_MOVEMENT) para o operador.
+    2. Se já gerou estoque, cancela recebimentos/lotes, sinaliza bens, estorna
+       movimentos e abre pendência quando o saldo denuncia consumo anterior.
     3. Altera o status operacional da NF-e para CANCELLED se estava RECEIVED ou PENDING.
     """
     invoice_refreshed = InboundNFe.all_objects.select_for_update().get(id=invoice.id)
@@ -142,8 +137,8 @@ def apply_cancellation(
     # 4. Tratar Lotes de Estoque (InventoryLot)
     lots = InventoryLot.all_objects.filter(nfe=invoice_refreshed)
     for lot in lots:
-        if lot.status != InventoryLot.STATUS_CANCELLED:
-            lot.status = InventoryLot.STATUS_CANCELLED
+        if lot.status != InventoryLot.STATUS_DISCARDED:
+            lot.status = InventoryLot.STATUS_DISCARDED
             lot.available_quantity = Decimal("0")
             lot.save(update_fields=["status", "available_quantity", "updated_at"])
             result["lots_cancelled"] += 1
@@ -238,11 +233,14 @@ def apply_cancellation(
             receipt=entry_mov.receipt,
             receipt_item=entry_mov.receipt_item,
             inventory_lot=entry_mov.inventory_lot,
+            entry=entry_mov.entry,
+            lot=entry_mov.lot,
             reversal_of=entry_mov,
             reason=reason_text,
             created_by=operator_user,
             updated_by=operator_user,
         )
+        cancelar_entrada_espelhada(entry_mov, user=operator_user)
         result["reversals_created"] += 1
 
     return result

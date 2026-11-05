@@ -77,7 +77,7 @@ export function validateStockEntry({ form, rows, expiryRequired = false, forPost
   }
 
   rows.forEach((row, index) => {
-    if (!row.ingredient) addRowError(row, index, "ingredient");
+    if (!row.ingredient && !row.product) addRowError(row, index, "ingredient");
 
     const packages = Number(row.package_quantity);
     if (row.package_quantity == null || !Number.isFinite(packages) || packages <= 0) {

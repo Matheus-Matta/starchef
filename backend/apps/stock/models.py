@@ -242,9 +242,9 @@ class StockEntry(_PostableDocument):
 
 class StockEntryItem(TenantModel):
     """Uma linha da entrada. Insumo + lote + validade distintos = linhas distintas."""
-
     entry = models.ForeignKey(StockEntry, related_name="items", on_delete=models.CASCADE)
-    ingredient = models.ForeignKey("menu.Ingredient", related_name="entry_items", on_delete=models.PROTECT)
+    ingredient = models.ForeignKey("menu.Ingredient", null=True, blank=True, related_name="entry_items", on_delete=models.PROTECT)
+    product = models.ForeignKey("menu.Product", null=True, blank=True, related_name="stock_entry_items", on_delete=models.PROTECT)
     supplier = models.ForeignKey(
         Supplier,
         null=True,
@@ -265,17 +265,18 @@ class StockEntryItem(TenantModel):
     expires_at = models.DateField(null=True, blank=True)
     label_count = models.PositiveSmallIntegerField(default=1)
     notes = models.CharField(max_length=200, blank=True)
-
     class Meta:
         ordering = ["created_at"]
-
+        constraints = [models.CheckConstraint(
+            condition=models.Q(ingredient__isnull=False) | models.Q(product__isnull=False),
+            name="stock_entry_item_has_item",
+        )]
     def __str__(self):
-        return f"{self.ingredient} ({self.entry})"
+        return f"{self.product or self.ingredient} ({self.entry})"
 
 
 class StockLot(TenantModel):
     """O lote fisico disponivel — a unidade que a etiqueta identifica."""
-
     STATUS_AVAILABLE = "available"
     STATUS_DEPLETED = "depleted"
     STATUS_BLOCKED = "blocked"
@@ -288,8 +289,8 @@ class StockLot(TenantModel):
         (STATUS_EXPIRED, "Vencido"),
         (STATUS_DISCARDED, "Descartado"),
     ]
-
-    ingredient = models.ForeignKey("menu.Ingredient", related_name="lots", on_delete=models.PROTECT)
+    ingredient = models.ForeignKey("menu.Ingredient", null=True, blank=True, related_name="lots", on_delete=models.PROTECT)
+    product = models.ForeignKey("menu.Product", null=True, blank=True, related_name="stock_lots", on_delete=models.PROTECT)
     location = models.ForeignKey(StockLocation, related_name="lots", on_delete=models.PROTECT)
     entry_item = models.ForeignKey(
         StockEntryItem, null=True, blank=True, related_name="lots", on_delete=models.SET_NULL
@@ -309,10 +310,10 @@ class StockLot(TenantModel):
     unit_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_AVAILABLE, db_index=True)
     opened_at = models.DateTimeField(null=True, blank=True)
-
     class Meta:
         ordering = ["expires_at", "entered_at", "created_at"]
         constraints = [
+            models.CheckConstraint(condition=models.Q(ingredient__isnull=False) | models.Q(product__isnull=False), name="stock_lot_has_item"),
             models.UniqueConstraint(
                 fields=["account", "code"],
                 condition=models.Q(deleted_at__isnull=True),
@@ -323,9 +324,8 @@ class StockLot(TenantModel):
             models.Index(fields=["branch", "ingredient", "status"]),
             models.Index(fields=["branch", "expires_at"]),
         ]
-
     def __str__(self):
-        return f"{self.code} ({self.ingredient})"
+        return f"{self.code} ({self.product or self.ingredient})"
 
     @staticmethod
     def build_code(ingredient):

@@ -3754,6 +3754,14 @@ async function submitReceiveInvoiceFromDetail() {
       life: 5000,
     });
     receiveDialogVisible.value = false;
+    if (data.stock_entry_id) {
+      await router.push({
+        name: "estoque-entrada-documento",
+        params: { id: data.stock_entry_id },
+        query: { print: "1" },
+      });
+      return;
+    }
     if (inboundDetailData.value?.id) {
       await openInboundDetail(inboundDetailData.value);
     }

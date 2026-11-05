@@ -70,6 +70,16 @@ describe("validateStockEntry", () => {
     expect(draft.valid).toBe(true);
     expect(posting.rowErrors["7"].expires_at).toMatch(/validade/i);
   });
+
+  it("aceita produto de revenda trazido pela NF-e sem exigir um insumo", () => {
+    const result = validateStockEntry({
+      form: validForm,
+      rows: [{ ...validRow, ingredient: null, product: "produto-1" }],
+      forPosting: true,
+    });
+
+    expect(result.valid).toBe(true);
+  });
 });
 
 describe("stockEntryApiErrors", () => {

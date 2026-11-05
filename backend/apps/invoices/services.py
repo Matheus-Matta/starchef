@@ -1662,3 +1662,57 @@ def issue_invoice_for_paid_order(order, *, user=None, auto_print=True):
             except (ValidationError, RuntimeError) as exc:
                 logger.warning("Pedido %s pago, mas a impressao nao saiu: %s", order.id, exc)
     return invoice
+
+
+def recreate_fiscal_invoice(invoice, *, user=None):
+    """Recriar a nota fiscal quando expirou o prazo (arquiva a antiga, emite nova).
+
+    Quando uma nota nao consegue ser transmitida dentro do prazo (24h para
+    contingencia, 30min para cancelamento em NFC-e), ela nao pode mais ser
+    retransmitida. Esta operacao arquiva a antiga marcando `replaced_by` e
+    emite uma nota NOVA do mesmo pedido, com numero/chave diferentes.
+
+    So funciona com notas que ainda nao foram autorizadas (status != issued).
+    """
+    with transaction.atomic():
+        # Confere se a nota pode ser recriada
+        if invoice.status == Invoice.STATUS_ISSUED:
+            raise ValidationError(
+                "Nota autorizada nao pode ser recriada. Cancele-a primeiro se necessario."
+            )
+        if invoice.status == Invoice.STATUS_CANCELLED:
+            raise ValidationError("Nota cancelada nao pode ser recriada.")
+
+        order = invoice.order
+        if order.invoice_id != invoice.id:
+            raise ValidationError("Esta nota nao e a nota atual do pedido.")
+
+        # Marca a nota antiga como arquivada
+        locked_old = Invoice.objects.select_for_update().get(pk=invoice.pk)
+        locked_old.status = Invoice.STATUS_CANCELLED
+        locked_old.error_message = "Recriada"
+        locked_old.updated_by = user
+        locked_old.save(update_fields=["status", "error_message", "updated_by", "updated_at"])
+
+        # Deleta a referencia do pedido para poder criar uma nova
+        order.invoice_id = None
+        order.save(update_fields=["invoice_id"])
+
+        # Emite a nota nova
+        new_invoice = emit_fiscal_invoice(order, user=user)
+
+        # Marca a velha como substituida pela nova
+        locked_old.replaced_by = new_invoice
+        locked_old.save(update_fields=["replaced_by"])
+
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=new_invoice,
+            actor=user,
+            metadata={
+                "fiscal_recreate": True,
+                "replaced_invoice_id": str(invoice.pk),
+                "status": new_invoice.status,
+            },
+        )
+        return new_invoice

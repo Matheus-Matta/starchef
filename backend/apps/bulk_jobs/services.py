@@ -84,6 +84,12 @@ def _handler(job):
     if job.action == BulkJob.INVOICE_RESEND:
         from apps.invoices.bulk import run_invoice_resend_job
         return run_invoice_resend_job
+    if job.action == BulkJob.INVOICE_RECREATE:
+        from apps.invoices.bulk import run_invoice_recreate_job
+        return run_invoice_recreate_job
+    if job.action == BulkJob.INVOICE_DOWNLOAD_XML:
+        from apps.invoices.bulk_download_xml import run_bulk_download_xml_job
+        return run_bulk_download_xml_job
     if job.action in {BulkJob.INBOUND_RECONCILE, BulkJob.INBOUND_XML_IMPORT}:
         from apps.inbound_nfe.bulk_jobs import run_inbound_bulk_job
         return run_inbound_bulk_job
@@ -140,6 +146,21 @@ def _summary(job):
         failed = result.get("total_errors", 0)
         body = f"{result.get('total_processed', 0)} nota(s) processada(s), {failed} arquivo(s) com erro."
         return "Importação de XML concluída", body, bool(failed), "/inbound-nfe"
+    if job.action == BulkJob.INVOICE_RECREATE:
+        failed = result.get("failed", 0)
+        body = f"{result.get('recreated', 0)} recriada(s), {failed} com falha."
+        return "Recriação de NFC-e concluída", _with_first_reason(body, result.get("errors", [])), bool(failed), "/notas-fiscais"
+    if job.action == BulkJob.INVOICE_DOWNLOAD_XML:
+        if result.get("status") == "empty":
+            return "Download de XMLs", "Nenhum XML encontrado com os filtros.", False, "/notas-fiscais"
+        if result.get("status") == "failed":
+            return "Download de XMLs falhou", result.get("message", "Erro ao gerar ZIP"), True, "/notas-fiscais"
+        return (
+            "Download de XMLs pronto",
+            f"{result.get('total', 0)} XMLs em {result.get('zip_filename', 'arquivo.zip')} ({result.get('zip_size_mb', 0)} MB)",
+            False,
+            result.get("download_url", "/notas-fiscais"),
+        )
     failed = result.get("failed", 0)
     body = f"{result.get('resent', 0)} reenviada(s), {failed} com falha."
     return "Reenvio de NFC-e concluído", _with_first_reason(body, result.get("errors", [])), bool(failed), "/notas-fiscais"

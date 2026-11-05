@@ -1,0 +1,155 @@
+# Uma NUVEM de teste no Docker local — http://localhost:8090/
+#
+# As MESMAS imagens publicadas (versão em STARCHEF_VERSION, no .env desta
+# pasta), com banco e Redis próprios: nada aqui toca a nuvem de produção nem o
+# `.env` da raiz. O papel de nuvem é configuração (SYNC_NODE_TYPE=cloud), como
+# na loja é `local`; a sincronização fica desligada.
+#
+# O emissor ACBrLib é REAL, como na loja: homologação emite na SEFAZ de
+# homologação (sem valor fiscal) e produção emite de verdade. Ele precisa da
+# libacbrnfe64.so e da pasta Schemas em ./acbr/libs, do certificado A1 e do
+# CSC no cadastro fiscal; sem eles a nota fica gravada com o erro, que é para
+# isso que serve. O simulador da SEFAZ é só dos testes automáticos.
+#
+#   docker compose -p starchef-nuvem-teste up -d
+#   docker compose -p starchef-nuvem-teste down       # para (os dados ficam)
+#   docker compose -p starchef-nuvem-teste down -v    # apaga tudo
+name: starchef-nuvem-teste
+
+x-backend-base: &backend-base
+  # BACKEND_IMAGE (.env) testa uma imagem montada localmente, de uma branch.
+  image: "${BACKEND_IMAGE:-ghcr.io/matheus-matta/starchef-backend:${STARCHEF_VERSION}}"
+  restart: unless-stopped
+  user: "1000:1000"
+  environment:
+    DJANGO_ENV: production
+    DJANGO_SETTINGS_MODULE: config.settings.production
+    DJANGO_DEBUG: "False"
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+    DJANGO_FIRST_ACCESS_TOKEN: ${DJANGO_FIRST_ACCESS_TOKEN}
+    USE_SQLITE_DATABASE: "False"
+    USE_LOCAL_MEMORY_SERVICES: "False"
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: starchef_nuvem
+    POSTGRES_USER: starchef
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    # HOST_IP (.env) = o IP deste PC na rede, para celular e outros PCs.
+    DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend,proxy,${HOST_IP}
+    DJANGO_CORS_ALLOWED_ORIGINS: http://localhost:8090,http://127.0.0.1:8090,http://${HOST_IP}:8090
+    DJANGO_CSRF_TRUSTED_ORIGINS: http://localhost:8090,http://127.0.0.1:8090,http://${HOST_IP}:8090
+    # HTTP puro no localhost: com estes ligados o login não grava o cookie.
+    DJANGO_SECURE_SSL_REDIRECT: "False"
+    DJANGO_SESSION_COOKIE_SECURE: "False"
+    DJANGO_CSRF_COOKIE_SECURE: "False"
+    DJANGO_AUTH_COOKIE_SECURE: "False"
+    SYNC_NODE_TYPE: cloud
+    SYNC_ENABLED: "false"
+    GUNICORN_WORKERS: "2"
+    ACBRLIB_URL: http://fiscal-acbr:8001
+    # O IP SERVER NUVEM que o /pdv/config/ devolve: restaurante sem IP local
+    # faz o PDV e o celular mandarem tudo para cá. Com o IP da rede, não
+    # localhost, para o celular também alcançar.
+    API_URL: http://${HOST_IP}:8000/api/v1
+    ACBRLIB_TOKEN: ${ACBRLIB_TOKEN}
+  volumes:
+    - backend_media:/app/media
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: starchef_nuvem
+      POSTGRES_USER: starchef
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U starchef -d starchef_nuvem"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    <<: *backend-base
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.asgi:application -c gunicorn.conf.py"
+    # A API direta, como o PDV da loja usa (http://IP:8000/api/v1).
+    ports:
+      - "0.0.0.0:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
+  celery_worker:
+    <<: *backend-base
+    command: celery -A config worker -l info --concurrency=2
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  celery_beat:
+    <<: *backend-base
+    command: celery -A config beat -l info
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  fiscal-acbr:
+    image: "${ACBR_IMAGE:-ghcr.io/matheus-matta/starchef-fiscal-acbr:${STARCHEF_VERSION}}"
+    restart: unless-stopped
+    environment:
+      ACBRLIB_TOKEN: ${ACBRLIB_TOKEN}
+    volumes:
+      - ./acbr/libs:/app/libs:ro
+      - fiscal_acbr_data:/app/data
+
+  frontend:
+    image: "ghcr.io/matheus-matta/starchef-frontend:${STARCHEF_VERSION}"
+    restart: unless-stopped
+    environment:
+      API_URL: /api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "0.0.0.0:8090:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  backend_media:
+  fiscal_acbr_data:

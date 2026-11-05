@@ -754,7 +754,7 @@ export const resources = [
       { name: "columns", label: "Etiquetas por linha", type: "number", default: 1, section: "Papel" },
       { name: "font_size_pt", label: "Tamanho da fonte (pt)", type: "decimal", default: 8, section: "Papel" },
       { name: "show_ingredient", label: "Mostrar insumo", type: "boolean", default: true, section: "Campos impressos" },
-      { name: "show_lot_code", label: "Mostrar codigo do lote", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_lot_code", label: "Mostrar código de barras", type: "boolean", default: true, section: "Campos impressos" },
       { name: "show_supplier_lot", label: "Mostrar lote do fornecedor", type: "boolean", default: true, section: "Campos impressos" },
       { name: "show_entered_at", label: "Mostrar data de entrada", type: "boolean", default: true, section: "Campos impressos" },
       { name: "show_expires_at", label: "Mostrar validade", type: "boolean", default: true, section: "Campos impressos" },

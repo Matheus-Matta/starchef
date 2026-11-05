@@ -16,7 +16,6 @@
       <article v-for="(label, index) in labels" :key="`${label.lot_id}-${index}`" class="labelsheet__item" :style="itemStyle">
         <div class="labelsheet__text">
           <strong v-if="show('show_ingredient')" class="labelsheet__name">{{ label.ingredient_name }}</strong>
-          <span v-if="show('show_lot_code')" class="labelsheet__code">{{ label.code }}</span>
           <span v-if="show('show_supplier_lot') && label.supplier_lot">Lote forn.: {{ label.supplier_lot }}</span>
           <span v-if="show('show_quantity')">{{ formatQuantity(label) }}</span>
           <span v-if="show('show_entered_at')">Entrada: {{ formatDate(label.entered_at) }}</span>
@@ -26,7 +25,7 @@
           <span v-if="show('show_location')">{{ label.location_name }}</span>
           <span v-if="template?.custom_text">{{ template.custom_text }}</span>
         </div>
-        <img v-if="label.code_uri" class="labelsheet__code-img" :src="label.code_uri" :alt="label.code" />
+        <img v-if="label.code_uri && show('show_lot_code')" class="labelsheet__code-img" :src="label.code_uri" :alt="label.code" />
       </article>
     </div>
   </Dialog>
@@ -114,9 +113,8 @@ function print() {
       .labelsheet__item:last-child { page-break-after: auto; break-after: auto; }
       .labelsheet__text { display: flex; flex-direction: column; gap: .4mm; min-width: 0; }
       .labelsheet__name { font-size: 1.15em; }
-      .labelsheet__code { font-family: "Courier New", monospace; font-weight: 700; }
       .labelsheet__expiry { font-weight: 700; }
-      .labelsheet__code-img { max-height: ${height - 4}mm; max-width: 45%; object-fit: contain; }
+      .labelsheet__code-img { max-height: ${height - 4}mm; width: 48%; object-fit: contain; }
     </style></head><body>${node.outerHTML}</body></html>`);
   win.document.close();
   win.focus();
@@ -134,7 +132,6 @@ defineExpose({ open });
 .labelsheet__item { display: flex; align-items: center; justify-content: space-between; gap: 6px; overflow: hidden; border: 1px dashed var(--border-strong); border-radius: 3px; background: #fff; color: #111; }
 .labelsheet__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .labelsheet__name { font-size: 1.15em; }
-.labelsheet__code { font-family: "Courier New", monospace; font-weight: 700; }
 .labelsheet__expiry { font-weight: 700; }
-.labelsheet__code-img { max-width: 45%; max-height: 90%; object-fit: contain; }
+.labelsheet__code-img { width: 48%; max-height: 90%; object-fit: contain; }
 </style>

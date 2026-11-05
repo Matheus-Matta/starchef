@@ -116,7 +116,7 @@
       <section class="stock-card">
         <div class="stock-card__head">
           <div>
-            <h2>Insumos recebidos</h2>
+            <h2>Itens recebidos</h2>
             <p>
               Uma linha por insumo, lote e validade — é o que define cada lote físico e cada etiqueta.
               <template v-if="expiryRequired"> Esta filial exige validade em toda linha.</template>
@@ -135,8 +135,12 @@
           <div class="stock-row__index">{{ index + 1 }}</div>
           <div class="stock-row__fields">
             <label class="stock-field stock-field--wide" :class="{ 'stock-field--error': rowFieldError(row, 'ingredient') }">
-              <span>Insumo *</span>
+              <span>Insumo / produto *</span>
+              <div v-if="!editable || row.product" class="stock-entry-item-name">
+                <strong>{{ row.item_name || "Item não identificado" }}</strong><small v-if="row.item_code">Cód. {{ row.item_code }}</small>
+              </div>
               <Select
+                v-else
                 v-model="row.ingredient"
                 :options="ingredients"
                 option-label="name"
@@ -298,7 +302,7 @@
         <h2>Lotes gerados</h2>
         <DataTable :value="lots" size="small" class="stock-table">
           <Column field="code" header="Lote" />
-          <Column field="ingredient_name" header="Insumo" />
+          <Column field="ingredient_name" header="Item" />
           <Column field="quantity" header="Saldo" />
           <Column field="expires_at" header="Validade" />
         </DataTable>
@@ -368,13 +372,11 @@ const suppliers = ref([]);
 const lots = ref([]);
 const expiryRequired = ref(false);
 const unitOptions = UNIT_OPTIONS;
-
 const entryId = computed(() => props.id || route.params.id || "");
 const isNew = computed(() => !entryId.value);
 // `?copy=last` (botao da listagem) ou `?copy=<id>` (duplicar uma entrada).
 const copyRequest = computed(() => String(route.query.copy || ""));
 const copiedFrom = ref(null);
-
 const form = reactive({
   location: null,
   effective_date: todayDate(),
@@ -383,11 +385,9 @@ const form = reactive({
   notes: "",
   status: "draft",
 });
-
 /** Linhas do documento. `_key` é só para o `v-for` — o backend nunca o vê. */
 const rows = ref([]);
 let rowSeq = 0;
-
 const editable = computed(() => form.status === "draft");
 const isPosted = computed(() => form.status === "posted");
 const statusLabel = computed(
@@ -404,7 +404,6 @@ const supplierSummary = computed(() => {
   )];
   return names.join(", ") || form.supplier || "";
 });
-
 function blankRow() {
   return {
     _key: ++rowSeq,
@@ -421,11 +420,9 @@ function blankRow() {
     notes: "",
   };
 }
-
 function addRow() {
   rows.value.push(blankRow());
 }
-
 function removeRow(index) {
   const [removed] = rows.value.splice(index, 1);
   if (removed) {
@@ -434,11 +431,9 @@ function removeRow(index) {
     rowErrors.value = next;
   }
 }
-
 function ingredientOf(row) {
   return ingredients.value.find((item) => item.id === row.ingredient) || null;
 }
-
 function formFieldError(field) {
   return formErrors.value[field] || "";
 }
@@ -508,22 +503,22 @@ function onIngredientChange(row) {
 }
 
 /**
- * Prévia do que a linha vai somar ao saldo, na unidade do insumo.
+ * Prévia do que a linha vai somar ao saldo, na unidade do item.
  *
  * O cálculo definitivo é do backend — mas mostrar aqui evita o erro clássico
  * de digitar 5 achando "5 kg" quando o insumo está cadastrado em gramas e só
  * descobrir depois de confirmar.
  */
 function baseQuantityLabel(row) {
-  const ingredient = ingredientOf(row);
-  if (!ingredient) return "—";
   const total = Number(row.package_quantity || 0) * Number(row.content_per_package || 0);
   if (!total) return "—";
+  if (row.product) return `${total.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${row.content_unit}`;
+  const ingredient = ingredientOf(row);
+  if (!ingredient) return "—";
   const converted = convertUnit(total, row.content_unit || ingredient.unit, ingredient.unit);
   if (converted === null) return "unidade incompatível";
   return `${converted.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${ingredient.unit}`;
 }
-
 function todayDate() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -580,6 +575,7 @@ function toPayload() {
     notes: form.notes,
     items: rows.value.map((row) => ({
       ingredient: row.ingredient,
+      product: row.product || null,
       supplier: row.supplier || null,
       package_quantity: row.package_quantity || 0,
       content_per_package: row.content_per_package || 0,
@@ -606,6 +602,9 @@ function applyEntry(data) {
   rows.value = (data.items || []).map((item) => ({
     _key: ++rowSeq,
     ingredient: item.ingredient,
+    product: item.product || null,
+    item_name: item.ingredient_name || "",
+    item_code: item.item_code || "",
     supplier: item.supplier || null,
     package_quantity: Number(item.package_quantity),
     content_per_package: Number(item.content_per_package),
@@ -798,6 +797,7 @@ async function load() {
     }
 
     if (form.location) await loadLocationSettings();
+    if (entryId.value && route.query.print === "1" && isPosted.value) await openLabels();
     if (!rows.value.length) {
       addRow();
     }

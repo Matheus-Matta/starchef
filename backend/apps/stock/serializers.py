@@ -2,6 +2,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
+from apps.stock.item_display import StockItemDisplaySerializer
 from apps.stock.models import (
     GoodsReceipt,
     GoodsReceiptItem,
@@ -165,9 +166,7 @@ class StockMovementSerializer(TenantModelSerializer):
         return "-"
 
 
-class StockLotSerializer(TenantModelSerializer):
-    ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
-    ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True)
+class StockLotSerializer(StockItemDisplaySerializer, TenantModelSerializer):
     location_name = serializers.CharField(source="location.name", read_only=True)
 
     class Meta:
@@ -183,11 +182,7 @@ class StockLotSerializer(TenantModelSerializer):
             "initial_quantity",
             "entry_item",
         ]
-
-
-class StockEntryItemSerializer(TenantModelSerializer):
-    ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
-    ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True)
+class StockEntryItemSerializer(StockItemDisplaySerializer, TenantModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
     lots = StockLotSerializer(many=True, read_only=True)
 
@@ -197,6 +192,8 @@ class StockEntryItemSerializer(TenantModelSerializer):
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "entry", "base_quantity", "total_cost"]
         extra_kwargs = {
             "ingredient": {
+                "required": False,
+                "allow_null": True,
                 "error_messages": {
                     "null": "Selecione o insumo recebido.",
                     "required": "Selecione o insumo recebido.",
@@ -225,12 +222,16 @@ class StockEntryItemSerializer(TenantModelSerializer):
 
     def validate(self, attrs):
         ingredient = attrs.get("ingredient") or getattr(self.instance, "ingredient", None)
+        product = attrs.get("product") or getattr(self.instance, "product", None)
+        if ingredient is None and product is None:
+            raise serializers.ValidationError({"ingredient": "Selecione o insumo ou produto recebido."})
         if ingredient is not None:
             if not attrs.get("content_unit"):
                 attrs["content_unit"] = ingredient.unit
             if attrs.get("supplier") is None:
                 attrs["supplier"] = ingredient.supplier
-
+        elif not attrs.get("content_unit"):
+            attrs["content_unit"] = product.stock_unit
         errors = {}
         package_quantity = attrs.get("package_quantity", getattr(self.instance, "package_quantity", 1))
         content_per_package = attrs.get(
@@ -254,7 +255,6 @@ class StockEntryItemSerializer(TenantModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         return super().validate(attrs)
-
 
 class StockEntrySerializer(TenantModelSerializer):
     """A entrada e suas linhas chegam juntas: o formulario e um documento so.
