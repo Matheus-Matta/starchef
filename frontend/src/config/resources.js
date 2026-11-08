@@ -855,25 +855,7 @@ export const resources = [
     title: "Notas Fiscais",
     endpoint: "/invoices/",
     globalScope: true,
-    pro: {
-      ...invoiceProConfig,
-      rowActions: [
-        {
-          key: "resend",
-          label: "Reenviar nota",
-          icon: "pi pi-send",
-          type: "post-detail",
-          action: "resend",
-          confirmMessage: "Reenviar somente esta nota para a Focus NFe?",
-          confirmAcceptLabel: "Reenviar",
-          successSummary: (data) => (data.status === "issued" ? "Nota autorizada" : "Nota reenviada"),
-          successDetail: (data) => (data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus."),
-          successSeverity: (data) => (data.status === "issued" ? "success" : "info"),
-          errorSummary: "Não foi possível reenviar a nota",
-          visible: (row) => row.status === "error" || (row.status === "pending" && row.emission_type === "9"),
-        },
-      ],
-    },
+    pro: invoiceProConfig,
     columns: invoiceColumns,
   },
   {

@@ -199,6 +199,47 @@ O `save` também deixou de ser parcial: `update_fields` listava quatro campos,
 mas o provedor devolve chave, número, série, protocolo, XML, DANFE e data de
 autorização no cancelamento — tudo isso era descartado na gravação.
 
+## Reenviar ou recriar
+
+**Reenviar** transmite a MESMA nota. **Recriar** (`recriar_nota.py`,
+`POST /invoices/{id}/recreate/`, ou em massa por `/invoices/bulk-recreate/`)
+descarta a tentativa travada — XML, chave, `cNF`, contingência — e emite a
+nota de novo, normal, com a data de agora e o cadastro de agora.
+
+Recriar existe para quando reenviar não resolve: a contingência tem 24 h para
+chegar à SEFAZ, e depois disso o XML assinado (com o `dhEmi` daquela hora)
+volta recusado em todo reenvio.
+
+| Situação | Recriar |
+|---|---|
+| `rejected`, `configuration_error`, `awaiting_transmission`, `contingency_pending` | Sim |
+| `processing`, `reconciliation_required` | **409**: a SEFAZ pode já ter a nota. Atualize o status antes |
+| `authorized` | **409**: cancele, se for o caso |
+| contingência de tempo esgotado (`chave_normal`) | Consulta a normal antes; se ela foi autorizada, a nota vira ela e nada é emitido |
+
+O que se mantém: a **linha** da nota (`Invoice` é 1:1 com o pedido) e o
+**número**, quando havia um — nota nunca autorizada não gasta o número, e
+trocá-lo abriria um buraco na série. A tentativa descartada fica em
+`fiscal_payload["tentativas_descartadas"]` (número, chave, motivo, XML), que
+sincroniza com a nota. Um cupom de contingência já impresso deixa de valer.
+
+## XML: baixar uma nota ou exportar o período
+
+- `GET /invoices/{id}/xml/` entrega o XML como anexo (`xml_da_nota.py`). Na
+  ACBrLib ele está inteiro em `xml_content`; na Focus, `xml_content` guarda só
+  o CAMINHO do arquivo, e o XML é buscado lá na hora (falha da Focus = 502).
+- `POST /invoices/xml-export/` com `date_from`, `date_to` (data de emissão,
+  até 366 dias), `status` (padrão: autorizadas e canceladas), `document_model`
+  e `restaurant` monta um ZIP com uma pasta por situação e um `falhas.txt`
+  para o XML que não veio (`exportacao_xml.py`). Até 50 notas com o XML já
+  guardado, o ZIP sai na hora (201); o resto vai ao worker (202, `BulkJob`),
+  e o aviso no sino leva a `/notas-fiscais/exportar-xml/<id>`.
+- O ZIP é **temporário**: vale 24 h a partir do fim do lote. Depois disso a API
+  responde 410 e a tarefa `invoices.limpar_exportacoes_xml` (de hora em hora)
+  apaga o arquivo (`exportacao_xml_arquivo.py`). O download passa sempre pela
+  API — nunca pela URL de mídia —, e só quem pediu ou o administrador baixa: o
+  XML traz o CPF do consumidor.
+
 ## O webhook não deixa a nota parecendo não transmitida
 
 O webhook da Focus é o caminho normal da autorização assíncrona. Ele engolia

@@ -24,6 +24,14 @@ class InvoiceBulkResendMixin:
     @action(detail=False, methods=["post"], url_path="bulk-resend")
     def bulk_resend(self, request):
         """Entrega o reenvio ao worker sem retransmitir documentos finalizados."""
+        return self._enfileirar_notas(request, BulkJob.INVOICE_RESEND)
+
+    @action(detail=False, methods=["post"], url_path="bulk-recreate")
+    def bulk_recreate(self, request):
+        """Recria no worker as notas travadas (ver `recriar_nota.py`)."""
+        return self._enfileirar_notas(request, BulkJob.INVOICE_RECREATE)
+
+    def _enfileirar_notas(self, request, acao):
         payload = BulkInvoiceResendSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         ids = list(dict.fromkeys(payload.validated_data["ids"]))
@@ -31,7 +39,7 @@ class InvoiceBulkResendMixin:
         job = enqueue_bulk_job(
             account=request.account,
             user=request.user,
-            action=BulkJob.INVOICE_RESEND,
+            action=acao,
             payload={
                 "ids": [str(invoice_id) for invoice_id in ids],
                 "visible_ids": [str(invoice_id) for invoice_id in visible],
@@ -76,64 +84,35 @@ def run_invoice_resend_job(job):
     return result
 
 
-def _add_bulk_error(result, invoice_id, message):
-    result["failed"] += 1
-    result["errors"].append({"id": str(invoice_id), "message": message})
-
-
 def run_invoice_recreate_job(job):
-    """Recriar multiplas notas fiscais quando expiraram prazos."""
-    from apps.invoices.services import recreate_fiscal_invoice
+    from apps.invoices.recriar_nota import NotaNaoRecriavel, recriar_nota
 
     ids = job.payload["ids"]
-    visible_ids = job.payload["visible_ids"]
-    invoices = {str(invoice.pk): invoice for invoice in Invoice.objects.filter(pk__in=visible_ids)}
-    result = {
-        "requested": len(ids),
-        "recreated": 0,
-        "skipped_issued": 0,
-        "skipped_cancelled": 0,
-        "failed": 0,
-        "errors": [],
-    }
+    invoices = {str(invoice.pk): invoice for invoice in Invoice.objects.filter(pk__in=job.payload["visible_ids"])}
+    result = {"requested": len(ids), "recreated": 0, "skipped_issued": 0, "failed": 0, "errors": []}
     for invoice_id in ids:
         invoice = invoices.get(invoice_id)
         if invoice is None:
             _add_bulk_error(result, invoice_id, "Nota fiscal não encontrada.")
             continue
-        if invoice.status == Invoice.STATUS_ISSUED:
+        if invoice.status in (Invoice.STATUS_ISSUED, Invoice.STATUS_CANCELLED):
             result["skipped_issued"] += 1
             continue
-        if invoice.status == Invoice.STATUS_CANCELLED:
-            result["skipped_cancelled"] += 1
-            continue
         try:
-            recreate_fiscal_invoice(invoice, user=job.requested_by)
+            nova = recriar_nota(invoice, user=job.requested_by)
+        except NotaNaoRecriavel as exc:
+            _add_bulk_error(result, invoice_id, str(exc))
+            continue
         except ValidationError as exc:
             _add_bulk_error(result, invoice_id, exc.messages[0])
+            continue
+        if nova.status == Invoice.STATUS_ERROR:
+            _add_bulk_error(result, invoice_id, nova.error_message or "A SEFAZ recusou a nota recriada.")
             continue
         result["recreated"] += 1
     return result
 
 
-class BulkInvoiceRecreateMixin:
-    """Ação de bulk para recriar notas fiscais."""
-
-    @action(detail=False, methods=["post"], url_path="bulk-recreate")
-    def bulk_recreate(self, request):
-        """Entrega a recriação de notas ao worker."""
-        payload = BulkInvoiceResendSerializer(data=request.data)
-        payload.is_valid(raise_exception=True)
-        ids = list(dict.fromkeys(payload.validated_data["ids"]))
-        visible = self.get_queryset().filter(pk__in=ids).values_list("pk", flat=True)
-        job = enqueue_bulk_job(
-            account=request.account,
-            user=request.user,
-            action=BulkJob.INVOICE_RECREATE,
-            payload={
-                "ids": [str(invoice_id) for invoice_id in ids],
-                "visible_ids": [str(invoice_id) for invoice_id in visible],
-            },
-            total=len(ids),
-        )
-        return Response(queued_response(job), status=202)
+def _add_bulk_error(result, invoice_id, message):
+    result["failed"] += 1
+    result["errors"].append({"id": str(invoice_id), "message": message})

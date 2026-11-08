@@ -1,6 +1,6 @@
 <template>
-  <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" :disabled="loading" @click="confirmResend">
-    <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-send'" /> Reenviar NFC-e
+  <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" :disabled="loading" @click="confirmRun">
+    <i :class="loading ? 'pi pi-spin pi-spinner' : action.icon" /> {{ action.label }}
   </button>
 </template>
 
@@ -13,36 +13,41 @@ import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
 import { bulkJobToast } from "./bulkJobToast";
 
-const props = defineProps({ selection: { type: Array, required: true } });
+// `action` vem de `invoiceProConfig.bulkActions`: rota, textos e ícone. O
+// botão é um só para reenviar e recriar — o que muda é o que o worker faz.
+const props = defineProps({
+  selection: { type: Array, required: true },
+  action: { type: Object, required: true },
+});
 const emit = defineEmits(["completed"]);
 const confirm = useConfirm();
 const toast = useToast();
 const loading = ref(false);
 
-function confirmResend() {
+function confirmRun() {
   const issued = props.selection.filter((row) => row.status === "issued").length;
   confirm.require({
-    message: `Reenviar as notas selecionadas?${issued ? ` ${issued} nota(s) já emitida(s) serão ignoradas.` : ""}`,
-    header: "Confirmar reenvio em massa",
-    icon: "pi pi-send",
-    acceptLabel: "Reenviar",
+    message: `${props.action.confirmMessage}${issued ? ` ${issued} nota(s) já emitida(s) serão ignoradas.` : ""}`,
+    header: props.action.confirmHeader,
+    icon: props.action.icon,
+    acceptLabel: props.action.acceptLabel,
     rejectLabel: "Cancelar",
-    accept: resend,
+    accept: run,
   });
 }
 
-async function resend() {
+async function run() {
   const ids = props.selection.map((row) => row.id);
   if (!ids.length) return;
   loading.value = true;
   try {
-    const { data } = await api.post("/invoices/bulk-resend/", { ids }, { skipRestaurantScope: true });
+    const { data } = await api.post(props.action.endpoint, { ids }, { skipRestaurantScope: true });
     toast.add(bulkJobToast(data, "notas"));
     emit("completed");
   } catch (error) {
     toast.add({
       severity: "error",
-      summary: "Não foi possível reenviar as notas",
+      summary: props.action.errorSummary,
       detail: normalizeApiError(error).message,
       life: 5000,
     });

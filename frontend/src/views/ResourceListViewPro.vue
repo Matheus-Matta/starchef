@@ -318,9 +318,9 @@
             <i :class="bulkIgnoreLoading ? 'pi pi-spin pi-spinner' : 'pi pi-eye-slash'" /> Ignorar Notas ({{ selection.length }})
           </button>
           <template v-for="bulkAction in bulkActions" :key="bulkAction.key">
-            <InvoiceBulkResendButton
-              v-if="bulkAction.type === 'invoice-bulk-resend'"
-              :selection="selection"
+            <InvoiceBulkActionButton
+              v-if="bulkAction.type?.startsWith('invoice-bulk-')"
+              :selection="selection" :action="bulkAction"
               @completed="onInvoiceBulkCompleted"
             />
             <button v-else class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="runBulkAction(bulkAction)">
@@ -2464,7 +2464,7 @@ import { buildBulkPayload, createBulkForm, missingBulkScope } from "../utils/bul
 import { useAuthStore } from "../stores/auth";
 import { useRealtimeRows } from "../composables/useRealtimeRows";
 import AppDateRange from "../components/form/AppDateRange.vue";
-import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
+import InvoiceBulkActionButton from "../components/data/InvoiceBulkActionButton.vue";
 import { bulkJobToast } from "../components/data/bulkJobToast";
 import OrderBulkCancelDialog from "../components/data/OrderBulkCancelDialog.vue";
 import OrderBulkDeleteDialog from "../components/data/OrderBulkDeleteDialog.vue";

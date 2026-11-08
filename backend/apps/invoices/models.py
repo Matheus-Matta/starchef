@@ -383,16 +383,6 @@ class Invoice(TenantModel):
     error_message = models.TextField(blank=True)
     issued_at = models.DateTimeField(null=True, blank=True)
 
-    # Arquivamento: quando a nota expira e uma nova e recriada
-    replaced_by = models.OneToOneField(
-        "self",
-        null=True,
-        blank=True,
-        related_name="replaces",
-        on_delete=models.SET_NULL,
-        help_text="Aponta para a nova nota quando esta foi recriada/substitui da."
-    )
-
     class Meta:
         indexes = [
             models.Index(fields=["branch", "status", "created_at"]),

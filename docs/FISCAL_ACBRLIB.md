@@ -317,7 +317,9 @@ Os pontos que impedem documento em dobro:
 
 Prazo: a NFC-e em contingência tem de ser transmitida em até 24 h. A
 retransmissão roda a cada 2 minutos; uma nota pendente há mais de 12 h aparece
-como alerta no painel fiscal.
+como alerta no painel fiscal. Passado o prazo, **Recriar nota** descarta a
+contingência e emite a nota normal de novo, com o mesmo número
+(`docs/EMISSAO_FISCAL_ESTADOS.md`, "Reenviar ou recriar").
 
 ## Recusas comuns tratadas sozinhas
 

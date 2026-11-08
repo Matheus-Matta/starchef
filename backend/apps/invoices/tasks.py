@@ -77,3 +77,11 @@ def emitir_nota_do_pedido_pago_task(order_id, user_id=None, auto_print=True):
         return False
     usuario = get_user_model().objects.filter(pk=user_id).first() if user_id else None
     return issue_invoice_for_paid_order(pedido, user=usuario, auto_print=auto_print) is not None
+
+
+@shared_task(name="invoices.limpar_exportacoes_xml")
+def limpar_exportacoes_xml_task():
+    """Apaga o ZIP das exportações de XML com mais de 24 h (`exportacao_xml_arquivo`)."""
+    from apps.invoices.exportacao_xml_arquivo import limpar_vencidas
+
+    return limpar_vencidas()

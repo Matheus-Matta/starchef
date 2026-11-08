@@ -403,6 +403,8 @@ CELERY_BEAT_SCHEDULE = {
         "task": "invoices.emitir_pagos_sem_nota",
         "schedule": 60.0,
     },
+    # O ZIP da exportação de XML vale 24 h; depois some do armazenamento.
+    "invoices-limpar-exportacoes-xml": {"task": "invoices.limpar_exportacoes_xml", "schedule": 3600.0},
     "sync-inbound-nfe-sefaz": {
         "task": "apps.inbound_nfe.tasks.sync_all_inbound_nfe",
         "schedule": 5 * 3600.0,  # Consulta automática na SEFAZ a cada 5 horas

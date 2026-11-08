@@ -25,6 +25,7 @@ const KdsStationsView = () => import("../views/KdsStationsView.vue");
 const CosmosConfigView = () => import("../views/CosmosConfigView.vue");
 const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
 const RestaurantFiscalConfigView = () => import("../views/RestaurantFiscalConfigView.vue");
+const InvoiceXmlExportView = () => import("../views/InvoiceXmlExportView.vue");
 const ResourceFormView = () => import("../views/ResourceFormView.vue");
 const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
 const StockEntryFormView = () => import("../views/StockEntryFormView.vue");
@@ -192,6 +193,7 @@ export const router = createRouter({
         // empresa na Focus). Fica fora de `buildResourceRoutes` porque não é
         // uma das telas do CRUD genérico — chega pelo menu de ações da lista.
         { path: "restaurantes/:id/fiscal", name: "restaurante-fiscal", component: RestaurantFiscalConfigView, props: true, meta: { requiresAuth: true, title: "Configuração fiscal do restaurante", nav: "restaurantes", module: "financeiro" } },
+        { path: "notas-fiscais/exportar-xml/:id?", name: "notas-fiscais-exportar-xml", component: InvoiceXmlExportView, props: true, meta: { requiresAuth: true, title: "Exportar XML das notas", nav: "notas-fiscais", module: "financeiro" } },
         { path: "ingredientes/lote", name: "ingredientes-lote", component: IngredientBulkFormView, meta: { requiresAuth: true, title: "Cadastro de insumos em lote", nav: "ingredientes" } },
         { path: "estoque-posicao", name: "estoque-posicao", component: StockPositionView, meta: { requiresAuth: true, title: "Posição de estoque", nav: "estoque-posicao", module: "logistica" } },
         { path: "estoque-ajuste", name: "estoque-ajuste", component: StockBulkAdjustView, meta: { requiresAuth: true, title: "Ajuste de estoque", nav: "estoque-ajuste", module: "logistica" } },

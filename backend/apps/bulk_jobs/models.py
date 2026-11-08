@@ -12,7 +12,7 @@ class BulkJob(TenantBaseModel):
     ORDER_DELETE = "order_delete"
     INVOICE_RESEND = "invoice_resend"
     INVOICE_RECREATE = "invoice_recreate"
-    INVOICE_DOWNLOAD_XML = "invoice_download_xml"
+    INVOICE_XML_EXPORT = "invoice_xml_export"
     INBOUND_RECONCILE = "inbound_reconcile"
     INBOUND_XML_IMPORT = "inbound_xml_import"
     ACTION_CHOICES = [
@@ -21,7 +21,7 @@ class BulkJob(TenantBaseModel):
         (ORDER_DELETE, "Excluir pedidos"),
         (INVOICE_RESEND, "Reenviar NFC-e"),
         (INVOICE_RECREATE, "Recriar NFC-e"),
-        (INVOICE_DOWNLOAD_XML, "Baixar XMLs em ZIP"),
+        (INVOICE_XML_EXPORT, "Exportar XML das notas"),
         (INBOUND_RECONCILE, "Conciliar NF-e de entrada"),
         (INBOUND_XML_IMPORT, "Importar XML de entrada"),
     ]
