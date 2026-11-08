@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.imports",
     "apps.bulk_jobs",
+    "apps.cardapio_consumo",
     "apps.realtime",
     "apps.synchronization",
     "apps.inbound_nfe",
@@ -383,6 +384,8 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "America/Sao_Paulo"
+from celery.schedules import crontab  # noqa: E402
+
 CELERY_BEAT_SCHEDULE = {
     "bulk-jobs-recover": {
         "task": "bulk_jobs.recover",
@@ -405,6 +408,11 @@ CELERY_BEAT_SCHEDULE = {
     },
     # O ZIP da exportação de XML vale 24 h; depois some do armazenamento.
     "invoices-limpar-exportacoes-xml": {"task": "invoices.limpar_exportacoes_xml", "schedule": 3600.0},
+    # Cardápio de consumo: baixa do dia (passado o horário de cada um) e o
+    # aviso de véspera do que vai faltar.
+    "cardapio-consumo-executar": {"task": "cardapio_consumo.executar_vencidos", "schedule": 600.0},
+    "cardapio-consumo-aviso-de-vespera": {"task": "cardapio_consumo.avisar_faltas_de_amanha",
+                                          "schedule": crontab(hour=16, minute=0)},
     "sync-inbound-nfe-sefaz": {
         "task": "apps.inbound_nfe.tasks.sync_all_inbound_nfe",
         "schedule": 5 * 3600.0,  # Consulta automática na SEFAZ a cada 5 horas

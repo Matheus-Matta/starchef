@@ -67,6 +67,7 @@ import {
   GOODS_RECEIPT_STATUS_LABELS,
 } from "./enums";
 import { invoiceColumns, invoiceProConfig } from "./invoiceResource";
+import { consumptionMenuResource } from "./consumptionMenuResource";
 import { promotionResources } from "./promotionResources";
 import { formatMoney } from "../utils/format";
 
@@ -691,6 +692,7 @@ export const resources = [
       { key: "status", label: "Situação", type: "status", map: STOCK_DOC_STATUS_LABELS },
     ],
   },
+  consumptionMenuResource,
   {
     name: "estoque-saidas",
     documentView: true,

@@ -26,6 +26,7 @@ const CosmosConfigView = () => import("../views/CosmosConfigView.vue");
 const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
 const RestaurantFiscalConfigView = () => import("../views/RestaurantFiscalConfigView.vue");
 const InvoiceXmlExportView = () => import("../views/InvoiceXmlExportView.vue");
+const ConsumptionMenuView = () => import("../views/ConsumptionMenuView.vue");
 const ResourceFormView = () => import("../views/ResourceFormView.vue");
 const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
 const StockEntryFormView = () => import("../views/StockEntryFormView.vue");
@@ -199,6 +200,8 @@ export const router = createRouter({
         { path: "estoque-ajuste", name: "estoque-ajuste", component: StockBulkAdjustView, meta: { requiresAuth: true, title: "Ajuste de estoque", nav: "estoque-ajuste", module: "logistica" } },
         { path: "estoque-entradas/nova", name: "estoque-entrada-nova", component: StockEntryFormView, meta: { requiresAuth: true, title: "Nova entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
         { path: "estoque-entradas/:id", name: "estoque-entrada-documento", component: StockEntryFormView, props: true, meta: { requiresAuth: true, title: "Entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
+        { path: "cardapios-consumo/novo", name: "cardapio-consumo-novo", component: ConsumptionMenuView, meta: { requiresAuth: true, title: "Novo cardápio de consumo", nav: "cardapios-consumo", module: "logistica" } },
+        { path: "cardapios-consumo/:id", name: "cardapio-consumo-documento", component: ConsumptionMenuView, props: true, meta: { requiresAuth: true, title: "Cardápio de consumo", nav: "cardapios-consumo", module: "logistica" } },
         { path: "estoque-saidas/nova", name: "estoque-saida-nova", component: StockExitFormView, meta: { requiresAuth: true, title: "Nova saída de estoque", nav: "estoque-saidas", module: "logistica" } },
         { path: "estoque-saidas/:id/conferencia", name: "estoque-saida-conferencia", component: StockExitPickingView, props: true, meta: { requiresAuth: true, title: "Conferência de saída", nav: "estoque-saidas", module: "logistica" } },
         { path: "estoque-saidas/:id", name: "estoque-saida-documento", component: StockExitFormView, props: true, meta: { requiresAuth: true, title: "Saída de estoque", nav: "estoque-saidas", module: "logistica" } },

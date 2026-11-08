@@ -86,6 +86,7 @@ from apps.restaurants.views import (
     TableSectorViewSet,
     TableViewSet,
 )
+from apps.cardapio_consumo.views import CardapioConsumoViewSet
 from apps.stock.views import (
     GoodsReceiptViewSet,
     InventoryLotViewSet,
@@ -186,6 +187,7 @@ router.register("stock/exits", StockExitViewSet, basename="stock-exits")
 router.register("stock/receipts", GoodsReceiptViewSet, basename="goods-receipts")
 router.register("stock/inventory-lots", InventoryLotViewSet, basename="inventory-lots")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
+router.register("stock/consumption-menus", CardapioConsumoViewSet, basename="consumption-menus")
 router.register("assets/location-history", AssetLocationHistoryViewSet, basename="asset-location-history")
 router.register("assets/reusables", ReusableAssetViewSet, basename="reusable-assets")
 router.register("assets", AssetViewSet, basename="assets")

@@ -1016,3 +1016,30 @@ Documentação:
 - usar QR Code como padrão para etiquetas internas e Code 128 quando o
   equipamento ou o processo exigir código de barras linear;
 - manter movimentos confirmados imutáveis e corrigi-los somente por reversão.
+
+## 31. Cardápio de consumo (baixa automática programada)
+
+Para o buffet que repete o cardápio: em vez de lançar a saída à mão todo dia,
+o cardápio de consumo (`apps/cardapio_consumo/`, tela **Logística › Cardápios
+de consumo**) diz O QUE sai, DE ONDE e QUANDO, e o Celery Beat faz a baixa.
+
+- **Itens:** insumo (em qualquer unidade da mesma grandeza: 8 kg ou 500 g) ou
+  produto. O produto sai pela ficha técnica, em rendimentos — como a baixa da
+  venda (`necessidade.py`); sem ficha, pelo insumo direto do cadastro.
+- **Repetição:** todo dia, dias da semana (vários) ou dia do mês. Dia que não
+  existe no mês vira o último dia dele (31 → 28 em fevereiro). `comeca_em`
+  impede a baixa antes da data, e `horario` diz a partir de que hora sai.
+- **Execução** (`execucao.py`, beat a cada 10 min): uma **saída de estoque
+  comum** (`StockExit`, separação FIFO/FEFO). `confirma_sozinho` ligado
+  confirma na hora; desligado, a saída nasce em rascunho para alguém conferir.
+- **Sem saldo:** baixa o que tem, tira do documento o que não tem nada e
+  registra o que faltou em `ExecucaoCardapio.faltas` e no sino.
+- **Véspera** (`previsao.py`, todo dia às 16h): avisa no sino o que vai faltar
+  amanhã, somando os cardápios do mesmo local contra o saldo de agora. A tela
+  mostra a mesma previsão a qualquer hora.
+- **Uma vez por dia:** índice único `(cardapio, data)`. Servidor parado não
+  acumula: quando volta, só a baixa de HOJE sai.
+- **Um servidor só** (`quem_executa.py`): com servidor de loja, quem baixa é a
+  loja; a nuvem só baixa conta sem loja. Senão o estoque sairia em dobro.
+- **Operador:** o movimento exige um. É quem cadastrou ou editou o cardápio por
+  último; sem ele, um gerente da conta.

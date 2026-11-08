@@ -311,6 +311,7 @@ const groups = computed(() =>
         canManage.value ? { id: "estoque-ajuste", label: "Ajuste em lote", icon: "settings" } : null,
         canManage.value ? { id: "estoque-entradas", label: "Entradas", icon: "package" } : null,
         canManage.value ? { id: "estoque-saidas", label: "Saídas", icon: "truck" } : null,
+        canManage.value ? { id: "cardapios-consumo", label: "Cardápios de consumo", icon: "clipboard-list" } : null,
         canManage.value ? { id: "estoque-lotes", label: "Lotes e validades", icon: "clipboard-list" } : null,
         canManage.value ? { id: "estoque", label: "Movimentações", icon: "clipboard-list" } : null,
         canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "map-pin" } : null,

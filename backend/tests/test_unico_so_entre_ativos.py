@@ -31,6 +31,7 @@ CONTAM_OS_EXCLUIDOS = {
     "inbound_nfe.NFeEvent": "evento fiscal é único por chave/código/sequência",
     "inbound_nfe.NFeManifestation": "manifestação é única por nota/evento/sequência",
     "inbound_nfe.InboundNFeItem": "item é único dentro da nota",
+    "cardapio_consumo.ExecucaoCardapio": "uma baixa por cardápio por dia: apagar o registro não pode baixar de novo",
 }
 
 
