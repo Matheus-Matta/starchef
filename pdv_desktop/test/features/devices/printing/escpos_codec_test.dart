@@ -73,7 +73,7 @@ void main() {
 
         expect(
           bytes,
-          containsAllInOrder([0x1b, 0x40, 0x1b, 0x74, 0x02, 0x1b, 0x33, 34]),
+          containsAllInOrder([0x1b, 0x40, 0x1b, 0x74, 0x02, 0x1b, 0x32]),
         );
         expect(bytes, containsAllInOrder(utf8.encode('TICKET')));
         expect(
@@ -108,22 +108,16 @@ void main() {
 
     test('acento combinante (NFD) não vira "?" no papel', () {
       // "Ç" pode chegar decomposto: "C" + cedilha combinante (U+0327).
-      final bytes = EscPosCodec.rawTransportBytes(
-        'SERVIÇO',
-        isEscPos: true,
-      );
+      final bytes = EscPosCodec.rawTransportBytes('SERVIÇO', isEscPos: true);
 
       expect(bytes, containsAllInOrder(utf8.encode('SERVICO')));
       expect(bytes, isNot(contains(0x3f)));
     });
 
     test('toda nota termina com margem em branco antes do corte', () {
-      final bytes = EscPosCodec.rawTransportBytes(
-        'CUPOM',
-        isEscPos: true,
-      );
-      final tail = EscPosCodec.feedBeforeCutBytes.length +
-          EscPosCodec.cutBytes.length;
+      final bytes = EscPosCodec.rawTransportBytes('CUPOM', isEscPos: true);
+      final tail =
+          EscPosCodec.feedBeforeCutBytes.length + EscPosCodec.cutBytes.length;
       final margin = bytes.sublist(
         bytes.length - tail - EscPosCodec.finalBlankLines,
         bytes.length - tail,
@@ -216,10 +210,7 @@ void main() {
     test('does not duplicate a fallback already rendered by the backend', () {
       const content = 'TICKET\nCOMANDA - CODE128\nCMD-42';
 
-      expect(
-        EscPosCodec.textWithBarcodeFallback(content, 'CMD-42'),
-        content,
-      );
+      expect(EscPosCodec.textWithBarcodeFallback(content, 'CMD-42'), content);
     });
 
     test('keeps textual fallback on a non-ESC/POS raw transport', () {
@@ -238,10 +229,7 @@ void main() {
     test('avança o papel até a guilhotina no caminho que só aceita texto', () {
       // Sem comando de corte para enviar, as linhas em branco são o que
       // empurra o fim do cupom para além da lâmina antes de o driver cortar.
-      expect(
-        EscPosCodec.textWithBottomMargin('TICKET'),
-        'TICKET${'\n' * 6}',
-      );
+      expect(EscPosCodec.textWithBottomMargin('TICKET'), 'TICKET${'\n' * 6}');
       expect(
         EscPosCodec.textWithBottomMargin('TICKET\n'),
         'TICKET\n${'\n' * 6}',
@@ -262,7 +250,9 @@ void main() {
       // O avanço fica com o conteúdo; só a guilhotina é separada, para o
       // transporte drenar o papel antes de acionar a lâmina.
       expect(
-        parts.content.sublist(parts.content.length - 6),
+        parts.content.sublist(
+          parts.content.length - EscPosCodec.feedBeforeCutBytes.length,
+        ),
         EscPosCodec.feedBeforeCutBytes,
       );
       expect(parts.cut, EscPosCodec.cutBytes);
@@ -273,10 +263,13 @@ void main() {
     test('monta ESC p com o pino e os tempos em passos de 2 ms', () {
       expect(EscPosCodec.openDrawerBytes(), [0x1b, 0x70, 0x00, 0x19, 0xfa]);
       // Pino 5 é a segunda saída do conector: `m = 1`.
-      expect(
-        EscPosCodec.openDrawerBytes(pin: 5, onMs: 50, offMs: 500),
-        [0x1b, 0x70, 0x01, 25, 250],
-      );
+      expect(EscPosCodec.openDrawerBytes(pin: 5, onMs: 50, offMs: 500), [
+        0x1b,
+        0x70,
+        0x01,
+        25,
+        250,
+      ]);
     });
 
     test('nunca deixa o pulso cair para zero', () {
@@ -286,10 +279,10 @@ void main() {
     });
 
     test('respeita o teto de um byte por tempo', () {
-      expect(
-        EscPosCodec.openDrawerBytes(onMs: 5000, offMs: 5000).sublist(3),
-        [255, 255],
-      );
+      expect(EscPosCodec.openDrawerBytes(onMs: 5000, offMs: 5000).sublist(3), [
+        255,
+        255,
+      ]);
     });
 
     test('o pulso sai DEPOIS do corte e no mesmo trabalho', () {
@@ -307,7 +300,9 @@ void main() {
       // térmica de rede aceita uma conexão por vez.
       expect(parts.cut, [...EscPosCodec.cutBytes, ...pulse]);
       expect(
-        parts.content.sublist(parts.content.length - 6),
+        parts.content.sublist(
+          parts.content.length - EscPosCodec.feedBeforeCutBytes.length,
+        ),
         EscPosCodec.feedBeforeCutBytes,
       );
     });

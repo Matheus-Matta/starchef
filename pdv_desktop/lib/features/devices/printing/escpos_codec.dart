@@ -18,15 +18,14 @@ abstract final class EscPosCodec {
   ///
   /// A lâmina fica 2 a 3 cm acima da cabeça térmica: acionar o corte logo
   /// depois do texto corta o rodapé ao meio — ou empurra o final do cupom
-  /// para o começo do próximo. `ESC 3 40` fixa o passo em 40 pontos (5 mm a
-  /// 203 dpi) e `ESC d 6` avança seis linhas, ~30 mm, folga suficiente para
-  /// o fim do cupom ultrapassar a lâmina em qualquer térmica de 80 mm.
+  /// para o começo do próximo. `ESC 2` (passo de 1/6") e `ESC d 7` avançam
+  /// ~30 mm, folga para o fim do cupom passar a lâmina em qualquer térmica.
   ///
   /// Um único `ESC d` em vez de vários `LF` soltos é deliberado: foi a
   /// sequência de LFs repetidos que causou o corte duplo na MP-4200 HS.
   static const List<int> feedBeforeCutBytes = [
-    0x1b, 0x33, 40, // ESC 3 40: passo de 40 pontos só para o avanço final.
-    0x1b, 0x64, 6, // ESC d 6: seis avanços de linha (~30 mm).
+    0x1b, 0x32, // ESC 2: passo padrão de 1/6" (4,23 mm) em qualquer impressora.
+    0x1b, 0x64, 7, // ESC d 7: sete avanços de linha (~30 mm).
   ];
 
   /// Linhas em branco impressas ao final de toda nota, como respiro entre o
@@ -263,7 +262,8 @@ abstract final class EscPosCodec {
     final result = <int>[
       0x1b, 0x40, // Initialize.
       0x1b, 0x74, 0x02, // ESC t 2: pagina PC850 (padrao brasileiro).
-      0x1b, 0x33, 34, // Comfortable line spacing.
+      // `ESC 3 34` contava em unidades da impressora (2,4 mm nas de 1/360").
+      0x1b, 0x32, // ESC 2: 1/6" (4,23 mm) em qualquer impressora.
       0x1d, 0x4c, 8, 0, // Small left margin.
     ];
     var firstTextLine = true;
