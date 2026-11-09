@@ -7,7 +7,7 @@
         <p>O que sai do estoque sozinho, no dia certo. Cada execução vira uma saída de estoque comum.</p>
       </div>
       <div class="stock-doc__head-actions">
-        <Button label="Voltar" icon="pi pi-arrow-left" text @click="router.push({ name: 'cardapios-consumo' })" />
+        <Button label="Voltar" icon="pi pi-arrow-left" text @click="voltarParaLista(router, 'cardapios-consumo')" />
         <Button label="Salvar" icon="pi pi-save" :loading="saving" :disabled="loading" @click="save" />
       </div>
     </header>
@@ -81,6 +81,7 @@
 <script setup>
 import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
+import { voltarParaLista } from "../utils/voltarParaLista";
 import Button from "primevue/button";
 import InputNumber from "primevue/inputnumber";
 import InputSwitch from "primevue/inputswitch";

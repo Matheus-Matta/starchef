@@ -14,6 +14,8 @@
  */
 import { watch } from "vue";
 
+import { lembrarLista } from "../utils/voltarParaLista";
+
 const vazio = (valor) => valor === "" || valor === null || valor === undefined;
 
 function lerTudo(campos) {
@@ -59,9 +61,11 @@ export function useListUrlState({ route, router, campos }) {
     if (route.name !== nomeDaRota) return;
     const outros = Object.fromEntries(Object.entries(route.query).filter(([chave]) => !ehDaTela(campos, chave)));
     const query = { ...outros, ...daTela };
+    lembrarLista(nomeDaRota, query);
     if (JSON.stringify(query) === JSON.stringify(route.query)) return;
     router.replace({ query });
   }, { deep: true });
 
+  lembrarLista(nomeDaRota, route.query);
   return { restaurou };
 }

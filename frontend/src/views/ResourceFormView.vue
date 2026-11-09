@@ -955,6 +955,7 @@
  */
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { voltarParaLista } from "../utils/voltarParaLista";
 import Button from "primevue/button";
 import Checkbox from "primevue/checkbox";
 import Column from "primevue/column";
@@ -1103,9 +1104,8 @@ const modeLabel = computed(() => (isCreate.value ? "Novo" : isEdit.value ? "Edit
 const skeletonCount = computed(() => visibleFormFields.value.length || props.columns.length || 6);
 
 /* ── Navegacao ─────────────────────────────────────────────────────── */
-function goToList() {
-  router.push({ name: baseName.value });
-}
+// Volta para a lista como estava (filtros, página, rolagem): ver voltarParaLista.
+const goToList = () => voltarParaLista(router, baseName.value);
 function goToView(id) {
   router.push({ name: `${baseName.value}--view`, params: { id } });
 }

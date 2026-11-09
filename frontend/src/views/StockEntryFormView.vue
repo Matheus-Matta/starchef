@@ -316,6 +316,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { voltarParaLista } from "../utils/voltarParaLista";
 import Button from "primevue/button";
 import Calendar from "primevue/calendar";
 import Column from "primevue/column";
@@ -562,9 +563,7 @@ async function applyCopy() {
   copiedFrom.value = { effective_date: data.effective_date, document_number: data.document_number };
 }
 
-function goBack() {
-  router.push({ name: "estoque-entradas" });
-}
+const goBack = () => voltarParaLista(router, "estoque-entradas");
 
 function toPayload() {
   return {

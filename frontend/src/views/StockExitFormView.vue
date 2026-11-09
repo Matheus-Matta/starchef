@@ -196,6 +196,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { voltarParaLista } from "../utils/voltarParaLista";
 import Button from "primevue/button";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
@@ -307,9 +308,7 @@ async function applyCopy() {
   copiedFrom.value = { effective_date: data.effective_date };
 }
 
-function goBack() {
-  router.push({ name: "estoque-saidas" });
-}
+const goBack = () => voltarParaLista(router, "estoque-saidas");
 
 function goToPicking() {
   router.push({ name: "estoque-saida-conferencia", params: { id: exitId.value } });

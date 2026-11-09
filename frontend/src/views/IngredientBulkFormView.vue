@@ -79,6 +79,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import { voltarParaLista } from "../utils/voltarParaLista";
 import Button from "primevue/button";
 import Checkbox from "primevue/checkbox";
 import InputNumber from "primevue/inputnumber";
@@ -119,9 +120,7 @@ function addRows(count) {
 
 const validRows = computed(() => rows.value.filter((row) => String(row.name || "").trim()));
 
-function goBack() {
-  router.push({ name: "ingredientes" });
-}
+const goBack = () => voltarParaLista(router, "ingredientes");
 
 function payloadFor(row) {
   const payload = {
