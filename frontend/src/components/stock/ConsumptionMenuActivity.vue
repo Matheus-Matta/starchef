@@ -118,6 +118,9 @@ defineExpose({ load });
 </script>
 
 <style scoped>
+/* `scoped` não atravessa componentes: sem isto os cartões saíam sem estilo. */
+@import "../../styles/stock-document.css";
+
 /* As duas seções entram direto na coluna da página. */
 .consumption-activity { display: contents; }
 .consumption-run { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }

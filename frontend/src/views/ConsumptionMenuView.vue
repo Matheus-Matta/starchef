@@ -50,14 +50,20 @@
           </label>
           <div class="stock-field stock-field--wide">
             <span>Confirmação</span>
-            <div class="stock-switch">
+            <div class="consumption-switch">
               <InputSwitch v-model="form.confirma_sozinho" />
-              <small>{{ form.confirma_sozinho ? "Confirma sozinho: o estoque baixa no horário." : "Fica para conferir: a saída nasce em rascunho e alguém confirma." }}</small>
+              <div>
+                <strong>{{ form.confirma_sozinho ? "Confirma sozinho" : "Fica para conferir" }}</strong>
+                <small>{{ form.confirma_sozinho ? "O estoque baixa no horário, sem ninguém." : "A saída nasce em rascunho e alguém confirma o peso." }}</small>
+              </div>
             </div>
           </div>
           <div class="stock-field">
-            <span>Ativo</span>
-            <div class="stock-switch"><InputSwitch v-model="form.ativo" /></div>
+            <span>Situação</span>
+            <div class="consumption-switch">
+              <InputSwitch v-model="form.ativo" />
+              <div><strong>{{ form.ativo ? "Ativo" : "Pausado" }}</strong></div>
+            </div>
           </div>
           <label class="stock-field stock-field--full">
             <span>Observações</span>
@@ -66,7 +72,7 @@
         </div>
       </section>
 
-      <ConsumptionMenuItems v-model="rows" :ingredients="ingredients" :products="products" />
+      <ConsumptionMenuItems v-model="rows" />
       <ConsumptionMenuActivity v-if="id" :key="activityKey" :menu-id="id" />
     </template>
   </div>
@@ -103,16 +109,15 @@ const form = reactive({
 });
 const rows = ref([]);
 const locations = ref([]);
-const ingredients = ref([]);
-const products = ref([]);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref("");
 const activityKey = ref(0);
 
 function fromItem(item) {
-  return { _key: item.id, tipo: item.ingredient ? "ingredient" : "product", ingredient: item.ingredient,
-           product: item.product, quantidade: Number(item.quantidade), unidade: item.unidade || "" };
+  const tipo = item.ingredient ? "ingredient" : "product";
+  return { _key: `${tipo}:${item.ingredient || item.product}`, tipo, nome: item.nome, unidadeBase: item.unidade_do_insumo || "",
+           ingredient: item.ingredient, product: item.product, quantidade: Number(item.quantidade), unidade: item.unidade || "" };
 }
 
 function payload() {
@@ -147,15 +152,11 @@ async function save() {
 
 onMounted(async () => {
   try {
-    const [locais, insumos, produtos, atual] = await Promise.all([
+    const [locais, atual] = await Promise.all([
       api.get("/stock/locations/", { params: { is_active: true, page_size: 200 } }),
-      api.get("/menu/ingredients/", { params: { is_active: true, page_size: 500 } }),
-      api.get("/menu/products/", { params: { page_size: 500 } }),
       props.id ? api.get(`/stock/consumption-menus/${props.id}/`) : Promise.resolve(null),
     ]);
     locations.value = locais.data.results || locais.data;
-    ingredients.value = insumos.data.results || insumos.data;
-    products.value = produtos.data.results || produtos.data;
     if (atual) {
       Object.assign(form, { ...atual.data, horario: String(atual.data.horario || "").slice(0, 5) });
       rows.value = atual.data.itens.map(fromItem);
@@ -172,4 +173,8 @@ onMounted(async () => {
 
 <style scoped>
 @import "../styles/stock-document.css";
+
+.consumption-switch { display: flex; align-items: center; gap: 12px; min-height: var(--control-h); }
+.consumption-switch > div { display: flex; flex-direction: column; gap: 2px; }
+.consumption-switch strong { color: var(--text-strong); font-size: 13px; }
 </style>
