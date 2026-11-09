@@ -9,13 +9,19 @@ requisicao que concluiu a venda (o `on_commit` roda antes de a resposta sair),
 e emitir aqui fazia o caixa esperar a SEFAZ inteira — de 1 s a 40 s — para a
 tela liberar. Passando de 20 s o PDV desistia, repetia, saia da tela, e o
 DANFE se perdia na corrida com a emissao que ainda estava na SEFAZ.
+
+NADA AQUI PODE SUBIR. A venda ja esta gravada: um erro que escapa vira HTTP
+500 numa venda concluida, o PDV acha que falhou e o operador clica de novo
+(`tests/test_venda_paga_nunca_vira_500.py`). So `kombu.OperationalError` era
+tratado, e um `redis.ConnectionError` escapava.
 """
 import logging
 
 from django.dispatch import receiver
-from kombu.exceptions import OperationalError
 
 from apps.orders.signals import order_fully_paid
+
+logger = logging.getLogger(__name__)
 
 
 @receiver(order_fully_paid, dispatch_uid="invoices_issue_on_full_payment")
@@ -25,11 +31,14 @@ def issue_invoice_on_full_payment(sender, order, user=None, auto_print=True, **k
     try:
         emitir_nota_do_pedido_pago_task.delay(
             str(order.pk), str(user.pk) if user is not None else None, auto_print)
-    except OperationalError:
-        # Sem o Redis a fila nao existe. Esperar a SEFAZ e ruim; venda paga
-        # sem nota e pior — emite aqui, como antes.
-        logging.getLogger(__name__).warning(
-            "Fila do Celery fora: NFC-e do pedido %s emitida na requisicao", order.pk)
-        from apps.invoices.services import issue_invoice_for_paid_order
+        return
+    except Exception:  # noqa: BLE001 — qualquer falha da fila (kombu, redis, rede)
+        # Esperar a SEFAZ e ruim; venda paga sem nota e pior — emite aqui.
+        logger.warning("Fila do Celery fora: NFC-e do pedido %s emitida na requisicao", order.pk, exc_info=True)
 
+    from apps.invoices.services import issue_invoice_for_paid_order
+
+    try:
         issue_invoice_for_paid_order(order, user=user, auto_print=auto_print)
+    except Exception:  # noqa: BLE001 — a varredura de pagos sem nota tenta de novo
+        logger.exception("NFC-e do pedido %s nao saiu agora; fica para emitir_pagos_sem_nota", order.pk)

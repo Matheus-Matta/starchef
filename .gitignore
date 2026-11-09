@@ -24,6 +24,8 @@ backend/media/
 backend/staticfiles/
 backend/db.sqlite3
 backend/db*.sqlite3
+# Cópias de segurança do banco local (ex.: antes de um migrate).
+backend/db*.sqlite3.bak*
 backend/test.sqlite3
 test.sqlite3
 # Arquivos-irmaos do modo WAL do SQLite (ver docs/BACKEND.md). Aparecem ao lado

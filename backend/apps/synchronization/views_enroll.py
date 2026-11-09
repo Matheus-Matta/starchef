@@ -55,7 +55,7 @@ class SyncEnrollView(APIView):
 
         from apps.synchronization.tasks.bootstrap import run_bootstrap
 
-        transaction.on_commit(lambda: run_bootstrap.delay(str(run.id)))
+        transaction.on_commit(lambda: run_bootstrap.delay(str(run.id)), robust=True)
         return Response(
             {
                 "node_id": str(no.id),

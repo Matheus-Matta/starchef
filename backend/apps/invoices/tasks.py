@@ -59,7 +59,9 @@ def emitir_pagos_sem_nota_task():
     return emitir_pagos_sem_nota()
 
 
-@shared_task(name="invoices.emitir_nota_do_pedido_pago")
+# `ignore_result`: ninguém lê o resultado, e guardá-lo fazia o processo web
+# abrir uma conexão a mais com o Redis só para ouvir a resposta.
+@shared_task(name="invoices.emitir_nota_do_pedido_pago", ignore_result=True)
 def emitir_nota_do_pedido_pago_task(order_id, user_id=None, auto_print=True):
     """A NFC-e do pedido que acabou de ser pago, fora da requisição do caixa.
 

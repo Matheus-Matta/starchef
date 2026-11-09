@@ -144,7 +144,7 @@ class NodeActionsMixin:
         # SyncRun que a transação ainda não gravou.
         from apps.synchronization.tasks.bootstrap import run_bootstrap
 
-        transaction.on_commit(lambda: run_bootstrap.delay(str(run.id)))
+        transaction.on_commit(lambda: run_bootstrap.delay(str(run.id)), robust=True)
         self._auditar(request, no, f"iniciou carga {run_type} ({run.id})")
         messages.success(
             request,

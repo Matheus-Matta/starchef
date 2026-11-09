@@ -48,5 +48,5 @@ class ImportJobViewSet(BaseTenantViewSet):
         )
         from apps.imports.tasks import run_import_task
 
-        transaction.on_commit(lambda: run_import_task.delay(str(job.pk)))
+        transaction.on_commit(lambda: run_import_task.delay(str(job.pk)), robust=True)
         return Response(self.get_serializer(job).data, status=status.HTTP_202_ACCEPTED)

@@ -65,7 +65,7 @@ class SyncNodeViewSet(AccountScopedMixin, viewsets.ModelViewSet):
 
         from apps.synchronization.tasks.bootstrap import run_bootstrap
 
-        transaction.on_commit(lambda: run_bootstrap.delay(str(run.id)))
+        transaction.on_commit(lambda: run_bootstrap.delay(str(run.id)), robust=True)
         logger.info("sync-api: %s iniciou carga %s no nó %s", request.user, run.id, no.id)
         return Response(SyncRunSerializer(run).data, status=status.HTTP_202_ACCEPTED)
 

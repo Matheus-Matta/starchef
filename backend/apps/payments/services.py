@@ -807,11 +807,11 @@ def register_payment(
             # (integracao, cliente antigo): o comportamento automatico segue
             # valendo, senao a venda ficaria sem cupom nenhum.
             #
-            # A nota fiscal continua sendo emitida na hora nos dois casos — a
-            # SEFAZ pode demorar e nao ha razao para prender isso ao clique.
+            # A nota sai nos dois casos; a SEFAZ nao fica presa ao clique.
             auto_print = terminal is None
             transaction.on_commit(
-                lambda: order_fully_paid.send(sender=Order, order=order, user=user, auto_print=auto_print)
+                lambda: order_fully_paid.send(sender=Order, order=order, user=user, auto_print=auto_print),
+                robust=True,  # venda gravada nunca responde 500 (test_venda_paga_nunca_vira_500)
             )
         return payment
 
