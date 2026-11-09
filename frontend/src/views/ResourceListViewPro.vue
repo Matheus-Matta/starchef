@@ -961,7 +961,7 @@
       </div>
     </section>
 
-    <ResourceAdvancedFiltersDialog v-model="advancedFiltersVisible" :fields="advancedFilterFields" :values="advancedFilters" @change="setAdvancedFilter" @clear="clearAdvancedFilters" @apply="applyAdvancedFilters" />
+    <ResourceAdvancedFiltersDialog v-model="advancedFiltersVisible" :fields="advancedFilterFields" :values="advancedFilters" :columns="props.columns" @change="setAdvancedFilter" @clear="clearAdvancedFilters" @apply="applyAdvancedFilters" />
 
     <Dialog v-model:visible="importVisible" modal :header="`Importar ${title}`" :style="{ width: 'min(560px, 94vw)' }">
       <div class="rpro__import">

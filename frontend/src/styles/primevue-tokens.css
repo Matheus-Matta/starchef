@@ -779,3 +779,13 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
 .p-message.p-message-error .p-message-text {
   color: var(--danger-text);
 }
+
+/* `fluid` (campo ocupa a largura toda) é do PrimeVue 4; no 3 o atributo só
+   chega à raiz do componente e não fazia nada — 89 campos em 18 telas
+   achavam que esticavam. Esta regra dá ao 3 o mesmo efeito, então o código
+   já fica no formato do 4. */
+.p-dropdown[fluid], .p-multiselect[fluid], .p-inputnumber[fluid], .p-calendar[fluid],
+.p-autocomplete[fluid], .p-password[fluid], .p-inputtext[fluid], .p-textarea[fluid],
+.p-icon-field[fluid] { width: 100%; }
+.p-inputnumber[fluid] > .p-inputtext, .p-calendar[fluid] > .p-inputtext,
+.p-autocomplete[fluid] > .p-inputtext, .p-password[fluid] > .p-inputtext { width: 100%; min-width: 0; }
