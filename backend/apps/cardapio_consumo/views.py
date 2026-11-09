@@ -9,6 +9,7 @@ from apps.cardapio_consumo.agenda import proximas_datas
 from apps.cardapio_consumo.execucao import JaExecutado, executar
 from apps.cardapio_consumo.models import CardapioConsumo
 from apps.cardapio_consumo.previsao import previsao_para
+from apps.cardapio_consumo.quem_executa import BaixaSoNaNuvem, este_servidor_executa
 from apps.cardapio_consumo.serializers import CardapioConsumoSerializer, ExecucaoCardapioSerializer
 from apps.core.modules import MODULE_LOGISTICA
 from apps.core.viewsets import BaseTenantViewSet
@@ -29,7 +30,8 @@ class CardapioConsumoViewSet(BaseTenantViewSet):
         cardapio = self.get_object()
         data = self._data(request) or next(iter(proximas_datas(cardapio, timezone.localdate(), 1)), None)
         linhas, avisos = previsao_para([cardapio], cardapio.local)
-        return Response({"data": data.isoformat() if data else None, "linhas": linhas, "avisos": avisos})
+        return Response({"data": data.isoformat() if data else None, "linhas": linhas, "avisos": avisos,
+                         "baixa_aqui": este_servidor_executa()})
 
     @action(detail=True, methods=["post"])
     def executar(self, request, pk=None):
@@ -37,7 +39,8 @@ class CardapioConsumoViewSet(BaseTenantViewSet):
         cardapio = self.get_object()
         try:
             execucao = executar(cardapio, timezone.localdate(), user=request.user)
-        except JaExecutado as exc:
+        except (JaExecutado, BaixaSoNaNuvem) as exc:
+            # 409: é estado do servidor, não entrada errada — reenviar não muda nada.
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         return Response(ExecucaoCardapioSerializer(execucao).data, status=status.HTTP_201_CREATED)
 

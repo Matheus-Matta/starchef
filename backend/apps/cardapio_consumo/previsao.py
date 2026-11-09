@@ -46,11 +46,13 @@ def previsao_para(cardapios, local):
 
 def avisar_faltas_de_amanha(hoje=None):
     """Um aviso por conta e local, só quando algo vai faltar. Devolve quantos."""
+    if not este_servidor_executa():
+        return 0
     amanha = (hoje or timezone.localdate()) + timedelta(days=1)
     grupos = defaultdict(list)
     for cardapio in CardapioConsumo.all_objects.filter(ativo=True, deleted_at__isnull=True).select_related(
             "account", "local"):
-        if vence_em(cardapio, amanha) and este_servidor_executa(cardapio):
+        if vence_em(cardapio, amanha):
             grupos[(cardapio.account_id, cardapio.local_id)].append(cardapio)
 
     enviados = 0

@@ -17,7 +17,7 @@ from django.utils import timezone
 from apps.cardapio_consumo.agenda import vence_em
 from apps.cardapio_consumo.models import CardapioConsumo, ExecucaoCardapio
 from apps.cardapio_consumo.necessidade import necessidade_do_cardapio
-from apps.cardapio_consumo.quem_executa import este_servidor_executa
+from apps.cardapio_consumo.quem_executa import este_servidor_executa, garantir_que_este_servidor_executa
 from apps.core.tenant import tenant_context
 from apps.stock.lots import QUANTITY_PLACES, post_stock_exit, suggest_exit_lots
 from apps.stock.models import StockExit, StockExitItem
@@ -31,6 +31,8 @@ class JaExecutado(Exception):
 
 def executar_vencidos(agora=None):
     """Chamado pelo beat. Só o dia de HOJE: servidor parado não acumula dias."""
+    if not este_servidor_executa():
+        return 0
     agora = timezone.localtime(agora or timezone.now())
     hoje = agora.date()
     candidatos = (
@@ -41,7 +43,7 @@ def executar_vencidos(agora=None):
     )
     feitos = 0
     for cardapio in candidatos:
-        if not vence_em(cardapio, hoje) or not este_servidor_executa(cardapio):
+        if not vence_em(cardapio, hoje):
             continue
         try:
             executar(cardapio, hoje)
@@ -62,6 +64,7 @@ def executar(cardapio, data, user=None):
     """Cria (e, se o cardápio pede, confirma) a saída do dia. Uma vez por dia."""
     from apps.cardapio_consumo.avisos import avisar_execucao
 
+    garantir_que_este_servidor_executa()
     user = user or responsavel(cardapio)
     with tenant_context(cardapio.account):
         try:

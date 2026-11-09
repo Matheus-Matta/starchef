@@ -6,7 +6,10 @@
           <h2>Vai faltar?</h2>
           <p>{{ forecast.data ? `Próxima baixa em ${formatDate(forecast.data)}` : "Sem próxima baixa" }} — comparado com o saldo de agora.</p>
         </div>
-        <Button label="Executar agora" icon="pi pi-play" outlined size="small" :loading="running" @click="confirmRun" />
+        <Button v-if="forecast.baixa_aqui" label="Executar agora" icon="pi pi-play" outlined size="small" :loading="running" @click="confirmRun" />
+      </div>
+      <div v-if="forecast.baixa_aqui === false" class="stock-doc__alert stock-doc__alert--info">
+        <i class="pi pi-cloud" /> <span>A baixa é feita pela nuvem. Esta loja recebe a saída e o histórico pela sincronização.</span>
       </div>
       <div v-for="aviso in forecast.avisos" :key="aviso" class="stock-doc__alert stock-doc__alert--warn">
         <i class="pi pi-exclamation-circle" /> <span>{{ aviso }}</span>
@@ -119,4 +122,7 @@ defineExpose({ load });
 .consumption-activity { display: contents; }
 .consumption-run { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
 .consumption-muted { color: var(--text-muted); }
+/* O alerta base é vermelho (erro); previsão e "baixa na nuvem" não são erro. */
+.stock-doc__alert--warn { border-color: transparent; background: var(--warning-subtle); color: var(--warning-text); }
+.stock-doc__alert--info { border-color: transparent; background: var(--info-subtle); color: var(--info-text); }
 </style>

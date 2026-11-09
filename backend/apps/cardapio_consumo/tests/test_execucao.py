@@ -6,6 +6,7 @@ import pytest
 from django.utils import timezone
 
 from apps.cardapio_consumo.execucao import JaExecutado, executar, executar_vencidos
+from apps.cardapio_consumo.quem_executa import BaixaSoNaNuvem
 from apps.cardapio_consumo.models import CardapioConsumo, ExecucaoCardapio
 from apps.notifications.models import Notification
 from apps.stock.models import StockExit, StockLot
@@ -97,8 +98,24 @@ def test_agendador_so_executa_o_que_venceu_hoje_e_passou_do_horario(cardapio, in
     assert executados == {terca.nome} and quarta.nome not in executados and mais_tarde.nome not in executados
 
 
-def test_na_nuvem_com_servidor_de_loja_quem_baixa_e_a_loja(cardapio, insumo, estoque, settings, account):
-    """Os dois agendadores rodam; se os dois baixassem, o estoque sairia em dobro."""
+def test_loja_ligada_a_nuvem_nunca_baixa_so_recebe(cardapio, insumo, estoque, settings):
+    """Os dois agendadores rodam. Se a loja também baixasse, o estoque sairia em
+    dobro — e no dia da instalação ela baixava de novo o que a nuvem já baixou
+    de manhã, antes de a execução da nuvem chegar."""
+    settings.SYNC_ENABLED, settings.SYNC_NODE_TYPE = True, "local"
+    arroz = insumo("Arroz")
+    estoque(arroz, 20)
+    buffet = cardapio([(arroz, 8)], confirma_sozinho=True)
+
+    assert executar_vencidos(timezone.make_aware(datetime.combine(HOJE, time(8, 0)))) == 0
+    with pytest.raises(BaixaSoNaNuvem):
+        executar(buffet, HOJE)
+    assert _saldo(arroz) == Decimal("20.000")
+    assert not ExecucaoCardapio.all_objects.exists()
+
+
+def test_nuvem_baixa_mesmo_com_servidor_de_loja(cardapio, insumo, estoque, settings, account):
+    """Quem baixa é sempre a nuvem; a loja recebe a saída pela sincronização."""
     from apps.synchronization.constants import NodeType
     from apps.synchronization.models import SyncNode
 
@@ -108,5 +125,5 @@ def test_na_nuvem_com_servidor_de_loja_quem_baixa_e_a_loja(cardapio, insumo, est
     estoque(arroz, 20)
     cardapio([(arroz, 8)], confirma_sozinho=True)
 
-    assert executar_vencidos(timezone.make_aware(datetime.combine(HOJE, time(8, 0)))) == 0
-    assert _saldo(arroz) == Decimal("20.000")
+    assert executar_vencidos(timezone.make_aware(datetime.combine(HOJE, time(8, 0)))) == 1
+    assert _saldo(arroz) == Decimal("12.000")

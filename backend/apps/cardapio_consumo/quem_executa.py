@@ -1,28 +1,37 @@
-"""Só UM servidor baixa o cardápio: senão o estoque sai em dobro.
+"""Quem baixa o cardápio é a NUVEM; a loja só recebe (decisão do dono, 2026-11-09).
 
 Loja e nuvem têm o mesmo cadastro (sincronização) e o mesmo agendador. Se os
-dois executassem, cada um criaria a sua saída — com ids diferentes, as duas
-sincronizariam e o arroz sairia duas vezes. A regra é a da nota fiscal
-(`invoices/emissao_da_loja.py`): com servidor de loja, quem baixa é a loja
-(é lá que o estoque físico está); conta só-nuvem, a nuvem.
+dois baixassem, cada um criaria a sua saída — com ids diferentes, as duas
+sincronizariam e o arroz sairia duas vezes. A regra antiga ("com loja, baixa a
+loja") tinha uma janela: no dia em que a loja era matriculada, a nuvem já tinha
+baixado de manhã e a loja baixava de novo antes de a execução da nuvem chegar.
+
+Agora a loja ligada à nuvem não baixa nunca — nem pelo agendador, nem pelo
+"Executar agora", nem manda o aviso de véspera. A saída feita na nuvem desce
+pela sincronização como qualquer saída de estoque.
+
+A loja SEM nuvem (`SYNC_ENABLED` desligado) continua baixando: não existe
+outro servidor para fazer isso por ela.
 """
 from django.conf import settings
-from django.db.models import Q
 
 
-def _tipo_do_no():
+class BaixaSoNaNuvem(Exception):
+    """A loja ligada à nuvem pediu para baixar: quem baixa é a nuvem."""
+
+    mensagem = ("A baixa do cardápio é feita pela nuvem; esta loja só recebe a saída pela "
+                "sincronização. Use o painel da nuvem para executar agora.")
+
+    def __init__(self):
+        super().__init__(self.mensagem)
+
+
+def este_servidor_executa():
     if not getattr(settings, "SYNC_ENABLED", False):
-        return ""
-    return str(getattr(settings, "SYNC_NODE_TYPE", "") or "").strip().lower()
-
-
-def este_servidor_executa(cardapio):
-    if _tipo_do_no() != "cloud":
         return True
-    from apps.synchronization.constants import NodeType
-    from apps.synchronization.models import SyncNode
+    return str(getattr(settings, "SYNC_NODE_TYPE", "") or "").strip().lower() != "local"
 
-    return not SyncNode.objects.filter(
-        Q(restaurant_id=cardapio.restaurant_id) | Q(restaurant__isnull=True),
-        account_id=cardapio.account_id, node_type=NodeType.LOCAL, is_active=True,
-    ).exists()
+
+def garantir_que_este_servidor_executa():
+    if not este_servidor_executa():
+        raise BaixaSoNaNuvem()

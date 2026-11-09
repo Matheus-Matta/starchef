@@ -1039,7 +1039,13 @@ de consumo**) diz O QUE sai, DE ONDE e QUANDO, e o Celery Beat faz a baixa.
   mostra a mesma previsão a qualquer hora.
 - **Uma vez por dia:** índice único `(cardapio, data)`. Servidor parado não
   acumula: quando volta, só a baixa de HOJE sai.
-- **Um servidor só** (`quem_executa.py`): com servidor de loja, quem baixa é a
-  loja; a nuvem só baixa conta sem loja. Senão o estoque sairia em dobro.
+- **Só a nuvem baixa** (`quem_executa.py`, decisão do dono em 2026-11-09): a
+  loja ligada à nuvem não baixa nunca — nem o agendador, nem o "Executar
+  agora" (409), nem o aviso de véspera. Ela recebe o cadastro, a saída e o
+  histórico pela sincronização. Se os dois baixassem, o estoque sairia em
+  dobro; a regra anterior ("com loja, baixa a loja") deixava essa janela no dia
+  da matrícula da loja. Loja SEM nuvem (`SYNC_ENABLED` desligado) continua
+  baixando, porque não há outro servidor para isso. A previsão devolve
+  `baixa_aqui` para a tela esconder o botão.
 - **Operador:** o movimento exige um. É quem cadastrou ou editou o cardápio por
   último; sem ele, um gerente da conta.

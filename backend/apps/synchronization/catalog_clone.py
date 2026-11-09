@@ -49,13 +49,13 @@ _e("stock_exit_item", "stock.StockExitItem", conflict_policy=LOJA,
 _e("stock_allocation", "stock.StockAllocation", conflict_policy=LOJA,
    dependencies=("stock_exit_item", "stock_lot"), include_in_bootstrap=False)
 
-# Cardápio de consumo: o cadastro vale nos dois lados, mas só UM servidor
-# executa (`cardapio_consumo/quem_executa.py`); a execução sobe como histórico.
+# Cardápio de consumo: o cadastro vale nos dois lados, mas só a NUVEM baixa
+# (`cardapio_consumo/quem_executa.py`); a execução e a saída descem para a loja.
 _e("cardapio_consumo", "cardapio_consumo.CardapioConsumo", conflict_policy=NUVEM,
    dependencies=("stock_location",), include_in_bootstrap=False)
 _e("item_cardapio_consumo", "cardapio_consumo.ItemCardapioConsumo", conflict_policy=NUVEM,
    dependencies=("cardapio_consumo", "ingredient", "product"), include_in_bootstrap=False)
-_e("execucao_cardapio", "cardapio_consumo.ExecucaoCardapio", conflict_policy=LOJA,
+_e("execucao_cardapio", "cardapio_consumo.ExecucaoCardapio", conflict_policy=NUVEM,
    dependencies=("cardapio_consumo", "stock_exit"), include_in_bootstrap=False)
 
 # Nota de entrada (SEFAZ), baixada pela nuvem.

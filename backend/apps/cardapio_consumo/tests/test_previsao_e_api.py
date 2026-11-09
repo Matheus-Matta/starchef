@@ -34,6 +34,29 @@ def test_vespera_fica_quieta_quando_o_saldo_cobre(cardapio, insumo, estoque):
     assert avisar_faltas_de_amanha(hoje=date(2026, 11, 9)) == 0
 
 
+def test_vespera_nao_sai_da_loja_ligada_a_nuvem(cardapio, insumo, estoque, settings):
+    """O aviso é da nuvem: saindo dos dois lados, o gerente recebia dois."""
+    settings.SYNC_ENABLED, settings.SYNC_NODE_TYPE = True, "local"
+    arroz = insumo("Arroz")
+    estoque(arroz, 1)
+    cardapio([(arroz, 5)])
+
+    assert avisar_faltas_de_amanha(hoje=date(2026, 11, 9)) == 0
+
+
+def test_executar_agora_na_loja_e_recusado_e_a_tela_sabe(api_client, cardapio, insumo, estoque, settings):
+    """Executar na loja criaria uma baixa que a nuvem também faria às 06:00."""
+    settings.SYNC_ENABLED, settings.SYNC_NODE_TYPE = True, "local"
+    arroz = insumo("Arroz")
+    estoque(arroz, 20)
+    buffet = cardapio([(arroz, 8)], confirma_sozinho=True)
+
+    assert api_client.get(f"{URL}{buffet.pk}/previsao/").data["baixa_aqui"] is False
+    resposta = api_client.post(f"{URL}{buffet.pk}/executar/")
+    assert resposta.status_code == 409
+    assert "nuvem" in resposta.json()["error"]["message"]
+
+
 def test_cadastro_pelo_painel_com_itens_e_proximas_datas(api_client, cozinha, insumo):
     arroz = insumo("Arroz")
     resposta = api_client.post(URL, {
@@ -75,7 +98,7 @@ def test_previsao_e_executar_agora_pelo_painel(api_client, cardapio, insumo, est
     buffet = cardapio([(arroz, 8)], confirma_sozinho=True)
 
     previsao = api_client.get(f"{URL}{buffet.pk}/previsao/").data
-    assert previsao["linhas"][0]["falta"] == "3.000"
+    assert previsao["linhas"][0]["falta"] == "3.000" and previsao["baixa_aqui"] is True
 
     assert api_client.post(f"{URL}{buffet.pk}/executar/").status_code == 201
     assert api_client.post(f"{URL}{buffet.pk}/executar/").status_code == 409
