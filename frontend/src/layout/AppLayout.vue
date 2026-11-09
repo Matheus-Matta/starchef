@@ -28,9 +28,9 @@
         @toggle-theme="toggleTheme"
         @logout="logout"
       />
-      <section class="app-content" :class="{ 'app-content--full': route.meta.fullWidth, 'app-content--mobile-nav': showMobileBottomNav }">
+      <section ref="conteudo" class="app-content" :class="{ 'app-content--full': route.meta.fullWidth, 'app-content--mobile-nav': showMobileBottomNav }">
         <RouterView v-slot="{ Component }">
-          <Transition name="page" mode="out-in">
+          <Transition name="page" mode="out-in" @after-enter="rolagem.aoEntrar">
             <component :is="Component" :key="routeViewKey" />
           </Transition>
         </RouterView>
@@ -66,9 +66,15 @@ import {
 import { useAuthStore } from "../stores/auth";
 import { useNotificationsStore } from "../stores/notifications";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
+import { useScrollMemory } from "../composables/useScrollMemory";
+import { ROTAS_DO_PDV, chaveDaTela } from "./chaveDaTela";
 
 const route = useRoute();
 const router = useRouter();
+// Voltar devolve a tela na altura em que estava (quem rola é a `app-content`).
+const conteudo = ref(null);
+const rolagem = useScrollMemory({ router, elemento: conteudo });
+onUnmounted(rolagem.parar);
 const auth = useAuthStore();
 const notifications = useNotificationsStore();
 const sidebarCollapsed = ref(false);
@@ -89,7 +95,7 @@ useRealtimeResource(
 
 const activeKey = computed(() => route.meta.nav || route.name || "painel");
 const currentResource = computed(() => resources.find((resource) => resource.name === route.name) || null);
-const isPdvRoute = computed(() => ["pdv", "pedido-editar-itens"].includes(String(route.name)));
+const isPdvRoute = computed(() => ROTAS_DO_PDV.includes(String(route.name)));
 const showMobileBottomNav = computed(() => {
   return (String(route.name) === "painel" || String(route.name).startsWith("relatorio")) || Boolean(currentResource.value);
 });
@@ -111,17 +117,7 @@ const sidebarStats = computed(() => ({
 }));
 const canSeeAllRestaurants = computed(() => Boolean(auth.user?.is_superuser || auth.user?.profile_type === "admin" || auth.user?.profile_type === "owner"));
 const selectedRestaurant = computed(() => restaurants.value.find((restaurant) => restaurant.id === selectedRestaurantId.value) || null);
-const routeViewKey = computed(() => {
-  // A etapa do PDV usa a URL para alimentar o histórico do botão Voltar, mas
-  // não deve remontar o componente e perder o pedido que está sendo montado.
-  if (isPdvRoute.value) {
-    const query = { ...route.query };
-    delete query.step;
-    delete query.order;
-    return `${route.path}:${JSON.stringify(query)}:${selectedRestaurantId.value || "all"}:${scopeRefreshKey.value}`;
-  }
-  return `${route.fullPath}:${selectedRestaurantId.value || "all"}:${scopeRefreshKey.value}`;
-});
+const routeViewKey = computed(() => chaveDaTela(route, `${selectedRestaurantId.value || "all"}:${scopeRefreshKey.value}`));
 const currentScope = computed(() => {
   if (canSeeAllRestaurants.value && !selectedRestaurantId.value) {
     return {

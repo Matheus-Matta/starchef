@@ -9,6 +9,7 @@ import "./styles/pdv-panels.css";
 
 import { createApp } from "vue";
 import { createPinia } from "pinia";
+import { VueQueryPlugin } from "@tanstack/vue-query";
 import PrimeVue from "primevue/config";
 import ConfirmationService from "primevue/confirmationservice";
 import ToastService from "primevue/toastservice";
@@ -16,6 +17,7 @@ import Tooltip from "primevue/tooltip";
 
 import App from "./App.vue";
 import { router } from "./router";
+import { queryClient } from "./services/queryClient";
 import { initSentry } from "./sentry";
 import { installStaleChunkReload } from "./utils/staleChunkReload";
 
@@ -41,6 +43,7 @@ initSentry(app, router);
 installStaleChunkReload(router);
 
 app
+  .use(VueQueryPlugin, { queryClient })
   .use(PrimeVue, { ripple: true })
   .use(ConfirmationService)
   .use(ToastService)

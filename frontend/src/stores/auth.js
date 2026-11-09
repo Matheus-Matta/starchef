@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 
 import { api, loginRequest, refreshAccessToken } from "../services/api";
+import { queryClient } from "../services/queryClient";
 import { clearSession, hasSession, markSession } from "../services/tokenStorage";
 
 const SESSION_VALIDATION_TTL_MS = 30_000;
@@ -47,6 +48,8 @@ export const useAuthStore = defineStore("auth", {
   actions: {
     clearLocal() {
       clearSession();
+      // Outro usuário no mesmo navegador não pode abrir a lista do anterior.
+      queryClient.clear();
       lastValidatedAt = 0;
       this.authed = false;
       this.user = null;

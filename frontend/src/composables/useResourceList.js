@@ -1,5 +1,6 @@
 import { ref } from "vue";
 
+import { currentScope, queryClient } from "../services/queryClient";
 import { normalizeApiError } from "../utils/apiError";
 
 /**
@@ -53,16 +54,22 @@ export function useResourceList({ service, defaultParams = {}, buildParams, page
     return orderable.value === null || orderable.value.includes(key);
   }
 
-  /** Executa uma requisição protegida por loading/erro (mensagem normalizada). */
-  async function run(request) {
-    loading.value = true;
+  /**
+   * Executa uma requisição protegida por loading/erro (mensagem normalizada).
+   * `jaMostrando`: a tela já tem o que mostrar (cache) — sem esqueleto, e uma
+   * falha na conferência não apaga o que está na tela.
+   */
+  async function run(request, { jaMostrando = false } = {}) {
+    loading.value = !jaMostrando;
     error.value = "";
     try {
       applyResponse(await request());
     } catch (err) {
       error.value = normalizeApiError(err).message;
-      rows.value = [];
-      total.value = 0;
+      if (!jaMostrando) {
+        rows.value = [];
+        total.value = 0;
+      }
     } finally {
       loading.value = false;
     }
@@ -81,9 +88,20 @@ export function useResourceList({ service, defaultParams = {}, buildParams, page
     return params;
   }
 
-  /** Recarrega a página atual aplicando busca + filtros + ordenação. */
+  /**
+   * Recarrega a página atual aplicando busca + filtros + ordenação.
+   *
+   * Com cache: o que já foi visto aparece na hora; se tem menos de 10 s nem
+   * pergunta ao servidor, senão confere por baixo (ver `services/queryClient`).
+   */
   function load() {
-    return run(() => service.list(currentParams()));
+    const params = currentParams();
+    if (!service.endpoint) return run(() => service.list(params));
+    const queryKey = ["list", service.endpoint, service.globalScope ? "global" : currentScope(), params];
+    const cached = queryClient.getQueryData(queryKey);
+    if (cached) applyResponse(cached);
+    return run(() => queryClient.fetchQuery({ queryKey, queryFn: () => service.list(params) }),
+               { jaMostrando: Boolean(cached) });
   }
 
   /** Volta para a primeira página e recarrega (uso ao buscar/filtrar/ordenar). */

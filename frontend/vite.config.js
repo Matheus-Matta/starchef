@@ -44,12 +44,14 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 700,
       rollupOptions: {
         output: {
-          // Separa as libs grandes em chunks próprios (melhor cache do navegador:
-          // um deploy de código do app não invalida o vendor). PrimeVue v3 usa
-          // imports por subpath, então agrupamos por caminho no node_modules.
+          // O núcleo (Vue, roteador, axios) em chunks próprios: um deploy de
+          // código do app não invalida o cache dele no navegador.
+          //
+          // O PrimeVue NÃO entra aqui de propósito. Num chunk só, eram 646 KB
+          // baixados já na tela de login, que usa três componentes. Solto, cada
+          // componente vai junto da tela que o importa (o v3 importa por subpath).
           manualChunks(id) {
             if (!id.includes('node_modules')) return
-            if (/[\\/]node_modules[\\/](primevue|primeicons)[\\/]/.test(id)) return 'primevue'
             if (/[\\/]node_modules[\\/](vue|vue-router|pinia|@vue)[\\/]/.test(id)) return 'vue'
             if (/[\\/]node_modules[\\/]axios[\\/]/.test(id)) return 'axios'
           },

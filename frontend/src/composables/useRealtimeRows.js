@@ -1,3 +1,4 @@
+import { queryClient } from "../services/queryClient";
 import { useRealtimeResource } from "./useRealtimeResource";
 import { applyRealtimeChange, listIsAtRest, matchesFixedParams } from "../utils/realtimeRows";
 
@@ -41,6 +42,11 @@ export function useRealtimeRows({
   const atRest = () => listIsAtRest({ page: page.value, filterCount: filterCount.value, ordering: ordering.value });
 
   async function apply(payload) {
+    // A página na tela é corrigida linha a linha; as outras páginas guardadas
+    // no cache ficam velhas — marca para a próxima visita conferir.
+    if (service.endpoint) {
+      queryClient.invalidateQueries({ queryKey: ["list", service.endpoint], refetchType: "none" });
+    }
     if (!atRest()) return;
     if (registrarEvento()) return; // rajada: relê uma vez no fim
     if (!payload.id) return; // evento de lote (sem id): sem linha

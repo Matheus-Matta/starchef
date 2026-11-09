@@ -70,7 +70,7 @@ function buildResourceRoutes(resource) {
       // Todas as listagens usam o novo padrão de tabela (Pro).
       component: ResourceListViewPro,
       props: { ...resource, subtitle: "API REST", formEnabled: !!resource.formFields },
-      meta: meta(resource.title),
+      meta: { ...meta(resource.title), estadoNaUrl: true }, // filtros na URL: ver layout/chaveDaTela.js
     },
   ];
 

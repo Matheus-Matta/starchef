@@ -1,13 +1,11 @@
 import axios from "axios";
 
 import { clearSession, hasSession } from "./tokenStorage";
-import {
-  terminalInstallationId,
-  terminalNameHeader,
-} from "./terminalIdentity";
+import { terminalInstallationId, terminalNameHeader } from "./terminalIdentity";
 import { prepareMultipartHeaders } from "./multipart";
-import { getBrowserValue } from "./browserPersistence";
 import { installGetPolicy } from "./apiGetPolicy";
+import { invalidarAssunto, queryClient } from "./queryClient";
+import { applyRestaurantScope, applyTerminalIdentity } from "./requestContext";
 
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
@@ -45,25 +43,12 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-/**
- * Diz DE ONDE a requisição partiu, em toda chamada.
- *
- * A sessão de caixa pertence ao par (operador, terminal), e a checagem vale
- * para recuperar, pagar, sangrar, suprir e fechar — não só para abrir. Mandar
- * a identidade em um cabeçalho, e não apenas no corpo de `/open/`, é o que
- * evita ter de lembrar de incluí-la em cada endpoint novo.
- */
-function applyTerminalIdentity(config) {
-  if (isAuthRequest(config.url)) return;
-  config.headers = config.headers || {};
-  if (!config.headers["X-Terminal-Id"]) {
-    config.headers["X-Terminal-Id"] = terminalInstallationId();
-    config.headers["X-Terminal-Name"] = terminalNameHeader();
-  }
-}
-
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Escrita que deu certo deixa velho o cache do assunto dela (e só dele).
+    if (String(response.config?.method || "get").toLowerCase() !== "get") invalidarAssunto(response.config.url);
+    return response;
+  },
   async (error) => {
     const original = error.config;
     const status = error.response?.status;
@@ -81,6 +66,7 @@ api.interceptors.response.use(
     // isso NAO deve deslogar o usuario — apenas propaga o erro para a tela tratar.
     if (status === 401) {
       api.get.clearCache();
+      queryClient.clear();
       clearSession();
       window.dispatchEvent(new CustomEvent("auth:unauthorized"));
     }
@@ -91,33 +77,6 @@ api.interceptors.response.use(
 
 function isAuthRefreshRequest(url = "") {
   return url.includes("/auth/refresh/");
-}
-
-function applyRestaurantScope(config) {
-  if (config.skipRestaurantScope || isAuthRequest(config.url)) {
-    return;
-  }
-
-  const restaurantId = getBrowserValue("starchef-restaurant-scope");
-  if (!restaurantId || isAuthRequest(config.url)) {
-    return;
-  }
-
-  config.headers = config.headers || {};
-  if (!config.headers["X-Restaurant-ID"]) {
-    config.headers["X-Restaurant-ID"] = restaurantId;
-  }
-
-  if (String(config.method || "get").toLowerCase() === "get") {
-    config.params = { ...(config.params || {}) };
-    if (!Object.prototype.hasOwnProperty.call(config.params, "restaurant")) {
-      config.params.restaurant = restaurantId;
-    }
-  }
-}
-
-function isAuthRequest(url = "") {
-  return url.includes("/auth/");
 }
 
 /** Renova o access token usando o refresh do cookie httpOnly (sem corpo). */
