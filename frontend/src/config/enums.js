@@ -291,6 +291,15 @@ export const FISCAL_CST_PIS_COFINS_OPTIONS = [
   { label: "49 - Outras operacoes de saida", value: "49" },
   { label: "99 - Outras operacoes", value: "99" },
 ];
+// CST do IBS/CBS (reforma tributaria) — espelha `ibs_cbs.CST` do backend, que
+// recusa os demais: 550, 620 e 800+ exigem grupos que a venda de restaurante nao tem.
+export const FISCAL_CST_IBS_CBS_OPTIONS = [
+  { label: "000 - Tributacao integral", value: "000" },
+  { label: "200 - Aliquota reduzida", value: "200" },
+  { label: "410 - Imunidade e nao incidencia", value: "410" },
+  { label: "510 - Diferimento", value: "510" },
+  { label: "515 - Diferimento com reducao de aliquota", value: "515" },
+];
 
 export const STOCK_TIMING_LABELS = { payment: "No pagamento", kitchen: "Na cozinha" };
 

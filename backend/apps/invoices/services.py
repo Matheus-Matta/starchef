@@ -32,7 +32,7 @@ from apps.invoices.fiscal import (
     format_access_key,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
-from apps.invoices import contingencia_offline, lei_da_transparencia, numero_ja_usado
+from apps.invoices import contingencia_offline, lei_da_transparencia, models_ibs_cbs, numero_ja_usado
 from apps.invoices.providers import (
     FiscalAmbiguous,
     provider_class_for,
@@ -500,6 +500,7 @@ def rebuild_invoice_items(invoice, order, config, *, items=None, user=None):
             pis_rate=(profile.pis_rate if profile else 0),
             cofins_cst=(profile.cofins_cst if profile else "49"),
             cofins_rate=(profile.cofins_rate if profile else 0),
+            **models_ibs_cbs.retrato(profile),
             unit=unit,
             quantity=order_item.quantity,
             unit_price=order_item.unit_price,
@@ -1155,7 +1156,8 @@ def fiscal_readiness(config, *, products=None):
         product_reports = []
         for product in products:
             profile = product.fiscal_profile or config.default_profile
-            issues = fiscal_profile_issues(profile, crt=config.crt, subject=product.name)
+            issues = fiscal_profile_issues(profile, crt=config.crt, subject=product.name,
+                                          ibs_cbs=config.ibs_cbs_enabled)
             if issues:
                 product_reports.append(
                     {

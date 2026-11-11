@@ -396,7 +396,8 @@ tratamento de cadastro incompleto. Continuam pendentes:
 - centralização dos caixas secundários nesse agente via LAN;
 - DANFE, XML e impressão no fluxo local;
 - API idempotente de reconciliação no backend;
-- evolução de `FiscalProfile` para grupo/regra/vigência, com IBS/CBS;
+- evolução de `FiscalProfile` para grupo/regra/vigência (o IBS/CBS já entrou,
+  com alíquota por ano e flag por loja: ver `docs/FISCAL_IBS_CBS.md`);
 - liberação por feature flag, começando por homologação.
 
 Enquanto o agente não existir, `FiscalConfig.next_number` e `series` seguem

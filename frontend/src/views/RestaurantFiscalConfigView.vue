@@ -202,6 +202,8 @@
         @certificate-selected="onSefazCertificateSelected"
       />
 
+      <IbsCbsSection :config="form" @update-field="updateFiscalField" />
+
       <AcbrLibSection v-if="form.provider === 'acbrlib'" :config="form" @update-field="updateFiscalField" />
 
       <LocalFiscalSection
@@ -299,6 +301,7 @@ import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
 import AcbrLibSection from "../components/restaurant/AcbrLibSection.vue";
+import IbsCbsSection from "../components/restaurant/IbsCbsSection.vue";
 import LocalFiscalSection from "../components/restaurant/LocalFiscalSection.vue";
 import NfceCertificateSection from "../components/restaurant/NfceCertificateSection.vue";
 import { api } from "../services/api";
@@ -354,7 +357,7 @@ const EDITABLE_FIELDS = [
   "csc_id", "qr_base_url", "portal_url", "dfe_ult_nsu",
   // Emissão local: o endereço do Comunicador e as duas chaves que a ligam.
   "local_fiscal_enabled", "local_fiscal_contingency", "local_fiscal_url",
-  "offline_contingency", "cloud_emission", "cloud_series",
+  "offline_contingency", "cloud_emission", "cloud_series", "ibs_cbs_enabled",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
 const SECRET_FIELDS = ["csc_token", "provider_token", "certificate_password"];
@@ -382,6 +385,7 @@ const form = reactive({
   local_fiscal_contingency: false,
   local_fiscal_url: "",
   offline_contingency: false,
+  ibs_cbs_enabled: false,
   cloud_emission: false,
   cloud_series: null,
   cloud_next_number: 1,

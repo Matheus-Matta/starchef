@@ -207,6 +207,11 @@ Todas as rotas exigem `Authorization: Bearer <ACBRLIB_TOKEN>`. O certificado A1,
 a senha e o CSC vão em cada chamada (`segredos_de(config)` — inclusive o
 emprestado da nuvem); o comunicador só os guarda em memória, pelo hash.
 
+O INI é montado no backend (`acbrlib/ini.py`). As seções de IBS/CBS da reforma
+tributária (`IBSCBS001`, `gIBSUF001`, `IBSCBSTot`...) saem de
+`acbrlib/ini_ibs_cbs.py` e só aparecem com `FiscalConfig.ibs_cbs_enabled`
+ligado. O comunicador não muda: ver `docs/FISCAL_IBS_CBS.md`.
+
 | Rota | Faz | Resposta |
 |---|---|---|
 | `GET /health` | o comunicador está de pé? (e com a lib carregada?) | `{ok, lib, simulador}` |

@@ -142,7 +142,7 @@ def icms_situation_field(crt):
     return "csosn" if str(crt) in SIMPLES_REGIMES else "cst_icms"
 
 
-def fiscal_profile_issues(profile, *, crt, subject=""):
+def fiscal_profile_issues(profile, *, crt, subject="", ibs_cbs=False):
     """Pendencias que impedem um perfil fiscal de virar item de NFC-e.
 
     Nunca levanta: alimenta tanto a conferencia de tela quanto a decisao de
@@ -196,17 +196,21 @@ def fiscal_profile_issues(profile, *, crt, subject=""):
                 subject=subject,
             )
         )
+    if ibs_cbs:  # So com o grupo ligado na loja (`FiscalConfig.ibs_cbs_enabled`).
+        from apps.invoices import ibs_cbs as regra
+
+        issues += regra.pendencias(profile, prefixo=prefix, subject=subject)
     return issues
 
 
-def fiscal_item_issues(item, *, crt):
+def fiscal_item_issues(item, *, crt, ibs_cbs=False):
     """Mesma validacao, aplicada ao item ja congelado na nota.
 
     O item guarda a tributacao COPIADA do perfil no momento da venda, entao e
     ele — nao o cadastro de hoje — que diz se aquela nota podia sair.
     """
     return fiscal_profile_issues(
-        item, crt=crt, subject=item.description or f"item {item.line_number}"
+        item, crt=crt, subject=item.description or f"item {item.line_number}", ibs_cbs=ibs_cbs
     )
 
 
@@ -214,6 +218,6 @@ def fiscal_invoice_issues(invoice, config):
     """Tudo que falta para os itens desta nota formarem uma NFC-e valida."""
     issues = []
     for item in invoice.items.all().order_by("line_number"):
-        for issue in fiscal_item_issues(item, crt=config.crt):
+        for issue in fiscal_item_issues(item, crt=config.crt, ibs_cbs=config.ibs_cbs_enabled):
             issues.append({**issue, "line_number": item.line_number, "product": str(item.product_id or "")})
     return issues

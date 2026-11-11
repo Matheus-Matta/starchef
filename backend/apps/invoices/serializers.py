@@ -57,6 +57,31 @@ class FiscalProfileSerializer(TenantModelSerializer):
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
+    def validate_ibs_cbs_cst(self, valor):
+        from apps.invoices.ibs_cbs import completar_zeros
+
+        return completar_zeros(valor, 3)
+
+    def validate_ibs_cbs_cclass_trib(self, valor):
+        from apps.invoices.ibs_cbs import completar_zeros
+
+        return completar_zeros(valor, 6)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        from apps.invoices import ibs_cbs
+
+        def atual(campo, padrao):  # PATCH: o que nao veio fica como esta
+            return attrs.get(campo, getattr(self.instance, campo, padrao))
+
+        erros = ibs_cbs.erros_do_perfil(
+            cst=atual("ibs_cbs_cst", ""), cclass_trib=atual("ibs_cbs_cclass_trib", ""),
+            reducao=atual("ibs_cbs_reducao", 0), diferimento=atual("ibs_cbs_diferimento", 0),
+        )
+        if erros:
+            raise serializers.ValidationError(erros)
+        return attrs
+
 
 class FiscalConfigSerializer(TenantModelSerializer):
     is_ready = serializers.BooleanField(read_only=True)

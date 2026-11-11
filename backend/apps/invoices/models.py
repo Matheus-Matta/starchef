@@ -2,9 +2,10 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
 
 from apps.core.models import TenantModel
+from apps.invoices.models_ibs_cbs import IbsCbsCampos
 
 
-class FiscalProfile(TenantModel):
+class FiscalProfile(TenantModel, IbsCbsCampos):
     """Grupo tributario reutilizavel por produtos (CFOP/CSOSN/NCM + aliquotas).
 
     E um cadastro DA CONTA, nao do restaurante: o mesmo "Bebida" ou "Prato
@@ -64,6 +65,16 @@ class FiscalProfile(TenantModel):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        """A mesma regra do serializer (`ibs_cbs.erros_do_perfil`), para o Admin."""
+        super().clean()
+        from apps.invoices.ibs_cbs import erros_do_perfil
+
+        erros = erros_do_perfil(cst=self.ibs_cbs_cst, cclass_trib=self.ibs_cbs_cclass_trib,
+                                reducao=self.ibs_cbs_reducao, diferimento=self.ibs_cbs_diferimento)
+        if erros:
+            raise DjangoValidationError(erros)
 
 
 def validar_emissao_local(*, local_fiscal_enabled, local_fiscal_contingency,
@@ -275,6 +286,10 @@ class FiscalConfig(TenantModel):
             "em vez de completar com valores padrao."
         ),
     )
+    # Desligado ate a loja homologar: o grupo IBS/CBS muda o XML de toda nota.
+    ibs_cbs_enabled = models.BooleanField(
+        default=False, help_text="Envia o grupo IBS/CBS (reforma tributaria) em cada item da nota."
+    )
     is_active = models.BooleanField(default=True)
 
     def clean(self):
@@ -393,7 +408,7 @@ class Invoice(TenantModel):
         return f"Invoice {self.number or self.id}"
 
 
-class InvoiceItem(TenantModel):
+class InvoiceItem(TenantModel, IbsCbsCampos):
     """Item fiscal do documento, com o detalhamento tributario por linha."""
 
     invoice = models.ForeignKey(Invoice, related_name="items", on_delete=models.CASCADE)

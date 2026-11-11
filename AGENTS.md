@@ -51,6 +51,9 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/FISCAL_ACBRLIB.md`: o emissor ACBrLib (comunicador `fiscal_acbr/`),
   o contrato com o backend, a contingência offline da NFC-e, a numeração e a
   homologação. **Leitura obrigatória antes de mexer em emissão fiscal.**
+- `docs/FISCAL_IBS_CBS.md`: IBS e CBS da reforma tributária — a regra no
+  perfil fiscal, a alíquota por ano (`ibs_cbs.ALIQUOTAS`, que precisa do ano
+  seguinte cadastrado todo dezembro), o flag por loja e o INI da ACBrLib.
 
 ## Regra da sincronização
 

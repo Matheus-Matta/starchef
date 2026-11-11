@@ -12,7 +12,7 @@ recusou.
 """
 from decimal import Decimal
 
-from apps.invoices import cfop_do_csosn
+from apps.invoices import cfop_do_csosn, ibs_cbs
 from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig
 from apps.invoices.documento_regras import DocumentoRegras
@@ -22,7 +22,7 @@ from apps.invoices.providers_erros import FiscalRejection
 class DocumentoFiscal(DocumentoRegras):
     """Monta o item e o documento a partir das regras (`documento_regras`)."""
 
-    def _build_item(self, item, config, *, discount=Decimal("0.00"), other_expenses=Decimal("0.00")):
+    def _build_item(self, item, config, *, discount=Decimal("0.00"), other_expenses=Decimal("0.00"), ano=None):
         payload = {
             "numero_item": item.line_number,
             "codigo_produto": item.code or str(item.line_number),
@@ -69,6 +69,11 @@ class DocumentoFiscal(DocumentoRegras):
         if item.cofins_rate:
             payload["cofins_base_calculo"] = str(item.total_price)
             payload["cofins_aliquota_porcentual"] = str(item.cofins_rate)
+        if getattr(config, "ibs_cbs_enabled", False) and item.ibs_cbs_cst:
+            # A base é o valor do item depois do rateio do desconto e das despesas.
+            payload.update(ibs_cbs.campos_do_item(
+                item, base=item.total_price - discount + other_expenses,
+                ano=ano or ibs_cbs.ano_da_emissao(None), rotulo=type(self).rotulo))
         return payload
 
     def _build_payload(self, invoice, config):
@@ -109,6 +114,7 @@ class DocumentoFiscal(DocumentoRegras):
                     config,
                     discount=discounts_by_item.get(item.pk, Decimal("0.00")),
                     other_expenses=expenses_by_item.get(item.pk, Decimal("0.00")),
+                    ano=ibs_cbs.ano_da_emissao(invoice.fiscal_payload.get("emission")),
                 )
                 for item in items
             ],

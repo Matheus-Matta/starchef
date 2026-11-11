@@ -45,6 +45,15 @@ describe("configuração do perfil fiscal", () => {
     expect(profiles.formFields.some((field) => field.name === "branch")).toBe(false);
   });
 
+  it("leva o IBS/CBS para o formulário e para a planilha de importação/exportação", () => {
+    // A planilha sai dos `formFields` (ResourceListViewPro): campo fora daqui
+    // some do CSV exportado e é ignorado no importado, sem aviso.
+    const names = profiles.formFields.map((field) => field.name);
+    expect(names).toEqual(expect.arrayContaining([
+      "ibs_cbs_cst", "ibs_cbs_cclass_trib", "ibs_cbs_reducao", "ibs_cbs_diferimento",
+    ]));
+  });
+
   it("traz os campos que a Focus NFe exige para tributar um item", () => {
     const names = profiles.formFields.map((field) => field.name);
 

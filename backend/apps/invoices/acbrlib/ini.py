@@ -10,6 +10,7 @@ O número, a série e o `cNF` vêm da nota já montada pelo backend: são eles q
 compõem a chave de acesso, e a ACBrLib chega à MESMA chave que
 `fiscal.build_access_key` calculou.
 """
+from apps.invoices.acbrlib import ini_ibs_cbs
 from apps.invoices.acbrlib.emitente import Emitente
 from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig
@@ -51,11 +52,15 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
         secao(f"ICMS{n:03d}", _icms(item, simples))
         secao(f"PIS{n:03d}", _tributo(item, "pis", "pPIS", "vPIS"))
         secao(f"COFINS{n:03d}", _tributo(item, "cofins", "pCOFINS", "vCOFINS"))
+        for nome, campos in ini_ibs_cbs.secoes_do_item(item, n):
+            secao(nome, campos)
     secao("Total", {
         "vProd": documento["valor_produtos"], "vDesc": documento["valor_desconto"],
         "vOutro": documento["valor_outras_despesas"], "vNF": documento["valor_total"],
         "vTotTrib": documento["valor_total_tributos"],
     })
+    for nome, campos in ini_ibs_cbs.secoes_do_total(documento["items"]):
+        secao(nome, campos)
     secao("Transportador", {"modFrete": documento.get("modalidade_frete", "9")})
     formas = documento["formas_pagamento"]
     for n, pagamento in enumerate(formas, start=1):
