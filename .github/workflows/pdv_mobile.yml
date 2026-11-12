@@ -46,11 +46,21 @@ jobs:
         # segunda tentativa logo abaixo cobre isso sem refazer a tag.
         continue-on-error: true
         with:
+          # VERSÃO FIXA, a mesma do pdv_desktop.yml. Com `channel: stable`
+          # solto, o Flutter novo marcou `material.dart` como obsoleto e o
+          # analyze reprovou a v3.1.14 sem uma linha de código alterada.
+          # Subir o Flutter é um commit revisado, nos DOIS workflows.
           channel: "stable"
+          flutter-version: "3.44.4"
       - uses: subosito/flutter-action@v2
         if: steps.flutter_1.outcome == 'failure'
         with:
+          # VERSÃO FIXA, a mesma do pdv_desktop.yml. Com `channel: stable`
+          # solto, o Flutter novo marcou `material.dart` como obsoleto e o
+          # analyze reprovou a v3.1.14 sem uma linha de código alterada.
+          # Subir o Flutter é um commit revisado, nos DOIS workflows.
           channel: "stable"
+          flutter-version: "3.44.4"
 
       - name: Instalar dependências
         run: flutter pub get
@@ -225,11 +235,21 @@ jobs:
         # segunda tentativa logo abaixo cobre isso sem refazer a tag.
         continue-on-error: true
         with:
+          # VERSÃO FIXA, a mesma do pdv_desktop.yml. Com `channel: stable`
+          # solto, o Flutter novo marcou `material.dart` como obsoleto e o
+          # analyze reprovou a v3.1.14 sem uma linha de código alterada.
+          # Subir o Flutter é um commit revisado, nos DOIS workflows.
           channel: "stable"
+          flutter-version: "3.44.4"
       - uses: subosito/flutter-action@v2
         if: steps.flutter_2.outcome == 'failure'
         with:
+          # VERSÃO FIXA, a mesma do pdv_desktop.yml. Com `channel: stable`
+          # solto, o Flutter novo marcou `material.dart` como obsoleto e o
+          # analyze reprovou a v3.1.14 sem uma linha de código alterada.
+          # Subir o Flutter é um commit revisado, nos DOIS workflows.
           channel: "stable"
+          flutter-version: "3.44.4"
 
       - name: Instalar dependências
         run: flutter pub get
