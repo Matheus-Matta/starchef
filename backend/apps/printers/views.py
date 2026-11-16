@@ -682,7 +682,7 @@ class PrintJobViewSet(BaseTenantViewSet):
     def list(self, request, *args, **kwargs):
         # Compatibilidade operacional: libera qualquer rodada agendada por uma
         # versao anterior que ainda esteja pendente, mesmo sem Celery.
-        from apps.orders.services import liberar_rodadas_vencidas_na_leitura
+        from apps.orders.liberacao_na_leitura import liberar_rodadas_vencidas_na_leitura
 
         account = getattr(request, "account", None)
         if account is not None:

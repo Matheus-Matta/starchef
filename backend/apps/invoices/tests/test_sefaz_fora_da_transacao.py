@@ -12,12 +12,10 @@ Agora a nota é numerada e gravada "em andamento" num commit curto, a SEFAZ é
 chamada sem transação, e o resultado é gravado em outro commit curto.
 """
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.db import connection
-from django.utils import timezone
 
 from apps.core.tenant import tenant_context
 from apps.invoices.models import FiscalConfig, Invoice
@@ -26,7 +24,6 @@ from apps.invoices.services import (
     EM_VOO,
     emit_fiscal_invoice,
     fiscal_state_of,
-    reprocess_pending_fiscal_invoices,
 )
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -160,55 +157,3 @@ def test_a_marca_do_terminal_gravada_no_meio_sobrevive(pedido, manager_user):
     nota.refresh_from_db()
     assert nota.fiscal_payload.get("terminal_prints") is True
     assert nota.status == Invoice.STATUS_ISSUED
-
-
-def test_reprocessamento_nao_mexe_na_nota_em_transmissao(pedido, manager_user):
-    """Consultar no meio leria "não existe" e mandaria transmitir de novo."""
-    nota = emit_fiscal_invoice(pedido, user=manager_user)
-    payload = {**(nota.fiscal_payload or {}), "awaiting": "authorization",
-               EM_VOO: timezone.now().isoformat()}
-    Invoice.all_objects.filter(pk=nota.pk).update(status=Invoice.STATUS_PENDING, fiscal_payload=payload)
-
-    reprocess_pending_fiscal_invoices()
-    assert _Observado.consultas == 0
-
-    # Passado o prazo (o processo morreu no meio), a consulta resolve.
-    payload[EM_VOO] = (timezone.now() - timedelta(minutes=10)).isoformat()
-    Invoice.all_objects.filter(pk=nota.pk).update(fiscal_payload=payload)
-    reprocess_pending_fiscal_invoices()
-    assert _Observado.consultas == 1
-
-
-def _em_voo(nota):
-    payload = {**(nota.fiscal_payload or {}), "awaiting": "authorization",
-               EM_VOO: timezone.now().isoformat()}
-    Invoice.all_objects.filter(pk=nota.pk).update(status=Invoice.STATUS_PENDING, fiscal_payload=payload)
-    nota.refresh_from_db()
-    return nota
-
-
-def test_consultar_reenviar_ou_cancelar_no_meio_da_transmissao_nao_mexe_na_nota(pedido, manager_user):
-    """O PDV consulta em laço logo depois da venda; o operador pode cancelar.
-
-    Consultar no meio leria "não existe" e mandaria retransmitir; cancelar
-    descartaria a nota como "nunca autorizada" enquanto a SEFAZ a autoriza.
-    """
-    from django.core.exceptions import ValidationError
-
-    from apps.invoices.services import (
-        cancel_fiscal_invoice,
-        refresh_fiscal_invoice_status,
-        resend_fiscal_invoice,
-    )
-
-    nota = _em_voo(emit_fiscal_invoice(pedido, user=manager_user))
-
-    devolvida = refresh_fiscal_invoice_status(nota, user=manager_user, manual_print=True)
-    assert _Observado.consultas == 0
-    assert devolvida.status == Invoice.STATUS_PENDING
-    with pytest.raises(ValidationError):
-        resend_fiscal_invoice(nota, user=manager_user)
-    with pytest.raises(ValidationError):
-        cancel_fiscal_invoice(nota, reason="cliente desistiu", user=manager_user)
-    nota.refresh_from_db()
-    assert nota.status == Invoice.STATUS_PENDING

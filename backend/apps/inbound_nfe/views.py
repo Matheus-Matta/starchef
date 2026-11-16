@@ -14,8 +14,8 @@ from apps.inbound_nfe.models import (
     SupplierItemMapping,
     DFeDistributionDocument,
     DFeSyncState,
-    NFeManifestation,
 )
+from apps.inbound_nfe.listagem import com_contagens
 from apps.inbound_nfe.serializers import (
     InboundNFeSerializer,
     InboundNFeItemSerializer,
@@ -81,30 +81,6 @@ class InboundNFeFilterSet(django_filters.FilterSet):
         elif value == "cancelled":
             return queryset.filter(Q(fiscal_status=InboundNFe.FISCAL_CANCELLED) | Q(status=InboundNFe.STATUS_CANCELLED))
         return queryset
-
-
-def com_contagens(qs):
-    """Contagens de itens e a última manifestação, na MESMA consulta da página.
-
-    O serializer fazia 4 COUNT + 1 SELECT por nota: 50 notas, ~250 consultas.
-    Subconsulta (e não `Count("items")`) porque a busca por `items__...` já
-    junta itens — o JOIN reaproveitado contaria só os itens que casaram.
-    """
-    from django.db.models import Count, IntegerField, OuterRef, Prefetch, Subquery
-    from django.db.models.functions import Coalesce
-
-    def contar(**filtro):
-        sub = (InboundNFeItem.all_objects.filter(invoice=OuterRef("pk"), **filtro)
-               .order_by().values("invoice").annotate(n=Count("pk")).values("n"))
-        return Coalesce(Subquery(sub, output_field=IntegerField()), 0)
-
-    return qs.annotate(
-        _n_itens=contar(),
-        _n_ignorados=contar(is_ignored=True),
-        _n_sem_vinculo=contar(is_ignored=False, ingredient__isnull=True, product__isnull=True),
-    ).prefetch_related(Prefetch(
-        "manifestations", queryset=NFeManifestation.all_objects.order_by("-created_at"), to_attr="_manifestacoes",
-    ))
 
 
 class InboundNFeViewSet(BaseTenantViewSet):
@@ -378,61 +354,9 @@ class InboundNFeViewSet(BaseTenantViewSet):
     @action(detail=False, methods=["post"], url_path="set-nsu")
     def set_nsu(self, request, *args, **kwargs):
         """Atualiza manualmente o NSU de consulta e limpa bloqueios de cooldown."""
-        import re
-        from apps.invoices.models import FiscalConfig
+        from apps.inbound_nfe.nsu_manual import gravar_nsu_manual
 
-        nsu_raw = request.data.get("ult_nsu")
-        if nsu_raw is None:
-            nsu_raw = request.data.get("nsu")
-        if nsu_raw is None:
-            return Response({"error": "Campo 'ult_nsu' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
-        # NSU é número de até 15 dígitos; lixo gravado aqui quebra a próxima consulta à SEFAZ.
-        nsu_texto = str(nsu_raw).strip() if isinstance(nsu_raw, (str, int)) and not isinstance(nsu_raw, bool) else ""
-        if not re.fullmatch(r"\d{1,15}", nsu_texto):
-            return Response({"error": "NSU inválido: informe só números, até 15 dígitos."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        clean_nsu = nsu_texto.zfill(15)
-
-        restaurant_id = restaurante_escolhido(request)
-
-        config = None
-        if restaurant_id:
-            config = FiscalConfig.objects.filter(
-                account=request.account,
-                restaurant_id=restaurant_id
-            ).first()
-
-        if not config:
-            config = (
-                FiscalConfig.objects.filter(account=request.account, is_active=True).first()
-                or FiscalConfig.objects.filter(account=request.account).first()
-            )
-
-        cnpj = re.sub(r'\D', '', (config.cnpj if config else '') or (config.certificate_cnpj if config else '') or '')
-
-        # O estado da distribuição é POR RESTAURANTE (coluna obrigatória): sem
-        # perfil fiscal, vale o restaurante escolhido; sem nenhum dos dois, não
-        # há a quem atribuir o NSU (antes: IntegrityError).
-        restaurante = (config.restaurant_id if config else None) or restaurant_id
-        if not restaurante:
-            return Response({"error": "Escolha o restaurante do NSU."}, status=status.HTTP_400_BAD_REQUEST)
-
-        state = DFeSyncState.objects.filter(account=request.account, restaurant_id=restaurante).first()
-        if not state:
-            state, _ = DFeSyncState.objects.get_or_create(
-                account=request.account,
-                branch=config.branch if config else None,
-                restaurant_id=restaurante,
-                defaults={
-                    'cnpj': cnpj,
-                    'ult_nsu': clean_nsu,
-                }
-            )
-        state.ult_nsu = clean_nsu
-        state.next_allowed_at = None
-        state.sync_error_count = 0
-        state.save(update_fields=['ult_nsu', 'next_allowed_at', 'sync_error_count'])
-        return Response({"status": "ok", "ult_nsu": state.ult_nsu})
+        return gravar_nsu_manual(request)
 
     @action(detail=False, methods=["post"], url_path="fetch-nsu")
     def fetch_nsu(self, request, *args, **kwargs):

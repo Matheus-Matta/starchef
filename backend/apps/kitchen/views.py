@@ -1,5 +1,3 @@
-import django_filters
-from apps.core.periodo import inicio_do_dia
 from django.db.models import Q
 from django.core.exceptions import ValidationError
 from rest_framework import status
@@ -12,6 +10,7 @@ from apps.menu.models import Product
 from apps.orders.models import Order, OrderItem
 from apps.orders.serializers import OrderItemSerializer, OrderSerializer
 from apps.orders.services import update_order_item_status
+from .filtros import KitchenItemFilter
 from .models import KdsColumn, KdsItemPosition, KdsStation
 from .rules import apply_station_rules, move_position, regras_utilizaveis
 
@@ -42,37 +41,12 @@ class KitchenOrderViewSet(ReadOnlyTenantViewSet):
     ordering_fields = ["opened_at", "sequence"]
 
     def list(self, request, *args, **kwargs):
-        from apps.orders.services import liberar_rodadas_vencidas_na_leitura
+        from apps.orders.liberacao_na_leitura import liberar_rodadas_vencidas_na_leitura
 
         account = getattr(request, "account", None)
         if account is not None:
             liberar_rodadas_vencidas_na_leitura(account.id)
         return super().list(request, *args, **kwargs)
-
-
-class KitchenItemFilter(django_filters.FilterSet):
-    """Filtro do KDS: setor/status + intervalo de datas (por data de lançamento).
-
-    O dia vira INTERVALO de instantes, e não `launched_at__date`: a função de
-    data aplicada na coluna impedia o Postgres de usar índice, e cada leitura
-    do quadro (a cada poucos segundos, por tela de KDS) varria a tabela de
-    itens inteira — que só cresce, dia após dia.
-    """
-
-    launched_after = django_filters.DateFilter(method="_a_partir_de")
-    launched_before = django_filters.DateFilter(method="_ate")
-
-    def _a_partir_de(self, queryset, name, value):
-        return queryset.filter(launched_at__gte=inicio_do_dia(value))
-
-    def _ate(self, queryset, name, value):
-        from datetime import timedelta
-
-        return queryset.filter(launched_at__lt=inicio_do_dia(value + timedelta(days=1)))
-
-    class Meta:
-        model = OrderItem
-        fields = ["production_sector", "status"]
 
 
 class KitchenItemViewSet(ReadOnlyTenantViewSet):
@@ -96,7 +70,7 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
     ordering_fields = ["launched_at", "ready_at", "sent_to_kitchen_at"]
 
     def list(self, request, *args, **kwargs):
-        from apps.orders.services import liberar_rodadas_vencidas_na_leitura
+        from apps.orders.liberacao_na_leitura import liberar_rodadas_vencidas_na_leitura
 
         account = getattr(request, "account", None)
         if account is not None:
