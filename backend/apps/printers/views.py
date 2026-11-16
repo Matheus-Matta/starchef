@@ -682,11 +682,11 @@ class PrintJobViewSet(BaseTenantViewSet):
     def list(self, request, *args, **kwargs):
         # Compatibilidade operacional: libera qualquer rodada agendada por uma
         # versao anterior que ainda esteja pendente, mesmo sem Celery.
-        from apps.orders.services import dispatch_due_kitchen_batches
+        from apps.orders.services import liberar_rodadas_vencidas_na_leitura
 
         account = getattr(request, "account", None)
         if account is not None:
-            dispatch_due_kitchen_batches(account_id=account.id)
+            liberar_rodadas_vencidas_na_leitura(account.id)
         self._release_stale_claims()
         return super().list(request, *args, **kwargs)
 

@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.periodo import filtro_de_dias
 from apps.orders.models import Order, OrderItem
 from apps.orders.operator_code import codigo_de
 from apps.reports.views import TenantReportMixin
@@ -36,10 +37,7 @@ class ProductSalesDetailView(TenantReportMixin, APIView):
             | Q(order__status=Order.STATUS_PAID),
             **{f"order__{key}": value for key, value in filters.items()},
         ).exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED])
-        if parsed_from:
-            queryset = queryset.filter(order__opened_at__date__gte=parsed_from)
-        if parsed_to:
-            queryset = queryset.filter(order__opened_at__date__lte=parsed_to)
+        queryset = queryset.filter(**filtro_de_dias("order__opened_at", parsed_from, parsed_to))
 
         rows = queryset.values(
             "id", "quantity", "unit_price", "total_price", "metafields",

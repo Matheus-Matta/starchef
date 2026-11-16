@@ -68,7 +68,7 @@ class ManifestationResponse:
         """Permite desempacotamento retrocompatível como: cstat, reason, dh = response."""
         cstat = self.event_cstat or self.batch_cstat
         reason = self.event_reason or self.batch_reason
-        dh = self.registered_at or datetime.datetime.now()
+        dh = self.registered_at or timezone.now()
         return iter((cstat, reason, dh))
 
     @property

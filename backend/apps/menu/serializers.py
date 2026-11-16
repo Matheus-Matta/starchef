@@ -2,7 +2,7 @@ from decimal import Decimal, ROUND_CEILING
 from django.utils.text import slugify
 from rest_framework import serializers
 
-from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
+from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer, filho_reutilizavel
 from apps.images.product_serializers import ProductImagesMixin, VariationImageMixin
 from apps.images.serializers import LogoImageMixin
 
@@ -523,7 +523,10 @@ class MenuItemTreeSerializer(MenuItemSerializer):
 
     def get_children(self, obj):
         children = [child for child in obj.children.all() if child.deleted_at is None]
-        return MenuItemTreeSerializer(sorted(children, key=lambda c: c.display_order), many=True, context=self.context).data
+        # Um serializer por NÍVEL da árvore, e não um por nó (`filho_reutilizavel`).
+        return filho_reutilizavel(
+            self, "children", lambda: MenuItemTreeSerializer(many=True, context=self.context)
+        ).to_representation(sorted(children, key=lambda c: c.display_order))
 
 
 class MenuSerializer(TenantModelSerializer):
@@ -544,9 +547,9 @@ class MenuSerializer(TenantModelSerializer):
     def get_items(self, obj):
         """So os itens de topo; os filhos vao aninhados dentro deles."""
         roots = [item for item in obj.items.all() if item.parent_id is None and item.deleted_at is None]
-        return MenuItemTreeSerializer(
-            sorted(roots, key=lambda item: item.display_order), many=True, context=self.context
-        ).data
+        return filho_reutilizavel(
+            self, "items", lambda: MenuItemTreeSerializer(many=True, context=self.context)
+        ).to_representation(sorted(roots, key=lambda item: item.display_order))
 
     def get_items_count(self, obj):
         return sum(1 for item in obj.items.all() if item.deleted_at is None)

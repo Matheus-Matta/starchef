@@ -387,6 +387,8 @@ class OrderItem(ConsumptionItem):
         indexes = [
             models.Index(fields=["branch", "production_sector", "status"]),
             models.Index(fields=["order", "status"]),
+            # A leitura do quadro do KDS: itens ativos da conta, do dia.
+            models.Index(fields=["account", "status", "launched_at"], name="orders_item_kds_idx"),
         ]
         constraints = [
             # UMA anotação da comanda gera UM item de pedido.

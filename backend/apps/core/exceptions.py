@@ -3,7 +3,7 @@ import logging
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, OperationalError
 from rest_framework import status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import Throttled, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
@@ -53,6 +53,13 @@ def _translate_detail(value):
     if text.startswith("Invalid pk"):
         return text.replace("Invalid pk", "Identificador inválido", 1)
     return text
+
+
+def _tempo_legivel(segundos):
+    if segundos < 60:
+        return f"{segundos} s"
+    minutos = -(-segundos // 60)
+    return f"{minutos} min" if minutos < 60 else f"{-(-minutos // 60)} h"
 
 
 def _django_validation_detail(exc):
@@ -152,10 +159,24 @@ def api_exception_handler(exc, context):
             "errors": response.data,
         }
 
+        # 4xx é o cliente errando (ou sendo barrado) e o servidor fazendo o
+        # certo: WARNING. ERROR fica para o que pede alguém olhar — senão 401,
+        # 404 e 429 do dia a dia enterram o defeito de verdade no log.
         if isinstance(exc, ValidationError):
             logger.warning("Validation error", extra=log_data)
-        else:
+        elif response.status_code >= 500:
             logger.error("API error: %s", exc, extra=log_data)
+        else:
+            logger.warning("API error: %s", exc, extra=log_data)
+
+    if isinstance(exc, Throttled):
+        # O texto do DRF vem em inglês e com o tempo embutido ("Expected
+        # available in 3599 seconds."); o tempo já vai no `Retry-After`.
+        espera = int(exc.wait) if exc.wait else None
+        response.data = {"detail": (
+            f"Muitas requisições. Tente de novo em {_tempo_legivel(espera)}." if espera
+            else STANDARD_MESSAGES_PT_BR["Request was throttled."]
+        )}
 
     detail = _translate_detail(response.data)
     response.data = {

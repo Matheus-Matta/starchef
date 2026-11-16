@@ -38,7 +38,9 @@ def sync_focus_company_task(self, config_id):
     return not isinstance(result, FocusCompanySyncResult) or result.synced
 
 
-@shared_task(name="invoices.reprocess_pending")
+# Teto por tarefa: as varreduras fiscais já param no próprio orçamento
+# (`ORCAMENTO_*`); o teto é para a chamada ao provedor que não volta nunca.
+@shared_task(name="invoices.reprocess_pending", soft_time_limit=300, time_limit=360)
 def reprocess_pending_task():
     """Retransmite as notas pendentes (contingência, espera, conciliação).
 
@@ -51,7 +53,7 @@ def reprocess_pending_task():
     return reprocess_pending_fiscal_invoices()
 
 
-@shared_task(name="invoices.emitir_pagos_sem_nota")
+@shared_task(name="invoices.emitir_pagos_sem_nota", soft_time_limit=300, time_limit=360)
 def emitir_pagos_sem_nota_task():
     """Na loja com ACBrLib: emite a nota da venda paga que chegou sem nota."""
     from apps.invoices.emissao_da_loja import emitir_pagos_sem_nota

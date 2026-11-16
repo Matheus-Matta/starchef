@@ -11,6 +11,7 @@ de verdade continua na nota — o ZIP é só a entrega.
 import tempfile
 import zipfile
 
+from apps.core.periodo import filtro_de_dias
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -75,8 +76,7 @@ def notas_do_filtro(payload):
     if escopo == "":
         return Invoice.objects.none()
     notas = Invoice.objects.filter(
-        issued_at__date__gte=payload["date_from"],
-        issued_at__date__lte=payload["date_to"],
+        **filtro_de_dias("issued_at", payload["date_from"], payload["date_to"]),
         status__in=payload["status"],
     ).exclude(xml_content="")
     for campo, valor in (("document_model", payload.get("document_model")),

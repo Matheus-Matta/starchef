@@ -90,10 +90,12 @@ class TenantManager(models.Manager):
         if account is None:
             return queryset.none()
 
-        queryset = queryset.filter(account=account)
+        # UM `filter()` com os dois critérios: cada chamada clona a consulta, e
+        # o prefetch do Django chama isto uma vez POR INSTÂNCIA para montar o
+        # cache (`prefetch_one_level`).
         if hasattr(self.model, "deleted_at"):
-            queryset = queryset.filter(deleted_at__isnull=True)
-        return queryset
+            return queryset.filter(account=account, deleted_at__isnull=True)
+        return queryset.filter(account=account)
 
 
 class TenantBaseModel(TimeStampedModel, AuditUserModel):

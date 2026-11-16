@@ -42,6 +42,7 @@ def _evento(conta, destino, **extra):
         "entity_id": str(uuid.uuid4()),
         "operation": "UPSERT",
         "payload": {"fields": {}},
+        "payload_checksum": crypto.checksum({"fields": {}}),
     }
     bruto.update(extra)
     return bruto
@@ -186,3 +187,16 @@ def test_o_evento_em_quarentena_NUNCA_e_aplicado(como_nuvem, conta, no_loja, no_
     pendentes = SyncEvent.objects.pending_inbound(proprio).values_list("event_id", flat=True)
 
     assert bruto["event_id"] not in [str(e) for e in pendentes]
+
+
+def test_evento_sem_checksum_vai_para_a_quarentena(como_nuvem, conta, no_loja, no_nuvem):
+    """Sem checksum o evento era gravado com um checksum calculado na chegada,
+    que conferia sempre — truncado ou adulterado passava como íntegro."""
+    sem = _evento(conta, no_nuvem)
+    del sem["payload_checksum"]
+    bom = _evento(conta, no_nuvem, sequence=2)
+
+    aceitos, _maior, recusados = inbox.store_batch([sem, bom], connection_node=no_loja, account_id=conta.id)
+
+    assert [str(e.event_id) for e in aceitos] == [bom["event_id"]]
+    assert recusados and "sem checksum" in recusados[0]["error"]

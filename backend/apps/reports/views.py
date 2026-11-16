@@ -1,4 +1,5 @@
 import csv
+from datetime import timedelta
 
 from django.db.models import Avg, Count, Q, Sum
 from django.http import HttpResponse
@@ -9,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.access import is_tenant_admin
+from apps.core.periodo import filtro_de_dias
 from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment
 from apps.stock.models import StockMovement
@@ -60,9 +62,16 @@ class DashboardReportView(TenantReportMixin, APIView):
         today = timezone.localdate()
         filters = self.tenant_filter()
         orders = self.tenant_manager(Order).filter(**filters, **painel.faixa(today, today))
-        kitchen_open_items = (
-            self.tenant_manager(OrderItem).filter(**filters)
-            .exclude(status__in=[OrderItem.STATUS_DELIVERED, OrderItem.STATUS_CANCELLED])
+        # O que está NA PRODUÇÃO agora, lançado nas últimas 24 h. Antes era
+        # "tudo que não foi entregue nem cancelado" do histórico inteiro: item
+        # pronto que ninguém marcou como entregue (e rascunho pendente) somava
+        # para sempre, e a contagem varria a tabela toda a cada 30 s por aba.
+        # Status + janela de `launched_at` é o índice do KDS.
+        kitchen_open_items = self.tenant_manager(OrderItem).filter(
+            **filters,
+            status__in=[OrderItem.STATUS_QUEUED, OrderItem.STATUS_SENT,
+                        OrderItem.STATUS_PREPARING, OrderItem.STATUS_READY],
+            launched_at__gte=timezone.now() - timedelta(hours=24),
         )
         # `?resumo=1`: o topo de TODA página do painel relê isto a cada 30 s e
         # mostra três números. O dashboard inteiro (gráfico do mês, estoque)
@@ -136,10 +145,7 @@ class SalesReportView(TenantReportMixin, APIView):
             return Response({"detail": "A data inicial não pode ser posterior à data final."}, status=status.HTTP_400_BAD_REQUEST)
 
         all_orders = self.tenant_manager(Order).filter(**filters)
-        if date_from:
-            all_orders = all_orders.filter(opened_at__date__gte=parsed_from)
-        if date_to:
-            all_orders = all_orders.filter(opened_at__date__lte=parsed_to)
+        all_orders = all_orders.filter(**filtro_de_dias("opened_at", parsed_from, parsed_to))
         # Imports and older integrations may close an order without mirroring
         # payment_status. A completed order must still appear in revenue reports.
         queryset = all_orders.filter(
@@ -147,10 +153,7 @@ class SalesReportView(TenantReportMixin, APIView):
         ).distinct()
 
         payments = self.tenant_manager(Payment).filter(**filters)
-        if parsed_from:
-            payments = payments.filter(paid_at__date__gte=parsed_from)
-        if parsed_to:
-            payments = payments.filter(paid_at__date__lte=parsed_to)
+        payments = payments.filter(**filtro_de_dias("paid_at", parsed_from, parsed_to))
         approved_payments = payments.filter(status=Payment.STATUS_APPROVED)
 
         by_payment = (
@@ -217,8 +220,7 @@ class SalesReportView(TenantReportMixin, APIView):
                 status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED],
             )
             .filter(
-                **({} if not parsed_from else {"order__opened_at__date__gte": parsed_from}),
-                **({} if not parsed_to else {"order__opened_at__date__lte": parsed_to}),
+                **filtro_de_dias("order__opened_at", parsed_from, parsed_to),
             )
             .values("status", "void_reason")
             .annotate(count=Count("id"), value=Sum("total_price"))
@@ -299,8 +301,7 @@ class SalesReportView(TenantReportMixin, APIView):
                     all_orders=all_orders,
                     item_queryset=self.tenant_manager(OrderItem).filter(
                         **item_filters,
-                        **({} if not parsed_from else {"order__opened_at__date__gte": parsed_from}),
-                        **({} if not parsed_to else {"order__opened_at__date__lte": parsed_to}),
+                        **filtro_de_dias("order__opened_at", parsed_from, parsed_to),
                     ),
                     request=request,
                 )

@@ -10,6 +10,8 @@ O período (`after`/`before`, datas) filtra pelos itens LANÇADOS nele e pelos
 registros de mesa e zeramento feitos nele: um cartão reutilizável acumula
 meses de histórico, e a tela pede uma janela.
 """
+from apps.core.periodo import filtro_de_dias
+
 ROTULOS = {
     "launched": "Lançado",
     "sent_to_production": "Enviado para produção",
@@ -59,12 +61,9 @@ def montar_historico(comanda, *, after=None, before=None):
     zeramentos = AuditLog.objects.filter(
         account_id=comanda.account_id, entity="Command", object_id=str(comanda.pk), metadata__event="command_reset"
     ).select_related("actor")
-    if after:
-        itens, mesas, zeramentos = (q.filter(**{campo: after}) for q, campo in (
-            (itens, "launched_at__date__gte"), (mesas, "created_at__date__gte"), (zeramentos, "created_at__date__gte")))
-    if before:
-        itens, mesas, zeramentos = (q.filter(**{campo: before}) for q, campo in (
-            (itens, "launched_at__date__lte"), (mesas, "created_at__date__lte"), (zeramentos, "created_at__date__lte")))
+    if after or before:
+        itens, mesas, zeramentos = (q.filter(**filtro_de_dias(campo, after, before)) for q, campo in (
+            (itens, "launched_at"), (mesas, "created_at"), (zeramentos, "created_at")))
 
     itens = list(itens)
     pedido_do_item = {

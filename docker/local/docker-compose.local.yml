@@ -123,6 +123,27 @@ services:
     mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
     cpu_shares: ${POSTGRES_CPU_SHARES:-1536}
     logging: *default-logging
+    # O padrão do Postgres (shared_buffers 128 MB, work_mem 4 MB) é para
+    # caber em qualquer máquina, não para o PC da loja. Dimensionado para o
+    # `mem_limit` de 1 GB acima: ~25% em cache próprio, o resto o SO cacheia.
+    # random_page_cost 1.1 = disco SSD (o padrão 4 supõe disco giratório e
+    # faz o planejador fugir dos índices). O /dev/shm padrão do Docker (64 MB)
+    # é menor que o shared_buffers e quebra consulta paralela.
+    shm_size: ${POSTGRES_SHM_SIZE:-256m}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-768MB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-8MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
+      - -c
+      - random_page_cost=${POSTGRES_RANDOM_PAGE_COST:-1.1}
+      - -c
+      - wal_compression=on
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-starchef_local}
       POSTGRES_USER: ${POSTGRES_USER:-starchef}

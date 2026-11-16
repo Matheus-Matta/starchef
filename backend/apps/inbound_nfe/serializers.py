@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.core.serializers import TenantModelSerializer
+from apps.core.serializers import TenantModelSerializer, filho_reutilizavel
 from apps.inbound_nfe.models import (
     InboundNFe,
     InboundNFeItem,
@@ -107,10 +107,14 @@ class InboundNFeSerializer(TenantModelSerializer):
         ]
 
     def get_latest_manifestation(self, obj):
-        latest = NFeManifestation.all_objects.filter(invoice=obj).order_by("-created_at").first()
+        # A listagem pré-carrega (`com_contagens`); detalhe e ações consultam.
+        if hasattr(obj, "_manifestacoes"):
+            latest = obj._manifestacoes[0] if obj._manifestacoes else None
+        else:
+            latest = NFeManifestation.all_objects.filter(invoice=obj).order_by("-created_at").first()
         if not latest:
             return None
-        return NFeManifestationSerializer(latest).data
+        return filho_reutilizavel(self, "manifestation", NFeManifestationSerializer).to_representation(latest)
 
     def get_items(self, obj):
         # Na listagem comum de tabela, não precisa serializar a árvore completa de itens
@@ -122,17 +126,25 @@ class InboundNFeSerializer(TenantModelSerializer):
         return InboundNFeItemSerializer(items_qs, many=True, context=self.context).data
 
     def get_items_count(self, obj):
+        if hasattr(obj, "_n_itens"):
+            return obj._n_itens
         return InboundNFeItem.all_objects.filter(invoice=obj).count()
 
     def get_ignored_items_count(self, obj):
+        if hasattr(obj, "_n_ignorados"):
+            return obj._n_ignorados
         return InboundNFeItem.all_objects.filter(invoice=obj, is_ignored=True).count()
 
     def get_active_items_count(self, obj):
+        if hasattr(obj, "_n_itens"):
+            return obj._n_itens - obj._n_ignorados
         return InboundNFeItem.all_objects.filter(invoice=obj, is_ignored=False).count()
 
     def get_unmapped_items_count(self, obj):
         if obj.status in (InboundNFe.STATUS_SUMMARY, InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_IGNORED):
             return 0
+        if hasattr(obj, "_n_sem_vinculo"):
+            return obj._n_sem_vinculo
         return InboundNFeItem.all_objects.filter(
             invoice=obj,
             is_ignored=False,
@@ -143,6 +155,8 @@ class InboundNFeSerializer(TenantModelSerializer):
     def get_has_unmapped_items(self, obj):
         if obj.status in (InboundNFe.STATUS_SUMMARY, InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_RECEIVED, InboundNFe.STATUS_IGNORED):
             return False
+        if hasattr(obj, "_n_sem_vinculo"):
+            return obj._n_sem_vinculo > 0
         return InboundNFeItem.all_objects.filter(
             invoice=obj,
             is_ignored=False,

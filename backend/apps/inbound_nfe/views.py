@@ -1,10 +1,12 @@
 from decimal import Decimal
+from apps.core.periodo import filtro_de_dias
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from apps.core.viewsets import BaseTenantViewSet
+from apps.core.mixins import TenantQuerySetMixin
+from apps.core.viewsets import BaseTenantViewSet, JsonObjectBodyMixin
 from apps.inbound_nfe.tenant_scope import restaurante_escolhido
 from apps.inbound_nfe.models import (
     InboundNFe,
@@ -12,6 +14,7 @@ from apps.inbound_nfe.models import (
     SupplierItemMapping,
     DFeDistributionDocument,
     DFeSyncState,
+    NFeManifestation,
 )
 from apps.inbound_nfe.serializers import (
     InboundNFeSerializer,
@@ -80,6 +83,30 @@ class InboundNFeFilterSet(django_filters.FilterSet):
         return queryset
 
 
+def com_contagens(qs):
+    """Contagens de itens e a última manifestação, na MESMA consulta da página.
+
+    O serializer fazia 4 COUNT + 1 SELECT por nota: 50 notas, ~250 consultas.
+    Subconsulta (e não `Count("items")`) porque a busca por `items__...` já
+    junta itens — o JOIN reaproveitado contaria só os itens que casaram.
+    """
+    from django.db.models import Count, IntegerField, OuterRef, Prefetch, Subquery
+    from django.db.models.functions import Coalesce
+
+    def contar(**filtro):
+        sub = (InboundNFeItem.all_objects.filter(invoice=OuterRef("pk"), **filtro)
+               .order_by().values("invoice").annotate(n=Count("pk")).values("n"))
+        return Coalesce(Subquery(sub, output_field=IntegerField()), 0)
+
+    return qs.annotate(
+        _n_itens=contar(),
+        _n_ignorados=contar(is_ignored=True),
+        _n_sem_vinculo=contar(is_ignored=False, ingredient__isnull=True, product__isnull=True),
+    ).prefetch_related(Prefetch(
+        "manifestations", queryset=NFeManifestation.all_objects.order_by("-created_at"), to_attr="_manifestacoes",
+    ))
+
+
 class InboundNFeViewSet(BaseTenantViewSet):
     queryset = InboundNFe.objects.all()
     serializer_class = InboundNFeSerializer
@@ -115,7 +142,8 @@ class InboundNFeViewSet(BaseTenantViewSet):
         elif mapping_filter == "cancelled":
             from django.db.models import Q
             qs = qs.filter(Q(fiscal_status=InboundNFe.FISCAL_CANCELLED) | Q(status=InboundNFe.STATUS_CANCELLED))
-        return qs.distinct()
+        qs = qs.distinct()
+        return com_contagens(qs) if self.action == "list" else qs
 
     @action(detail=False, methods=["get"], url_path="status-counts")
     def status_counts(self, request, *args, **kwargs):
@@ -128,10 +156,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
         issue_after = request.query_params.get("issue_date_after")
         issue_before = request.query_params.get("issue_date_before")
-        if issue_after:
-            base_qs = base_qs.filter(issue_date__date__gte=issue_after)
-        if issue_before:
-            base_qs = base_qs.filter(issue_date__date__lte=issue_before)
+        base_qs = base_qs.filter(**filtro_de_dias("issue_date", issue_after, issue_before))
 
         cancelled_count = base_qs.filter(
             Q(fiscal_status=InboundNFe.FISCAL_CANCELLED) | Q(status=InboundNFe.STATUS_CANCELLED)
@@ -356,11 +381,17 @@ class InboundNFeViewSet(BaseTenantViewSet):
         import re
         from apps.invoices.models import FiscalConfig
 
-        nsu_raw = request.data.get("ult_nsu") or request.data.get("nsu")
+        nsu_raw = request.data.get("ult_nsu")
+        if nsu_raw is None:
+            nsu_raw = request.data.get("nsu")
         if nsu_raw is None:
             return Response({"error": "Campo 'ult_nsu' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
-
-        clean_nsu = str(nsu_raw).strip().zfill(15)
+        # NSU é número de até 15 dígitos; lixo gravado aqui quebra a próxima consulta à SEFAZ.
+        nsu_texto = str(nsu_raw).strip() if isinstance(nsu_raw, (str, int)) and not isinstance(nsu_raw, bool) else ""
+        if not re.fullmatch(r"\d{1,15}", nsu_texto):
+            return Response({"error": "NSU inválido: informe só números, até 15 dígitos."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        clean_nsu = nsu_texto.zfill(15)
 
         restaurant_id = restaurante_escolhido(request)
 
@@ -379,18 +410,19 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
         cnpj = re.sub(r'\D', '', (config.cnpj if config else '') or (config.certificate_cnpj if config else '') or '')
 
-        state = None
-        if config and config.restaurant:
-            state = DFeSyncState.objects.filter(
-                account=request.account,
-                restaurant=config.restaurant
-            ).first()
+        # O estado da distribuição é POR RESTAURANTE (coluna obrigatória): sem
+        # perfil fiscal, vale o restaurante escolhido; sem nenhum dos dois, não
+        # há a quem atribuir o NSU (antes: IntegrityError).
+        restaurante = (config.restaurant_id if config else None) or restaurant_id
+        if not restaurante:
+            return Response({"error": "Escolha o restaurante do NSU."}, status=status.HTTP_400_BAD_REQUEST)
 
+        state = DFeSyncState.objects.filter(account=request.account, restaurant_id=restaurante).first()
         if not state:
             state, _ = DFeSyncState.objects.get_or_create(
                 account=request.account,
                 branch=config.branch if config else None,
-                restaurant=config.restaurant if config else None,
+                restaurant_id=restaurante,
                 defaults={
                     'cnpj': cnpj,
                     'ult_nsu': clean_nsu,
@@ -400,7 +432,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
         state.next_allowed_at = None
         state.sync_error_count = 0
         state.save(update_fields=['ult_nsu', 'next_allowed_at', 'sync_error_count'])
-        return None
+        return Response({"status": "ok", "ult_nsu": state.ult_nsu})
 
     @action(detail=False, methods=["post"], url_path="fetch-nsu")
     def fetch_nsu(self, request, *args, **kwargs):
@@ -828,11 +860,11 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
             issue_after = request.data.get("issue_date_after") or request.query_params.get("issue_date_after")
             if issue_after:
-                qs = qs.filter(issue_date__date__gte=str(issue_after)[:10])
+                qs = qs.filter(**filtro_de_dias("issue_date", de=issue_after))
 
             issue_before = request.data.get("issue_date_before") or request.query_params.get("issue_date_before")
             if issue_before:
-                qs = qs.filter(issue_date__date__lte=str(issue_before)[:10])
+                qs = qs.filter(**filtro_de_dias("issue_date", ate=issue_before))
 
             search = request.data.get("search") or request.query_params.get("search")
             if search:
@@ -910,10 +942,16 @@ class InboundNFeViewSet(BaseTenantViewSet):
         return response
 
 
-class InboundNFeItemViewSet(BaseTenantViewSet):
+class InboundNFeItemViewSet(JsonObjectBodyMixin, TenantQuerySetMixin, viewsets.GenericViewSet):
+    """Só as ações do item (`map`, `unlink`, `ignore`, `unignore`).
+
+    Antes herdava o CRUD inteiro: POST/PUT/PATCH davam 500 (sem serializer) e o
+    DELETE apagava item de nota já recebida sem passar por `assert_item_editable`,
+    separando nota e estoque. O item nasce e morre com a importação da nota.
+    """
+
     queryset = InboundNFeItem.objects.all()
-    # Serializer padrão para as leituras basicas seria o InboundNFeItemSerializer, mas aqui
-    # apenas expomos a action de mapeamento para o frontend.
+    serializer_class = InboundNFeItemSerializer
 
     @action(detail=True, methods=["post"])
     def map(self, request, pk=None, *args, **kwargs):

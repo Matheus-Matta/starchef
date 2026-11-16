@@ -25,6 +25,7 @@ mais emite. Série diferente não colide nunca, online ou offline. Dentro de
 cada ponto a fila continua sendo a trava do cadastro (`select_for_update`).
 """
 import logging
+import time
 from datetime import timedelta
 
 from django.conf import settings
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 #: Até quando para trás a loja procura venda paga sem nota.
 JANELA = timedelta(hours=48)
+
+#: Segundos que uma volta da varredura pode gastar antes de devolver a vaga.
+ORCAMENTO_DA_VARREDURA_S = 45
 
 
 def _tipo_do_no():
@@ -164,7 +168,14 @@ def emitir_pagos_sem_nota():
     emitidas = 0
     from apps.invoices.pedido_completo import motivo_do_pedido_incompleto
 
+    inicio = time.monotonic()
     for pedido in pendentes:
+        if time.monotonic() - inicio > ORCAMENTO_DA_VARREDURA_S:
+            # Com a SEFAZ lenta cada nota pode esperar o timeout do provedor:
+            # cem delas seguravam a vaga do worker por mais de uma hora, e a
+            # nota da venda nova esperava atrás. O resto fica para a próxima.
+            logger.info("Varredura de pagos sem nota parou no orçamento; %s emitidas.", emitidas)
+            break
         # A venda da nuvem chega em pedaços: sem os itens ou os pagamentos, a
         # nota nasceria recusada. Fica para a próxima volta da varredura.
         motivo = motivo_do_pedido_incompleto(pedido)

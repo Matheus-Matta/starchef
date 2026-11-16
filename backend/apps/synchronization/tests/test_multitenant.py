@@ -90,6 +90,7 @@ def test_evento_com_conta_de_outro_e_rejeitado(como_nuvem, conta, outra_conta, n
         "entity_id": str(uuid.uuid4()),
         "operation": "UPSERT",
         "payload": {"fields": {}},
+        "payload_checksum": crypto.checksum({"fields": {}}),
     }
     with pytest.raises(inbox.CrossTenantRejected):
         inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)

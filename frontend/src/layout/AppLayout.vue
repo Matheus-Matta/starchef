@@ -66,6 +66,7 @@ import {
 import { useAuthStore } from "../stores/auth";
 import { useNotificationsStore } from "../stores/notifications";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
+import { releituraContida } from "../composables/releituraContida";
 import { useScrollMemory } from "../composables/useScrollMemory";
 import { ROTAS_DO_PDV, chaveDaTela } from "./chaveDaTela";
 
@@ -87,9 +88,13 @@ const restaurants = ref([]);
 const selectedRestaurantId = ref(getBrowserValue("starchef-restaurant-scope") || "");
 const scopeRefreshKey = ref(0);
 let summaryTimer = null;
+// O resumo do topo existe em TODA aba do painel, em qualquer página: cada
+// venda em qualquer caixa fazia todas as abas abertas relerem. Um a cada 15 s,
+// e nenhum com a aba escondida (`releituraContida`).
+const resumoContido = releituraContida(() => loadDashboardSummary(), { intervalo: 15000 });
 useRealtimeResource(
   ["orders.order", "orders.orderitem", "payments.payment"],
-  () => loadDashboardSummary(),
+  () => resumoContido.pedir(),
   { debounce: 250 },
 );
 
@@ -241,13 +246,14 @@ onMounted(() => {
   navMediaQuery.addEventListener("change", handleNavMediaChange);
   loadRestaurants();
   loadDashboardSummary();
-  summaryTimer = window.setInterval(loadDashboardSummary, 30000);
+  summaryTimer = window.setInterval(() => resumoContido.pedir(), 60000);
   notifications.init();
 });
 
 onUnmounted(() => {
   if (navMediaQuery) navMediaQuery.removeEventListener("change", handleNavMediaChange);
   if (summaryTimer) window.clearInterval(summaryTimer);
+  resumoContido.parar();
   notifications.reset();
 });
 

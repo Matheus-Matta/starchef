@@ -5,9 +5,20 @@ from apps.assets.models import Asset, AssetLocationHistory
 from apps.core.lote import atualizar_em_lote, criar_em_lote
 
 
+def _travados(queryset, ids):
+    """Trava só as linhas do PRÓPRIO ativo (`of=("self",)`).
+
+    O queryset da view traz `select_related` de FKs opcionais (local,
+    responsável, nota); sem `of`, o Postgres recusa o `FOR UPDATE` no lado
+    nulo do LEFT JOIN e a ação em lote respondia 500 — só em produção, porque
+    o SQLite ignora o `FOR UPDATE`.
+    """
+    return list(queryset.select_for_update(of=("self",)).filter(id__in=ids).order_by("pk"))
+
+
 def update_asset_status(queryset, *, ids, new_status):
     with transaction.atomic():
-        assets = list(queryset.select_for_update().filter(id__in=ids).order_by("pk"))
+        assets = _travados(queryset, ids)
         for asset in assets:
             asset.status = new_status
         atualizar_em_lote(Asset, assets, ["status", "updated_at"])
@@ -16,7 +27,7 @@ def update_asset_status(queryset, *, ids, new_status):
 
 def transfer_assets(queryset, *, ids, to_location, user, reason, notes):
     with transaction.atomic():
-        assets = list(queryset.select_for_update().filter(id__in=ids).order_by("pk"))
+        assets = _travados(queryset, ids)
         histories = []
         for asset in assets:
             histories.append(

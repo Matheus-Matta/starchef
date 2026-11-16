@@ -299,7 +299,7 @@ class OrderViewSet(BaseTenantViewSet):
             return Response({"detail": "Usuário sem restaurante vinculado."}, status=status.HTTP_400_BAD_REQUEST)
 
         order_type = request.data.get("order_type")
-        if order_type not in {Order.TYPE_COMMAND, Order.TYPE_COUNTER, Order.TYPE_DELIVERY, Order.TYPE_TAKEAWAY}:
+        if not isinstance(order_type, str) or order_type not in {Order.TYPE_COMMAND, Order.TYPE_COUNTER, Order.TYPE_DELIVERY, Order.TYPE_TAKEAWAY}:
             return Response({"order_type": "Tipo de pedido inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
         command = None

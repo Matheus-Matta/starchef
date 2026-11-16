@@ -7,4 +7,7 @@ class RealtimeConfig(AppConfig):
 
     def ready(self):
         from . import signals  # noqa: F401
+        from .envio_em_lote import ligar_no_celery
+
+        ligar_no_celery()
 

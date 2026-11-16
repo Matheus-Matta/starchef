@@ -40,6 +40,27 @@ class VendaEmConflito(Exception):
     """O corpo está certo; o estado é que não aceita (409, não 400)."""
 
 
+#: Partes da venda que são LISTAS, e se cada elemento é um objeto.
+_LISTAS = {"items": True, "payments": True, "commands": False}
+
+
+def _conferir_formato(dados):
+    """O formato do corpo, conferido uma vez, antes de qualquer gravação.
+
+    Cada etapa fazia `linha.get(...)` confiando que recebia uma lista de
+    objetos: `"items": "abc"` ou `"payments": "dinheiro"` viravam
+    `AttributeError` — 500 para um erro de quem montou o corpo.
+    """
+    for campo, de_objetos in _LISTAS.items():
+        valor = dados.get(campo)
+        if valor in (None, ""):
+            continue
+        if not isinstance(valor, list):
+            raise ValidationError(f"`{campo}` precisa ser uma lista.")
+        if de_objetos and not all(isinstance(linha, dict) for linha in valor):
+            raise ValidationError(f"Cada elemento de `{campo}` precisa ser um objeto.")
+
+
 def executar(*, restaurant, user, dados, responder, simular=False, terminal=None,
              installation_id="", autorizar_desconto=None):
     """Grava (ou simula) a venda e devolve `responder(pedido, recebimentos, nova)`.
@@ -50,6 +71,7 @@ def executar(*, restaurant, user, dados, responder, simular=False, terminal=None
     order_id = uuid_do_aparelho.ler(dados.get("id"), "pedido")
     if order_id is None:
         raise ValidationError("Informe o identificador do pedido.")
+    _conferir_formato(dados)
     # A captura da sincronização da venda sai junta no fim, ainda nesta
     # transação; na simulação, que é desfeita, nem é montada (`outbox_lote`).
     captura = outbox_lote.descartando() if simular else outbox_lote.em_lote()

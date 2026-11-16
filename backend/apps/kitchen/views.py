@@ -1,4 +1,5 @@
 import django_filters
+from apps.core.periodo import inicio_do_dia
 from django.db.models import Q
 from django.core.exceptions import ValidationError
 from rest_framework import status
@@ -12,7 +13,7 @@ from apps.orders.models import Order, OrderItem
 from apps.orders.serializers import OrderItemSerializer, OrderSerializer
 from apps.orders.services import update_order_item_status
 from .models import KdsColumn, KdsItemPosition, KdsStation
-from .rules import apply_station_rules, move_position
+from .rules import apply_station_rules, move_position, regras_utilizaveis
 
 # Pedidos sem producao possivel: saem do KDS. PAGO nao entra aqui de proposito
 # — o caixa cobra assim que manda os itens para a cozinha, entao tirar o pago do
@@ -41,19 +42,33 @@ class KitchenOrderViewSet(ReadOnlyTenantViewSet):
     ordering_fields = ["opened_at", "sequence"]
 
     def list(self, request, *args, **kwargs):
-        from apps.orders.services import dispatch_due_kitchen_batches
+        from apps.orders.services import liberar_rodadas_vencidas_na_leitura
 
         account = getattr(request, "account", None)
         if account is not None:
-            dispatch_due_kitchen_batches(account_id=account.id)
+            liberar_rodadas_vencidas_na_leitura(account.id)
         return super().list(request, *args, **kwargs)
 
 
 class KitchenItemFilter(django_filters.FilterSet):
-    """Filtro do KDS: setor/status + intervalo de datas (por data de lançamento)."""
+    """Filtro do KDS: setor/status + intervalo de datas (por data de lançamento).
 
-    launched_after = django_filters.DateFilter(field_name="launched_at", lookup_expr="date__gte")
-    launched_before = django_filters.DateFilter(field_name="launched_at", lookup_expr="date__lte")
+    O dia vira INTERVALO de instantes, e não `launched_at__date`: a função de
+    data aplicada na coluna impedia o Postgres de usar índice, e cada leitura
+    do quadro (a cada poucos segundos, por tela de KDS) varria a tabela de
+    itens inteira — que só cresce, dia após dia.
+    """
+
+    launched_after = django_filters.DateFilter(method="_a_partir_de")
+    launched_before = django_filters.DateFilter(method="_ate")
+
+    def _a_partir_de(self, queryset, name, value):
+        return queryset.filter(launched_at__gte=inicio_do_dia(value))
+
+    def _ate(self, queryset, name, value):
+        from datetime import timedelta
+
+        return queryset.filter(launched_at__lt=inicio_do_dia(value + timedelta(days=1)))
 
     class Meta:
         model = OrderItem
@@ -81,11 +96,11 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
     ordering_fields = ["launched_at", "ready_at", "sent_to_kitchen_at"]
 
     def list(self, request, *args, **kwargs):
-        from apps.orders.services import dispatch_due_kitchen_batches
+        from apps.orders.services import liberar_rodadas_vencidas_na_leitura
 
         account = getattr(request, "account", None)
         if account is not None:
-            dispatch_due_kitchen_batches(account_id=account.id)
+            liberar_rodadas_vencidas_na_leitura(account.id)
         station_id = request.query_params.get("station")
         if not station_id:
             return super().list(request, *args, **kwargs)
@@ -118,7 +133,7 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
         else:
             station = None
         if station:
-            if any(rule.get("id") == "move-cancelled" and rule.get("enabled", True) for rule in station.rules or []):
+            if any(rule.get("id") == "move-cancelled" and rule.get("enabled", True) for rule in regras_utilizaveis(station)):
                 return queryset.filter(
                     (Q(status__in=_ACTIVE_ITEM_STATUSES) & ~Q(order__status__in=_INACTIVE_ORDER_STATUSES)) |
                     (Q(status=OrderItem.STATUS_CANCELLED, sent_to_kitchen_at__isnull=False) &
@@ -162,7 +177,7 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
 
         if column and any(
             rule.get("id") == "move-cancelled" and str(rule.get("target_column")) == str(column.id)
-            for rule in column.station.rules or []
+            for rule in regras_utilizaveis(column.station)
         ):
             return Response(
                 {"detail": "Cancele o item no pedido, informando o motivo; o KDS o moverá automaticamente."},

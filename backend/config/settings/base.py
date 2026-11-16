@@ -379,6 +379,10 @@ def build_runtime_service_settings(use_local_memory):
 globals().update(build_runtime_service_settings(USE_LOCAL_MEMORY_SERVICES))
 
 CELERY_TASK_TRACK_STARTED = True
+# Uma tarefa reservada por processo. Com o padrão (4), o filho preso numa
+# chamada lenta ao provedor fiscal segurava mais três tarefas na mão — o
+# dispatch da cozinha entre elas — enquanto o outro filho ficava ocioso.
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
@@ -391,9 +395,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "bulk_jobs.recover",
         "schedule": 60.0,
     },
+    # 10 s: a rodada imediata sai na própria escrita, e as leituras do KDS e
+    # da fila de impressão também liberam (`liberar_rodadas_vencidas_na_leitura`).
+    # Isto é só a rodada AGENDADA para daqui a minutos.
     "dispatch-due-kitchen-batches": {
         "task": "orders.dispatch_due_kitchen_batches",
-        "schedule": 5.0,
+        "schedule": 10.0,
     },
     # Nota pendente (contingencia, espera, conciliacao) volta a ser
     # transmitida sozinha: a NFC-e em contingencia tem 24 h (FISCAL_ACBRLIB.md).
@@ -429,6 +436,10 @@ from config.settings import sync as _sync  # noqa: E402
 
 if _sync.SYNC_ENABLED:
     CELERY_BEAT_SCHEDULE.update(_sync.SYNC_BEAT_SCHEDULE)
+    if _sync.SYNC_NODE_TYPE == "local":
+        # Avisar as lojas é papel da nuvem; na loja a tarefa acordava a cada
+        # 10 s para descobrir isso e voltar.
+        CELERY_BEAT_SCHEDULE.pop("sync-notify-pending", None)
 
 # Tique atrasado vence em vez de acumular (ver `agenda.py`).
 from config.settings.agenda import com_prazo  # noqa: E402

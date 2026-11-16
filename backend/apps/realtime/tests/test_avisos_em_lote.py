@@ -58,3 +58,33 @@ def test_redis_fora_nao_derruba_a_requisicao(monkeypatch):
     monkeypatch.setattr(envio_em_lote, "get_channel_layer", CamadaQuebrada)
     with envio_em_lote.em_lote():
         broadcast_model_event("conta1", "model.updated", _aviso("p1"))
+
+
+def test_na_tarefa_do_celery_os_avisos_tambem_saem_num_lote_so(monkeypatch):
+    """A emissão da nota e a sincronização salvam dezenas de linhas no worker."""
+    from celery import shared_task
+
+    camada = CamadaFalsa()
+    chamadas = []
+    monkeypatch.setattr(envio_em_lote, "get_channel_layer", lambda: camada)
+    original = envio_em_lote.async_to_sync
+    monkeypatch.setattr(envio_em_lote, "async_to_sync",
+                        lambda f: chamadas.append(f) or original(f))
+
+    vistos_durante = []
+
+    @shared_task(name="tests.realtime.salva_tres")
+    def salva_tres():
+        broadcast_model_event("conta1", "model.updated", _aviso("p1", ["total"]))
+        broadcast_model_event("conta1", "model.created", _aviso("i1"))
+        broadcast_model_event("conta1", "model.updated", _aviso("p1", ["status"]))
+        vistos_durante.append(len(camada.enviados))
+
+    salva_tres.apply()
+
+    assert vistos_durante == [0]  # nada saiu antes do fim da tarefa
+    assert len(chamadas) == 1
+    assert [m["payload"]["id"] for _, m in camada.enviados] == ["i1", "p1"]
+    # E o lote não vaza para fora da tarefa.
+    broadcast_model_event("conta1", "model.updated", _aviso("p2"))
+    assert len(camada.enviados) == 3

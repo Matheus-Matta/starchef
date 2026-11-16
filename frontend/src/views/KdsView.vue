@@ -237,6 +237,7 @@ import AppDateRange from "../components/form/AppDateRange.vue";
 import { api } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
+import { releituraContida } from "../composables/releituraContida";
 import { normalizeApiError } from "../utils/apiError";
 import { currentMonthRange } from "../utils/dateRange";
 
@@ -245,7 +246,11 @@ const PAGE = 20; // cards renderizados por coluna antes de "carregar mais" no sc
 const router = useRouter();
 // Ouve o PEDIDO além do item: cancelar o pedido atualiza os itens em massa
 // sem emitir evento por item, e os cards precisam ir para Cancelados na hora.
-useRealtimeResource(["orders.orderitem", "orders.order"], () => loadItems());
+// Contida: cada item salvo em qualquer caixa avisava, e cada aviso relia o
+// quadro inteiro (o servidor avalia as regras da estação item a item). Uma
+// rajada vira no máximo uma leitura a cada 2 s, sempre com a última no fim.
+const quadroContido = releituraContida(() => loadItems(), { intervalo: 2000 });
+useRealtimeResource(["orders.orderitem", "orders.order"], () => quadroContido.pedir(), { debounce: 300 });
 
 /* ── Filtro de datas (default: Hoje) ─────────────────────────── */
 const DATE_OPTIONS = [
@@ -597,12 +602,13 @@ onMounted(async () => {
   await loadItems();
   loadSlas();
   document.addEventListener("fullscreenchange", syncFullscreen);
-  // Polling remains only as a safety net when an intermediary blocks WebSocket.
-  refreshTimer = window.setInterval(loadItems, 15000);
+  // Só a rede de segurança para quando o WebSocket cai: quem avisa é ele.
+  refreshTimer = window.setInterval(() => quadroContido.pedir(), 30000);
   clockTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
 });
 onUnmounted(() => {
   if (refreshTimer) window.clearInterval(refreshTimer);
+  quadroContido.parar();
   if (clockTimer) window.clearInterval(clockTimer);
   document.removeEventListener("fullscreenchange", syncFullscreen);
 });

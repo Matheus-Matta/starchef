@@ -241,7 +241,7 @@
 </template>
 
 <script setup>
-import { computed, inject, nextTick, onMounted, provide, reactive, ref } from "vue";
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import Chart from "primevue/chart";
 
@@ -260,6 +260,7 @@ import { API_BASE_URL } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
 import { endpoints, reportService } from "../services/reportService";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
+import { releituraContida } from "../composables/releituraContida";
 import { currentMonthRange } from "../utils/dateRange";
 import { productRowsFrom, productSalesRoute, waiterRowsFrom } from "../utils/reportRows";
 import { ORDER_STATUS_LABELS, ORDER_TYPE_LABELS } from "../config/enums";
@@ -274,9 +275,13 @@ const router = useRouter();
 // cartão que mudou anima o valor subindo (`StatCard`, via `statCardLive`).
 const statCardLive = ref(false);
 provide("statCardLive", statCardLive);
+// O relatório soma o período inteiro: relê no máximo a cada 10 s, e não com
+// a aba escondida (`releituraContida`).
+const relatorioContido = releituraContida(() => refreshLive(), { intervalo: 10000 });
+onUnmounted(() => relatorioContido.parar());
 useRealtimeResource(
   ["orders.order", "orders.orderitem", "payments.payment", "payments.cashmovement", "payments.cashregister"],
-  () => refreshLive(),
+  () => relatorioContido.pedir(),
   { debounce: 300 },
 );
 

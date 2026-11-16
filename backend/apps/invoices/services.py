@@ -9,6 +9,9 @@ import base64
 import io
 import logging
 import textwrap
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -66,6 +69,7 @@ def _mark_awaiting(invoice, reason, message=""):
     payload = dict(invoice.fiscal_payload or {})
     payload["awaiting"] = reason
     payload.pop("failure", None)
+    payload.pop(EM_VOO, None)
     invoice.fiscal_payload = payload
     invoice.status = Invoice.STATUS_PENDING
     invoice.error_message = str(message or "")
@@ -81,6 +85,8 @@ def _clear_pending_markers(invoice):
     payload = dict(invoice.fiscal_payload or {})
     payload.pop("awaiting", None)
     payload.pop("failure", None)
+    # A transmissão que ficou pelo meio (processo morreu) também terminou.
+    payload.pop(EM_VOO, None)
     invoice.fiscal_payload = payload
 
 
@@ -120,6 +126,7 @@ def _mark_failed(invoice, kind, message):
     payload = dict(invoice.fiscal_payload or {})
     payload["failure"] = kind
     payload.pop("awaiting", None)
+    payload.pop(EM_VOO, None)
     invoice.fiscal_payload = payload
     invoice.status = Invoice.STATUS_ERROR
     invoice.error_message = str(message)
@@ -542,9 +549,116 @@ def _incomplete_profile_message(issues):
     return "Cadastro fiscal incompleto: " + " ".join(issue["message"] for issue in issues)
 
 
-@transaction.atomic
+#: Marca da nota cuja transmissão está em curso (`fiscal_payload`), com o
+#: instante em que começou. O reprocessamento não mexe nela antes de
+#: `EM_VOO_PRAZO`: consultar o provedor no meio da transmissão leria "não
+#: existe" e mandaria transmitir de novo.
+EM_VOO = "emitindo_desde"
+EM_VOO_PRAZO = timedelta(minutes=5)
+
+#: Notas pendentes por volta de `reprocess_pending_fiscal_invoices`.
+LIMITE_DO_REPROCESSAMENTO = 30
+#: Segundos que uma volta do reprocessamento pode gastar.
+ORCAMENTO_DO_REPROCESSAMENTO_S = 90
+
+
+@dataclass
+class _EmissaoPreparada:
+    invoice: object
+    config: object
+    contador: str
+    number: int
+    emission_dt: object
+    access_key: str
+    profile_issues: list
+
+
 def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name="", user=None):
-    """Emite (monta) o documento fiscal do pedido. Idempotente por pedido (OneToOne)."""
+    """Emite (monta) o documento fiscal do pedido. Idempotente por pedido (OneToOne).
+
+    Em TRÊS tempos, e a SEFAZ fica fora de qualquer transação:
+
+    1. `_preparar_emissao` trava pedido e configuração, numera, grava a nota
+       "em andamento" e faz commit — as travas duram milissegundos;
+    2. a transmissão roda sem transação aberta;
+    3. o resultado é gravado numa transação curta.
+
+    Antes a chamada ao provedor (até 40 s) rodava DENTRO da transação: a linha
+    da `FiscalConfig` ficava travada o tempo todo — o savepoint interno não
+    solta trava —, e toda nota do restaurante esperava a SEFAZ da anterior. O
+    `/invoices/emit/` do PDV, que chega logo depois do pagamento, parava no
+    `select_for_update` do pedido segurando um worker do gunicorn e uma
+    conexão do banco até a automática terminar.
+
+    A nota "em andamento" já é `pending` no banco, com o número reservado:
+    quem pedir a nota do pedido nesse meio tempo recebe ESTA (sem emitir outra)
+    e a próxima emissão pula o número dela (`_proximo_numero_livre`).
+    """
+    preparo = _preparar_emissao(
+        order, cpf=cpf, cpf_name=cpf_name, cnpj=cnpj, cnpj_name=cnpj_name, user=user,
+    )
+    if not isinstance(preparo, _EmissaoPreparada):
+        return preparo
+    return _transmitir_e_gravar(order, preparo, user=user)
+
+
+def _marcar_em_voo(invoice, config, contador, number):
+    """Grava a nota como `pending` em transmissão e reserva o número.
+
+    Só o BANCO vê a marca: em memória a nota volta ao estado de antes, e a
+    transmissão segue exatamente como seguia — o provedor e o tratamento da
+    resposta leem `status` e `fiscal_payload`.
+    """
+    status_antes = invoice.status
+    payload_antes = dict(invoice.fiscal_payload or {})
+    invoice.status = Invoice.STATUS_PENDING
+    invoice.fiscal_payload = {
+        **payload_antes,
+        "awaiting": AWAITING_AUTHORIZATION,
+        EM_VOO: timezone.now().isoformat(),
+    }
+    invoice.save(update_fields=["status", "fiscal_payload", "updated_at"])
+    avancar_contador(config, contador, number)
+    invoice.status = status_antes
+    invoice.fiscal_payload = payload_antes
+
+
+def em_voo_recente(invoice, agora=None):
+    """A transmissão desta nota começou há menos de `EM_VOO_PRAZO`?"""
+    inicio = (invoice.fiscal_payload or {}).get(EM_VOO)
+    if not inicio:
+        return False
+    try:
+        inicio = datetime.fromisoformat(inicio)
+    except (TypeError, ValueError):
+        return False
+    return (agora or timezone.now()) - inicio < EM_VOO_PRAZO
+
+
+def _preservar_marcas_do_voo(invoice):
+    """Traz o que outra requisição gravou na nota DURANTE a transmissão.
+
+    O `/invoices/emit/` do terminal acha a nota em andamento e grava nela
+    `terminal_prints` (quem imprime o DANFE). A gravação final escreve o
+    `fiscal_payload` inteiro, e sem isto apagaria a marca: o agente local
+    imprimiria uma via e o terminal outra.
+    """
+    no_banco = (
+        Invoice.all_objects.select_for_update()
+        .filter(pk=invoice.pk).values_list("fiscal_payload", flat=True).first()
+    ) or {}
+    if "terminal_prints" in no_banco and "terminal_prints" not in (invoice.fiscal_payload or {}):
+        invoice.fiscal_payload = {**(invoice.fiscal_payload or {}),
+                                  "terminal_prints": no_banco["terminal_prints"]}
+
+
+@transaction.atomic
+def _preparar_emissao(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name="", user=None):
+    """Fase 1 de `emit_fiscal_invoice`: a nota pronta para transmitir.
+
+    Devolve `_EmissaoPreparada`, ou a própria `Invoice` quando ela já terminou
+    aqui (recusa de cadastro, documento inválido, montagem que quebrou).
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.status == Order.STATUS_CANCELLED:
@@ -689,7 +803,6 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
             logging.getLogger(__name__).exception("Falha ao montar a nota do pedido %s", order.id)
             return nota_com_erro.registrar(order, config, f"Falha ao montar a nota: {exc}", user=user)
 
-        provider = get_provider(config.provider)
         if blocked:
             _mark_failed(invoice, FAILURE_REJECTION, _incomplete_profile_message(profile_issues))
             invoice.issued_at = emission_dt
@@ -703,6 +816,20 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
             )
             return invoice
 
+        _marcar_em_voo(invoice, config, contador, number)
+        return _EmissaoPreparada(
+            invoice=invoice, config=config, contador=contador, number=number,
+            emission_dt=emission_dt, access_key=access_key, profile_issues=profile_issues,
+        )
+
+
+def _transmitir_e_gravar(order, emissao, *, user=None):
+    """Fases 2 e 3: transmite sem transação aberta e grava o resultado."""
+    invoice, config = emissao.invoice, emissao.config
+    contador, number = emissao.contador, emissao.number
+    emission_dt, access_key, profile_issues = emissao.emission_dt, emissao.access_key, emissao.profile_issues
+    with tenant_context(order.account):
+        provider = get_provider(config.provider)
         emit_started = timezone.now()
         try:
             numero_ja_usado.emitir(provider, invoice, config)
@@ -748,19 +875,21 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name=""
         )
         _record_authorization_delay(invoice)
         invoice.issued_at = emission_dt
-        invoice.save()
-
-        avancar_contador(config, contador, number)
-
-        record_audit(
-            action=AuditLog.ACTION_CREATED,
-            instance=invoice,
-            actor=user,
-            metadata={
-                "access_key": access_key,
-                **({"fiscal_profile_issues": len(profile_issues)} if profile_issues else {}),
-            },
-        )
+        # O payload em memória nunca teve a marca de voo (`_marcar_em_voo`):
+        # gravá-lo inteiro já a tira do banco.
+        with transaction.atomic():
+            _preservar_marcas_do_voo(invoice)
+            invoice.save()
+            avancar_contador(config, contador, number)
+            record_audit(
+                action=AuditLog.ACTION_CREATED,
+                instance=invoice,
+                actor=user,
+                metadata={
+                    "access_key": access_key,
+                    **({"fiscal_profile_issues": len(profile_issues)} if profile_issues else {}),
+                },
+            )
         return invoice
 
 
@@ -787,6 +916,13 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
         with tenant_context(locked.account):
             if locked.status == Invoice.STATUS_CANCELLED:
                 return locked  # idempotente: cancelar de novo nao e erro.
+            if em_voo_recente(locked):
+                # Descartar agora a daria por "nunca autorizada" enquanto a SEFAZ
+                # pode estar autorizando — e a gravação da emissão a ressuscitaria.
+                raise ValidationError(
+                    "A NFC-e deste pedido esta sendo transmitida agora. Aguarde a resposta "
+                    "da SEFAZ (alguns segundos) e cancele de novo."
+                )
 
             config = _resolve_fiscal_config(locked.restaurant, locked.branch)
             if config is None:
@@ -927,6 +1063,8 @@ def resend_fiscal_invoice(invoice, *, user=None):
     """
     with transaction.atomic():
         locked = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
+        if em_voo_recente(locked):
+            raise ValidationError("Esta nota esta sendo transmitida agora. Aguarde a resposta da SEFAZ.")
         with tenant_context(locked.account):
             if locked.status in {Invoice.STATUS_ISSUED, Invoice.STATUS_CANCELLED}:
                 raise ValidationError("Uma nota autorizada ou cancelada nao pode ser reenviada.")
@@ -1076,7 +1214,19 @@ def reprocess_pending_fiscal_invoices(*, account=None):
 
     retried = 0
     issued = 0
-    for invoice in queryset.select_related("branch", "restaurant"):
+    # Um lote por volta, a mais esquecida primeiro. Sem teto, um dia de SEFAZ
+    # fora punha centenas de notas numa volta só, cada uma podendo esperar o
+    # timeout do provedor: a tarefa ocupava a vaga do worker por meia hora e
+    # a nota da venda nova esperava atrás. `save()` de cada uma atualiza o
+    # `updated_at`, então as que falham de novo vão para o fim da fila.
+    queryset = queryset.select_related("branch", "restaurant").order_by("updated_at")
+    inicio = time.monotonic()
+    for invoice in queryset[:LIMITE_DO_REPROCESSAMENTO]:
+        if time.monotonic() - inicio > ORCAMENTO_DO_REPROCESSAMENTO_S:
+            break  # a SEFAZ está lenta: o resto vai na próxima volta
+        if em_voo_recente(invoice):
+            # A transmissão desta nota ainda está em curso (`emit_fiscal_invoice`).
+            continue
         with tenant_context(invoice.account):
             config = _resolve_fiscal_config(invoice.restaurant, invoice.branch)
             if not config:
@@ -1520,6 +1670,11 @@ def refresh_fiscal_invoice_status(invoice, *, user=None, manual_print=False):
     """
     with transaction.atomic():
         locked = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
+        if em_voo_recente(locked):
+            # A emissão ainda está transmitindo esta nota (`emit_fiscal_invoice`).
+            # Consultar agora leria "não existe" e a marcaria para retransmitir;
+            # quem espera (o PDV, em laço) pergunta de novo daqui a pouco.
+            return locked
         with tenant_context(locked.account):
             config = _resolve_fiscal_config(locked.restaurant, locked.branch)
             if config is None:

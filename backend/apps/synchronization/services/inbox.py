@@ -81,7 +81,12 @@ def _gravar(SyncEvent, bruto, origem, destino, account_id, run):
     """Insere o evento. `event_id` repetido devolve None — é a deduplicação."""
     payload = bruto.get("payload") or {}
     checksum_recebido = bruto.get("payload_checksum") or ""
-    if checksum_recebido and crypto.checksum(payload) != checksum_recebido:
+    # Sem checksum também é quarentena: todo nó manda desde o protocolo 1
+    # (`dispatch.py`), então evento sem ele é truncado ou adulterado — e
+    # antes era gravado com um checksum calculado AQUI, que "conferia" sempre.
+    if not checksum_recebido:
+        raise EventQuarantined(f"Evento {bruto.get('event_id')} chegou sem checksum.")
+    if crypto.checksum(payload) != checksum_recebido:
         # Determinístico: a origem calcula do mesmo payload, então reenviar dá
         # o mesmo resultado. Insistir só reviveria o laço.
         raise EventQuarantined(

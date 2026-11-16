@@ -808,6 +808,34 @@ def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=Non
     return len(batch_ids) + command_count
 
 
+#: De quanto em quanto tempo uma LEITURA (KDS, fila de impressão) pode liberar
+#: rodadas vencidas, por conta.
+LIBERACAO_NA_LEITURA_SEGUNDOS = 5
+
+
+def liberar_rodadas_vencidas_na_leitura(account_id):
+    """A rede de segurança da leitura, no máximo uma vez a cada poucos segundos.
+
+    Quem libera a rodada agendada é o beat (`orders.dispatch_due_kitchen_batches`).
+    As leituras do KDS e da fila de impressão também liberam, para o caso de
+    o Celery estar parado — mas elas chegam várias vezes por segundo numa loja
+    com algumas telas de KDS e PDVs, e cada uma refazia a varredura inteira.
+    Uma por conta a cada `LIBERACAO_NA_LEITURA_SEGUNDOS` cobre o mesmo caso.
+
+    Cache fora do ar não pode tirar a rede de segurança: libera assim mesmo.
+    """
+    from django.core.cache import cache
+
+    try:
+        primeira = cache.add(f"orders:liberar-na-leitura:{account_id}", 1,
+                             timeout=LIBERACAO_NA_LEITURA_SEGUNDOS)
+    except Exception:  # noqa: BLE001 — Redis fora: melhor varrer do que não liberar
+        primeira = True
+    if not primeira:
+        return 0
+    return dispatch_due_kitchen_batches(account_id=account_id)
+
+
 @transaction.atomic
 def set_order_item_quantity(item, user, quantity):
     """Ajusta a quantidade de um item que ainda NAO foi para a producao.

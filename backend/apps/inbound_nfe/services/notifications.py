@@ -18,11 +18,9 @@ def notify_new_inbound_nfe(invoice):
         number_label = f"NF-e nº {invoice.number}" if invoice.number else "Nova NF-e de compra"
         supplier = invoice.supplier_name or invoice.supplier_cnpj or "Fornecedor"
 
-        try:
-            val = float(invoice.total_invoice) if invoice.total_invoice else 0.0
-            val_str = f" no valor de R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if val > 0 else ""
-        except Exception:
-            val_str = ""
+        # Decimal até o texto: `float` arredonda centavo em valor grande.
+        val = invoice.total_invoice or 0
+        val_str = f" no valor de R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if val > 0 else ""
 
         if invoice.status == "summary":
             status_desc = "Resumo identificado na SEFAZ. Aguardando download do XML completo."

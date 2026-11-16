@@ -44,6 +44,11 @@ from apps.payments.terminals import (
 User = get_user_model()
 
 
+def _texto(valor):
+    """Campo de texto do corpo: qualquer coisa que não seja string vira vazio."""
+    return valor if isinstance(valor, str) else ""
+
+
 def cash_session_error_response(exc):
     """Converte os erros de posse/conflito no envelope que a tela consome.
 
@@ -431,10 +436,10 @@ class CashRegisterViewSet(BaseTenantViewSet):
         try:
             result = approve_cash_operation(
                 cash_register=self.get_object(), user=request.user,
-                reason=request.data.get("reason", ""), movement=movement,
-                cash_password_proof=request.data.get("cash_password_proof"),
-                proof_nonce=request.data.get("proof_nonce", ""),
-                cash_password=request.data.get("cash_password") or None,
+                reason=_texto(request.data.get("reason")), movement=movement,
+                cash_password_proof=_texto(request.data.get("cash_password_proof")) or None,
+                proof_nonce=_texto(request.data.get("proof_nonce")),
+                cash_password=_texto(request.data.get("cash_password")) or None,
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)

@@ -236,6 +236,11 @@ class TenantResponseSafetyMiddleware:
 
         if account is None or not self.is_json_response(response):
             return response
+        # Só há o que conferir onde há chave `account`/`account_id`. Procurar
+        # os bytes custa uma fração do `json.loads` + varredura (~8 ms por
+        # resposta de 300 KB, em toda leitura do PDV).
+        if b'"account' not in response.content:
+            return response
 
         try:
             payload = json.loads(response.content.decode(response.charset or "utf-8"))

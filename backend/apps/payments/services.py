@@ -339,7 +339,8 @@ def approve_cash_operation(
     else:
         _require_manager(user)
 
-    if not reason.strip():
+    reason = reason.strip() if isinstance(reason, str) else ""
+    if not reason:
         raise ValidationError("A justificativa gerencial é obrigatória.")
     with tenant_context(cash_register.account):
         cash_register = CashRegister.objects.select_for_update().get(pk=cash_register.pk)

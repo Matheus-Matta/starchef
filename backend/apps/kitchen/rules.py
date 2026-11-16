@@ -1,9 +1,46 @@
+import logging
+
 from django.utils import timezone
 
 from apps.orders.models import OrderItem
 from apps.orders.services import update_order_item_status
 
 from .models import KdsItemPosition
+
+
+logger = logging.getLogger(__name__)
+
+
+def _prioridade(regra):
+    try:
+        return float(regra.get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def regras_utilizaveis(station):
+    """As regras da estação que dá para avaliar, em ordem de prioridade.
+
+    `rules` é JSON livre: o serializer valida (`rule_schema`), mas a regra
+    também chega pela sincronização e pelo admin, sem passar por ele. Um
+    elemento que não é objeto, condições que não são lista ou prioridade em
+    texto davam 500 no quadro — a cozinha inteira sem tela, a cada 15 s.
+
+    A regra malformada sai INTEIRA, e não "consertada": uma regra de exclusão
+    cujas condições virassem lista vazia casaria com todo item (`all([])`) e
+    esvaziaria o quadro.
+    """
+    regras = station.rules if isinstance(station.rules, list) else []
+    boas = []
+    for regra in regras:
+        condicoes = regra.get("conditions") if isinstance(regra, dict) else None
+        if not isinstance(regra, dict) or not (
+            condicoes is None or (isinstance(condicoes, list) and all(isinstance(c, dict) for c in condicoes))
+        ):
+            logger.warning("KDS: regra malformada ignorada na estação %s: %r", station.pk, regra)
+            continue
+        boas.append(regra)
+    return sorted(boas, key=_prioridade)
 
 
 def _minutes_since(value, now):
@@ -98,7 +135,7 @@ def apply_station_rules(items, station, user):
     entry = entry or next(iter(columns.values()), None)
     if entry is None:
         return []
-    rules = sorted(station.rules or [], key=lambda rule: rule.get("priority", 0))
+    rules = regras_utilizaveis(station)
     positions = {
         position.item_id: position
         for position in KdsItemPosition.objects.filter(station=station, item__in=items).select_related("column")

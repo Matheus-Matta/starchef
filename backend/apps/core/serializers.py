@@ -9,6 +9,33 @@ TIMESTAMP_READ_ONLY_FIELDS = ["id", "created_at", "updated_at"]
 AUDIT_READ_ONLY_FIELDS = [*TIMESTAMP_READ_ONLY_FIELDS, "created_by", "updated_by"]
 
 
+def filho_reutilizavel(pai, nome, fabrica):
+    """O MESMO serializer filho para todas as linhas de uma listagem.
+
+    `XSerializer(obj, context=...).data` dentro de um `get_*` constrói um
+    serializer novo POR LINHA — e construir é a parte cara: `get_fields`
+    remonta o mapeamento de campos do DRF, os validadores de unicidade (que
+    montam querysets filtrados) e os ajustes do `TenantModelSerializer`.
+    Medido na lista de pedidos: 50 pedidos, 19 consultas, 410 ms — quase tudo
+    construção de campo (1.228 `Field.__init__`, 747 filtros de queryset que
+    nunca rodavam).
+
+    Uso::
+
+        filho_reutilizavel(self, "payments",
+                           lambda: PaymentSerializer(many=True, context=self.context)
+                           ).to_representation(pagamentos)
+
+    `to_representation` em vez de `.data`: é o mesmo conteúdo, sem prender a
+    instância ao serializer.
+    """
+    cache = pai.__dict__.setdefault("_filhos_reutilizaveis", {})
+    filho = cache.get(nome)
+    if filho is None:
+        filho = cache[nome] = fabrica()
+    return filho
+
+
 class MoneyField(serializers.DecimalField):
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("max_digits", 12)

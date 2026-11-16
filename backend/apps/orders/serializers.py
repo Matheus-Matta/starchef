@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
+from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer, filho_reutilizavel
 
 from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
 from apps.orders.serializers_metafields import MetafieldsField
@@ -165,7 +165,9 @@ class OrderSerializer(TenantModelSerializer):
             if payment.status == "approved"
         ]
         payments.sort(key=lambda payment: payment.created_at)
-        return PaymentSerializer(payments, many=True, context=self.context).data
+        return filho_reutilizavel(
+            self, "payments", lambda: PaymentSerializer(many=True, context=self.context)
+        ).to_representation(payments)
 
     table_number = serializers.CharField(source="table.number", read_only=True, default=None)
     command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)

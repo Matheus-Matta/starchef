@@ -138,6 +138,7 @@ def test_o_payload_da_entrada_encolhe_mas_a_deduplicacao_continua(
         "entity_id": evento.entity_id,
         "operation": Operation.UPSERT,
         "payload": {"fields": _campos(conta, "Reenviada")},
+        "payload_checksum": crypto.checksum({"fields": _campos(conta, "Reenviada")}),
     }
     aceitos, _maior, _recusados = inbox.store_batch(
         [repetido], connection_node=no_nuvem, account_id=conta.id
@@ -227,7 +228,8 @@ def test_lote_absurdo_e_recusado_antes_de_gravar(como_loja, conta, no_nuvem, no_
     settings.SYNC_BATCH_MAX_EVENTS = 10
     exagerado = [
         {"event_id": str(uuid.uuid4()), "entity_type": "restaurant",
-         "entity_id": str(uuid.uuid4()), "operation": Operation.UPSERT, "payload": {}}
+         "entity_id": str(uuid.uuid4()), "operation": Operation.UPSERT, "payload": {},
+         "payload_checksum": crypto.checksum({})}
         for _ in range(10 * inbox.FOLGA + 1)
     ]
 
@@ -245,7 +247,8 @@ def test_lote_dentro_do_teto_continua_passando(como_loja, conta, no_nuvem, no_lo
     normal = [
         {"event_id": str(uuid.uuid4()), "entity_type": "restaurant",
          "entity_id": str(uuid.uuid4()), "operation": Operation.UPSERT,
-         "sequence": i + 1, "payload": {"fields": _campos(conta)}}
+         "sequence": i + 1, "payload": {"fields": _campos(conta)},
+         "payload_checksum": crypto.checksum({"fields": _campos(conta)})}
         for i in range(10)
     ]
 

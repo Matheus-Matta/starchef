@@ -84,6 +84,40 @@ def _enviar_agora(mensagens):
         logger.warning("Avisos de tempo real não enviados (%d).", len(mensagens), exc_info=True)
 
 
+_lotes_das_tarefas = {}
+
+
+def _abrir_lote_da_tarefa(task_id=None, **_kwargs):
+    _lotes_das_tarefas[task_id] = _lote.set([])
+
+
+def _fechar_lote_da_tarefa(task_id=None, **_kwargs):
+    token = _lotes_das_tarefas.pop(task_id, None)
+    if token is None:
+        return
+    pendentes = _lote.get()
+    try:
+        _lote.reset(token)
+    except ValueError:  # outro contexto: só não deixa o lote vazar
+        _lote.set(None)
+    if pendentes:
+        _enviar_agora(_sem_repetidos(pendentes))
+
+
+def ligar_no_celery():
+    """A tarefa do Celery também junta os avisos e os envia no fim.
+
+    Fora da requisição cada `save()` enviava o seu aviso na hora — laço de
+    eventos e conexão ao Redis novos para cada um. A emissão de uma nota salva
+    a nota e cada item dela; a aplicação de um lote da sincronização salva
+    centenas de linhas. Cada aviso ainda acordava todas as telas da loja.
+    """
+    from celery.signals import task_postrun, task_prerun
+
+    task_prerun.connect(_abrir_lote_da_tarefa, weak=False, dispatch_uid="realtime_lote_abre")
+    task_postrun.connect(_fechar_lote_da_tarefa, weak=False, dispatch_uid="realtime_lote_fecha")
+
+
 class RealtimeEmLoteMiddleware:
     """Envolve a requisição num lote de avisos (ver o topo do módulo)."""
 

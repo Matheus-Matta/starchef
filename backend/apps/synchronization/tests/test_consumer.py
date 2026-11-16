@@ -200,6 +200,7 @@ async def test_lote_de_outra_conta_e_recusado_e_derruba(
         "target_node_id": str(no_nuvem.id), "sequence": 1,
         "entity_type": "customer", "entity_id": str(uuid.uuid4()),
         "operation": "UPSERT", "payload": {"fields": {}},
+        "payload_checksum": crypto.checksum({"fields": {}}),
     }
     envelope = protocol.build(
         MessageType.EVENT_BATCH, source_node_id=no_loja.id, target_node_id=no_nuvem.id,
@@ -239,6 +240,7 @@ async def test_um_evento_mal_enderecado_nao_derruba_a_conexao(
             "target_node_id": alvo, "sequence": seq,
             "entity_type": "customer", "entity_id": str(uuid.uuid4()),
             "operation": "UPSERT", "payload": {"fields": {}},
+            "payload_checksum": crypto.checksum({"fields": {}}),
         }
 
     perdido = _evento(2, str(uuid.uuid4()))

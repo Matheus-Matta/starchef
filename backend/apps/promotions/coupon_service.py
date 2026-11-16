@@ -73,7 +73,10 @@ def buscar_cupom(account_id, codigo):
     — e "cupom não encontrado" para um cupom que existe é o pior erro possível
     na frente do cliente.
     """
-    codigo = (codigo or "").strip().upper()
+    # Código numérico pode vir como número do PDV; lista/objeto é lixo.
+    if isinstance(codigo, int) and not isinstance(codigo, bool):
+        codigo = str(codigo)
+    codigo = (codigo if isinstance(codigo, str) else "").strip().upper()
     if not codigo:
         raise CouponRejected("Informe o código do cupom.")
     cupom = Coupon.all_objects.filter(

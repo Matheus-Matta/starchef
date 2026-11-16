@@ -58,7 +58,9 @@ def mapa_de_calor(*, filtros, hoje=None):
 
     inicio, fim = semana_atual(hoje)
     fora = [CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED]
-    periodo = {"launched_at__date__gte": inicio, "launched_at__date__lte": fim}
+    from apps.core.periodo import filtro_de_dias
+
+    periodo = filtro_de_dias("launched_at", inicio, fim)
 
     anotados = CommandItem.objects.filter(**filtros, **periodo).exclude(status__in=fora)
     # O pedido pago em QUALQUER data: o período é o do item. Filtrar pela

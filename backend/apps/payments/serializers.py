@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models import Q, Sum
 
-from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
+from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer, filho_reutilizavel
 
 from apps.payments.models import CashMovement, CashRegister, CashStation, PdvTerminal, Payment, PaymentMethod
 
@@ -251,10 +251,12 @@ class CashRegisterSerializer(TenantModelSerializer):
         movements.sort(key=lambda movement: (movement.created_at, str(movement.pk)))
         running = 0
         rows = []
+        serializador = filho_reutilizavel(
+            self, "movements", lambda: CashMovementSerializer(context=self.context))
         for movement in movements:
             if movement.status == "approved":
                 running += movement.amount
-            row = CashMovementSerializer(movement, context=self.context).data
+            row = serializador.to_representation(movement)
             row["balance_after"] = str(running)
             rows.append(row)
         return rows
