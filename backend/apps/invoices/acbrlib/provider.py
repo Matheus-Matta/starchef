@@ -10,6 +10,7 @@ nota ou a família de falha que o serviço de emissão já sabe tratar.
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from apps.invoices import chave_do_emitente
 from apps.invoices.acbrlib import cliente, ini
 from apps.invoices.acbrlib.certificado import CertificadoRecusado, conferir_certificado
 from apps.invoices.acbrlib.emitente import Emitente
@@ -73,12 +74,14 @@ class AcbrLibProvider(DocumentoFiscal, FiscalProvider):
 
     def status(self, invoice):
         config = _config_da_nota(invoice)
+        _chave_consultavel(invoice, config)
         return self.aplicar(invoice, cliente.chamar("/v1/nfe/consultar", {
             **self._contexto(invoice, config), "chave": invoice.access_key,
         }))
 
     def cancel(self, invoice, reason):
         config = _config_da_nota(invoice)
+        _chave_consultavel(invoice, config)
         return self.aplicar(invoice, cliente.chamar("/v1/nfe/cancelar", {
             **self._contexto(invoice, config), "chave": invoice.access_key,
             "protocolo": invoice.authorization_protocol, "justificativa": _justificativa(reason),
@@ -178,6 +181,13 @@ def _justificativa(texto):
     """A SEFAZ exige de 15 a 255 caracteres em xJust."""
     texto = " ".join(str(texto or "").split())[:255]
     return texto if len(texto) >= 15 else f"{texto} - sem comunicacao com a SEFAZ".strip(" -")
+
+
+def _chave_consultavel(invoice, config):
+    """A ACBrLib acha o webservice pela UF da chave (`chave_do_emitente`)."""
+    invoice.access_key = chave_do_emitente.corrigir(invoice.access_key, config)
+    if not chave_do_emitente.consultavel(invoice.access_key):
+        raise FiscalNotFound("ACBrLib: a nota não tem chave de acesso válida para consultar.")
 
 
 def _config_da_nota(invoice):

@@ -37,6 +37,8 @@ from apps.invoices.fiscal import (
     format_access_key,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
+from apps.invoices.chave_do_emitente import emitente_da_chave
+from apps.invoices import imprimir_aguardando
 from apps.invoices import contingencia_offline, lei_da_transparencia, models_ibs_cbs, numero_ja_usado
 from apps.invoices.providers import (
     FiscalAmbiguous,
@@ -660,9 +662,7 @@ def _preparar_emissao(order, *, cpf=None, cpf_name="", cnpj=None, cnpj_name="", 
                 _segredos = segredos_de(config)
                 emission_dt = timezone.now()
                 access_key, numeric_code = build_access_key(
-                    uf=config.uf,
-                    emission_date=emission_dt,
-                    cnpj=config.cnpj,
+                    **emitente_da_chave(config), emission_date=emission_dt,
                     model=config.document_model,
                     series=serie,
                     number=number, numeric_code=cnf_da_nota,
@@ -977,11 +977,8 @@ def _refresh_emission_for_retry(invoice, config):
     _segredos = segredos_de(config)
     fiscal_payload = dict(invoice.fiscal_payload or {})
     access_key, numeric_code = build_access_key(
-        uf=config.uf,
-        emission_date=emission_dt,
-        cnpj=config.cnpj,
-        model=invoice.document_model,
-        series=invoice.series,
+        **emitente_da_chave(config), emission_date=emission_dt,
+        model=invoice.document_model, series=invoice.series,
         number=invoice.number,
         numeric_code=fiscal_payload.get("cNF"),
         emission_type=invoice.emission_type,
@@ -1298,7 +1295,7 @@ def print_fiscal_invoice(invoice, *, user=None, printer=None, manual_only=False)
     from apps.printers.models import PrintJob
     from apps.printers.services import claim_pending_job, resolve_printer_for
 
-    if not is_fiscally_printable(invoice):
+    if not imprimir_aguardando.imprimivel(invoice, user=user):
         raise ValidationError(
             "A NFC-e ainda nao foi autorizada, entao o DANFE nao pode ser impresso: "
             "a chave impressa nao existiria na SEFAZ. Reenvie a nota e imprima depois "
@@ -1502,7 +1499,8 @@ def refresh_fiscal_invoice_status(invoice, *, user=None, manual_print=False):
                 # la. E a resposta que resolve uma nota presa em reconciliacao.
                 _mark_awaiting(locked, AWAITING_TRANSMISSION, exc)
             except FiscalUnavailable as exc:
-                raise ValidationError(str(exc)) from exc
+                if not (manual_print and imprimir_aguardando.assinar(locked, config, provider, user=user)):
+                    raise ValidationError(str(exc)) from exc
             except FiscalConfigurationError as exc:
                 _mark_failed(locked, FAILURE_CONFIGURATION, exc)
             except FiscalProviderError as exc:
@@ -1513,6 +1511,8 @@ def refresh_fiscal_invoice_status(invoice, *, user=None, manual_print=False):
                 else:
                     _clear_pending_markers(locked)
                     _record_authorization_delay(locked)
+            if manual_print:  # o terminal espera o cupom: a pendente sai em contingência
+                imprimir_aguardando.assinar(locked, config, provider, user=user)
 
             locked.updated_by = user
             locked.save()
