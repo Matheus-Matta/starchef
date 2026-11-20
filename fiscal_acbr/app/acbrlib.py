@@ -16,7 +16,7 @@ import ctypes
 import re
 import threading
 
-from app import ini, sefaz
+from app import ini, sefaz, totais
 
 TAMANHO = 1024 * 512
 FORMA_EMISSAO = {"1": "0", "9": "8"}  # teNormal, teOffLine (NFC-e)
@@ -91,7 +91,8 @@ class AcbrLib:
         with self.trava:
             self._configurar(pedido, pedido.tp_emis)
             self._ok(self.lib.NFE_LimparLista(self.handle))
-            self._ok(self.lib.NFE_CarregarINI(self.handle, _c(ini.completar_codigos(pedido.ini))))
+            texto = totais.completar_totais(ini.completar_codigos(pedido.ini))  # backend antigo
+            self._ok(self.lib.NFE_CarregarINI(self.handle, _c(texto)))
             self._ok(self.lib.NFE_Assinar(self.handle))
             self._ok(self.lib.NFE_Validar(self.handle))
             assinado = self._xml_atual()

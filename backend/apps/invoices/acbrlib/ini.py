@@ -10,7 +10,7 @@ O número, a série e o `cNF` vêm da nota já montada pelo backend: são eles q
 compõem a chave de acesso, e a ACBrLib chega à MESMA chave que
 `fiscal.build_access_key` calculou.
 """
-from apps.invoices.acbrlib import ini_ibs_cbs
+from apps.invoices.acbrlib import ini_ibs_cbs, ini_impostos
 from apps.invoices.acbrlib.emitente import Emitente
 from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig
@@ -49,7 +49,7 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
         if homologacao and n == 1 and str(invoice.document_model) == FiscalConfig.MODEL_NFCE:
             produto["xProd"] = TEXTO_HOMOLOGACAO_ITEM  # NFC-e: só o primeiro item (373)
         secao(f"Produto{n:03d}", produto)
-        secao(f"ICMS{n:03d}", _icms(item, simples))
+        secao(f"ICMS{n:03d}", ini_impostos.icms(item, simples))
         secao(f"PIS{n:03d}", _tributo(item, "pis", "pPIS", "vPIS"))
         secao(f"COFINS{n:03d}", _tributo(item, "cofins", "pCOFINS", "vCOFINS"))
         for nome, campos in ini_ibs_cbs.secoes_do_item(item, n):
@@ -58,6 +58,7 @@ def montar(documento, invoice, config, *, tp_emis="1", contingencia=None):
         "vProd": documento["valor_produtos"], "vDesc": documento["valor_desconto"],
         "vOutro": documento["valor_outras_despesas"], "vNF": documento["valor_total"],
         "vTotTrib": documento["valor_total_tributos"],
+        **ini_impostos.totais(documento["items"], simples),
     })
     for nome, campos in ini_ibs_cbs.secoes_do_total(documento["items"]):
         secao(nome, campos)
@@ -161,15 +162,6 @@ def _produto(item):
         "vDesc": item.get("valor_desconto"), "vOutro": item.get("valor_outras_despesas"),
         "indTot": "1", "vTotTrib": item.get("valor_total_tributos"),
     }
-
-
-def _icms(item, simples):
-    situacao = item["icms_situacao_tributaria"]
-    campos = {"orig": item["icms_origem"], ("CSOSN" if simples else "CST"): situacao}
-    if item.get("icms_aliquota"):
-        campos.update({"vBC": item["icms_base_calculo"], "pICMS": item["icms_aliquota"],
-                       "vICMS": item["icms_valor"]})
-    return campos
 
 
 def _tributo(item, prefixo, campo_aliquota, campo_valor):
