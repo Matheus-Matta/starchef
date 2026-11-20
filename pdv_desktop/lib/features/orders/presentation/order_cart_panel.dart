@@ -5,6 +5,8 @@ import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
 import 'draft_destination_bar.dart';
 import '../../../core/theme/app_theme.dart';
+import 'acao_fiscal_do_pedido.dart';
+export 'acao_fiscal_do_pedido.dart' show notaPendente;
 import 'cart_item_card.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 
@@ -457,39 +459,21 @@ class OrderCartPanel extends StatelessWidget {
     );
   }
 
-  /// A acao fiscal do pedido, conforme a situacao da nota.
-  ///
-  /// Nota autorizada nao se emite de novo: o que falta e o papel. Deixar o
-  /// mesmo botao para os dois casos escondia isso do operador — e mandava a
-  /// impressao passar pelo `/invoices/emit/`, que sem rede vira mais uma
-  /// entrada na fila fiscal para uma nota que ja existe.
+  /// A acao fiscal do pedido, conforme a situacao da nota
+  /// (`acao_fiscal_do_pedido.dart`). Nota que existe so precisa de papel: nao
+  /// passa pelo `/invoices/emit/`, que sem rede viraria mais um item na fila.
   Widget _invoiceAction() {
-    final fiscal = order?['fiscal'] as Map<String, dynamic>?;
-    final printable = fiscal?['printable'] == true;
-    final state = '${fiscal?['fiscal_state'] ?? ''}';
+    final acao = acaoFiscalDoPedido(order?['fiscal'] as Map<String, dynamic>?);
+    final printable = acaoSoImprime(acao);
     final busy = emittingInvoice;
-
-    final label = switch (true) {
-      _ when busy && printable => 'Imprimindo DANFE...',
-      _ when busy => 'Emitindo NFC-e...',
-      _ when printable => 'Imprimir DANFE',
-      _ when state == 'rejected' || state == 'configuration_error' =>
-        'Reenviar NFC-e',
-      _ when state == 'processing' || state == 'reconciliation_required' =>
-        'NFC-e aguardando a SEFAZ',
-      _ when state == 'awaiting_transmission' => 'Transmitir NFC-e',
-      _ => 'Emitir NFC-e',
-    };
-    // Enquanto a SEFAZ nao responde nao ha o que emitir nem o que imprimir:
-    // insistir aqui so duplicaria consulta.
-    final waiting = state == 'processing' || state == 'reconciliation_required';
+    final label = rotuloDaAcaoFiscal(acao, ocupado: busy);
     final action = printable ? onPrintInvoice : onEmitInvoice;
 
     return SizedBox(
       width: double.infinity,
       height: 44,
       child: OutlinedButton.icon(
-        onPressed: busy || waiting ? null : action,
+        onPressed: busy ? null : action,
         icon: busy
             ? const SizedBox(
                 width: 17,

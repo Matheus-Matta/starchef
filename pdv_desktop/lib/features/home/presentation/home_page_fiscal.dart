@@ -34,10 +34,8 @@ mixin _FiscalSection on _HomePageShared {
   /// mesma situação devolvia um erro no meio do recebimento, como se a venda
   /// tivesse falhado.
   ///
-  /// O DANFE só é impresso para nota AUTORIZADA. Uma nota pendente tem chave
-  /// montada localmente, que a consulta no portal da SEFAZ não encontra:
-  /// imprimi-la entregaria ao cliente um cupom que não corresponde a documento
-  /// fiscal nenhum.
+  /// Pedida pelo OPERADOR, a nota que volta pendente sai na hora em
+  /// contingência (`/print/` assina em tpEmis=9); na automática, espera a SEFAZ.
   ///
   /// [silentIfUnconfigured] evita um alerta em toda venda de restaurantes que
   /// ainda não configuraram Fiscal > Configuração — chamado automaticamente
@@ -163,11 +161,13 @@ mixin _FiscalSection on _HomePageShared {
               ? _askPrintDanfe(summary, salePrinter)
               : null);
 
-      // `fiscal_state` é a situação real do documento; `status` sozinho não
-      // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
-      // documento AUTORIZADO tem chave que a SEFAZ reconhece — por isso o
-      // DANFE só é oferecido quando `printable` vem verdadeiro.
+      // `fiscal_state` é a situação real; `status` sozinho não separa "ainda
+      // não saiu daqui" de "pode ter sido emitida" (`acao_fiscal_do_pedido`).
       if (invoice['printable'] != true) {
+        if (!automatic && notaPendente(invoice['fiscal_state'])) {
+          await _printDanfe(invoiceId: '${invoice['id']}', summary: summary);
+          return;
+        }
         _showFiscalStateToast(invoice, silent: false);
         _watchFiscalAuthorization(
           invoice,
@@ -288,11 +288,8 @@ mixin _FiscalSection on _HomePageShared {
     );
   }
 
-  /// Reimprime o DANFE de uma nota que ja esta autorizada.
-  ///
-  /// Nao passa pelo `/invoices/emit/`: a nota existe, o que falta e o papel —
-  /// e sem rede aquela rota vira mais uma entrada na fila fiscal para um
-  /// documento que ja foi emitido.
+  /// Imprime o DANFE da nota que ja existe: autorizada, ou pendente — essa o
+  /// servidor assina em contingencia. Nao passa pelo `/invoices/emit/`.
   Future<void> _reprintDanfe(Map<String, dynamic> order) async {
     final fiscal = order['fiscal'] as Map<String, dynamic>?;
     final invoiceId = '${fiscal?['id'] ?? ''}';
