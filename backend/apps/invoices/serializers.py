@@ -57,19 +57,11 @@ class FiscalProfileSerializer(TenantModelSerializer):
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
-    def validate_ibs_cbs_cst(self, valor):
-        from apps.invoices.ibs_cbs import completar_zeros
-
-        return completar_zeros(valor, 3)
-
-    def validate_ibs_cbs_cclass_trib(self, valor):
-        from apps.invoices.ibs_cbs import completar_zeros
-
-        return completar_zeros(valor, 6)
-
     def validate(self, attrs):
-        attrs = super().validate(attrs)
         from apps.invoices import ibs_cbs
+        from apps.invoices.codigos_fiscais import completar_codigos
+
+        attrs = completar_codigos(super().validate(attrs))  # o zero que o Excel apagou
 
         def atual(campo, padrao):  # PATCH: o que nao veio fica como esta
             return attrs.get(campo, getattr(self.instance, campo, padrao))

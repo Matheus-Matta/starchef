@@ -13,6 +13,7 @@ recusou.
 from decimal import Decimal
 
 from apps.invoices import cfop_do_csosn, ibs_cbs
+from apps.invoices.codigos_fiscais import codigo
 from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig
 from apps.invoices.documento_regras import DocumentoRegras
@@ -38,9 +39,9 @@ class DocumentoFiscal(DocumentoRegras):
             "valor_unitario_tributavel": str(item.unit_price),
             "icms_origem": item.origem or "0",
             "icms_situacao_tributaria": self._icms_situation(item, config),
-            "pis_situacao_tributaria": item.pis_cst or "49",
+            "pis_situacao_tributaria": codigo(item.pis_cst, "pis_cst") or "49",
             "pis_valor": str(item.pis_value),
-            "cofins_situacao_tributaria": item.cofins_cst or "49",
+            "cofins_situacao_tributaria": codigo(item.cofins_cst, "cofins_cst") or "49",
             "cofins_valor": str(item.cofins_value),
             "valor_total_tributos": str(item.approx_tax_value),
         }

@@ -154,10 +154,12 @@ class DocumentoRegras:
         recusa. No Simples, CSOSN 102 (tributada sem permissao de credito)
         continua valendo como padrao do varejo.
         """
+        from apps.invoices.codigos_fiscais import codigo
+
         if str(config.crt) in {FiscalConfig.CRT_SIMPLES, FiscalConfig.CRT_SIMPLES_EXCESSO}:
-            return item.csosn or "102"
+            return codigo(item.csosn, "csosn") or "102"
         if item.cst_icms:
-            return item.cst_icms
+            return codigo(item.cst_icms, "cst_icms")  # "0" do Excel → "00"
         raise FiscalRejection(
             f'{cls.rotulo}: o item "{item.description}" esta sem CST do ICMS e a empresa '
             "esta em regime normal (CRT 3). Informe o CST no perfil fiscal do produto — "
