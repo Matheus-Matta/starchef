@@ -359,18 +359,28 @@ class OrderCartPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
+          // Pago, cancelado ou estornado nao se edita, mas o recibo (nao
+          // fiscal) continua: o cliente pede a segunda via, e o cancelado
+          // reimprime o comprovante do cancelamento (`_printCustomerReceipt`).
           if (_readOnly)
-            SizedBox(
-              width: double.infinity,
-              height: _alturaBotao,
-              child: OutlinedButton(
-                onPressed: null,
-                child: _acaoDoBotao(
-                  const Icon(Icons.lock_outline, size: 17),
-                  'Pedido somente para consulta',
-                  fontSize: 12,
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: _alturaBotao,
+                    child: OutlinedButton(
+                      onPressed: null,
+                      child: _acaoDoBotao(
+                        const Icon(Icons.lock_outline, size: 17),
+                        'Somente consulta',
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Expanded(child: _botaoRecibo()),
+              ],
             )
           else ...[
             Row(
@@ -390,32 +400,7 @@ class OrderCartPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: SizedBox(
-                    height: _alturaBotao,
-                    child: OutlinedButton(
-                      onPressed: order != null && items.isNotEmpty && !printing
-                          ? onPrint
-                          : null,
-                      child: _acaoDoBotao(
-                        printing
-                            ? const SizedBox(
-                                width: 15,
-                                height: 15,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.print_outlined, size: 17),
-                        printing ? 'Gerando...' : 'Recibo',
-                        tecla: printing
-                            ? null
-                            : PdvShortcuts.teclaDe(PdvAction.printReceipt),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ),
+                Expanded(child: _botaoRecibo()),
               ],
             ),
             const SizedBox(height: 8),
@@ -455,6 +440,30 @@ class OrderCartPanel extends StatelessWidget {
             _invoiceAction(),
           ],
         ],
+      ),
+    );
+  }
+
+  /// "Recibo" (nao fiscal): no pedido aberto e no somente consulta.
+  Widget _botaoRecibo() {
+    return SizedBox(
+      height: _alturaBotao,
+      child: OutlinedButton(
+        onPressed: order != null && items.isNotEmpty && !printing
+            ? onPrint
+            : null,
+        child: _acaoDoBotao(
+          printing
+              ? const SizedBox(
+                  width: 15,
+                  height: 15,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.print_outlined, size: 17),
+          printing ? 'Gerando...' : 'Recibo',
+          tecla: printing ? null : PdvShortcuts.teclaDe(PdvAction.printReceipt),
+          fontSize: 12,
+        ),
       ),
     );
   }
