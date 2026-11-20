@@ -6,9 +6,13 @@ diz o destino da nota é o cStat da resposta, e é aqui que ele vira a
 """
 AUTORIZADA = {"100", "150"}
 DENEGADA = {"110", "301", "302", "303"}
-# Duplicidade: a nota JÁ EXISTE na SEFAZ. Nunca é recusa — o comunicador
-# consulta e devolve a situação real (`motor.emitir`).
-DUPLICIDADE = {"204", "539"}
+# Duplicidade (204): ESTA nota, com esta chave, já existe na SEFAZ — o
+# comunicador consulta e devolve a situação real. A 539 NÃO é isso: é o número
+# autorizado com OUTRA chave, e volta como recusa com a chave da SEFAZ entre
+# colchetes, que o backend lê (`numero_ja_usado.py`) para adotar a nota ou
+# andar o número. Tratada aqui, ela virava consulta da nossa chave e, sem
+# chave, "ACBrLib: Chave "" inválida".
+DUPLICIDADE = {"204"}
 NAO_ENCONTRADA = {"217", "562"}
 PROCESSANDO = {"103", "104", "105"}
 CANCELADA = {"101", "135", "155"}

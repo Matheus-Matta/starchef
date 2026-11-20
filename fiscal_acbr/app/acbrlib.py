@@ -112,7 +112,9 @@ class AcbrLib:
         nota = ini.primeira(resposta, "nfe", "retorno", "envio")
         cstat = nota.get("cstat", "")
         if cstat in sefaz.DUPLICIDADE:
-            return self._consultar_chave(pedido, nota.get("chdfe") or _do_xml(self._xml_atual())["chave"])
+            chave = nota.get("chdfe") or nota.get("chnfe") or _do_xml(self._xml_atual())["chave"]
+            if chave:  # consultar "" era o `Chave "" inválida` da lib: sem chave, volta a recusa
+                return self._consultar_chave(pedido, chave)
         return self._resultado(nota, xml=self._xml_atual())
 
     def consultar(self, pedido):
