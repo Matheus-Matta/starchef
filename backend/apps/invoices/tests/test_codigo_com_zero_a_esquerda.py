@@ -11,6 +11,7 @@ import pytest
 from apps.invoices.models import FiscalConfig, FiscalProfile
 from apps.invoices.serializers import FiscalProfileSerializer
 from apps.invoices.services import emit_fiscal_invoice
+from apps.invoices.tests.test_acbrlib_provider import ambiente  # noqa: F401
 from apps.invoices.tests.test_fiscal_profile_strictness import (
     _config,
     _fake_authorized,
@@ -49,3 +50,37 @@ def test_importar_a_planilha_grava_o_codigo_completo(account):
     perfil = FiscalProfile(account=account, **serializer.validated_data)
     assert (perfil.cst_icms, perfil.pis_cst, perfil.cofins_cst) == ("00", "04", "01")
     assert (perfil.ibs_cbs_cst, perfil.ibs_cbs_cclass_trib) == ("000", "000001")
+
+
+def test_ini_da_acbrlib_leva_o_cst_com_dois_digitos(ambiente, monkeypatch):  # noqa: F811
+    """O caminho inteiro até o comunicador: perfil com "4" → INI com CST=04."""
+    from apps.invoices.models import FiscalProfile as Perfil
+    from apps.invoices.tests.test_acbrlib_provider import Comunicador
+    from apps.orders.models import OrderItem
+
+    perfil = Perfil.objects.create(account=ambiente.pedido.account, name="REFRI", ncm="22021000",
+                                   cfop="5405", cst_icms="60", pis_cst="4", cofins_cst="4")
+    produto = OrderItem.all_objects.filter(order=ambiente.pedido).first().product
+    produto.fiscal_profile = perfil
+    produto.save(update_fields=["fiscal_profile"])
+    ambiente.config.crt = FiscalConfig.CRT_NORMAL
+    ambiente.config.save(update_fields=["crt"])
+    comunicador = Comunicador("online")
+    monkeypatch.setattr("apps.invoices.acbrlib.cliente.requests.request", comunicador)
+
+    emit_fiscal_invoice(ambiente.pedido, user=ambiente.user)
+
+    ini = comunicador.chamadas[0][1]["ini"]
+    assert "[PIS001]\nCST=04" in ini and "[COFINS001]\nCST=04" in ini
+
+
+def test_migracao_corrige_o_perfil_ja_gravado_sem_o_zero(account):
+    from importlib import import_module
+
+    from django.apps import apps as registro
+
+    perfil = _profile(account, cst_icms="0", pis_cst="4", cofins_cst="1", csosn="5")
+    import_module("apps.invoices.migrations.0017_cst_com_zero_a_esquerda").completar(registro, None)
+
+    perfil.refresh_from_db()
+    assert (perfil.cst_icms, perfil.pis_cst, perfil.cofins_cst, perfil.csosn) == ("00", "04", "01", "005")

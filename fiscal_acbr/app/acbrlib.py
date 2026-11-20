@@ -91,7 +91,7 @@ class AcbrLib:
         with self.trava:
             self._configurar(pedido, pedido.tp_emis)
             self._ok(self.lib.NFE_LimparLista(self.handle))
-            self._ok(self.lib.NFE_CarregarINI(self.handle, _c(pedido.ini)))
+            self._ok(self.lib.NFE_CarregarINI(self.handle, _c(ini.completar_codigos(pedido.ini))))
             self._ok(self.lib.NFE_Assinar(self.handle))
             self._ok(self.lib.NFE_Validar(self.handle))
             assinado = self._xml_atual()
