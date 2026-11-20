@@ -288,30 +288,14 @@ class InvoiceViewSet(InvoiceAcoesMixin, BaseTenantViewSet):
         if not order:
             return Response({"detail": "Pedido nao encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
-        # So recusa antes de criar quando o restaurante nao emite NFC-e. Com
-        # cadastro incompleto a nota e montada assim mesmo, para o erro ficar
-        # gravado nela e o operador poder corrigir e reenviar.
-        unavailable_reason = fiscal_emission_skipped_reason(order)
-        if unavailable_reason:
-            return Response(
-                {
-                    "emitted": False,
-                    "fiscal_state": "configuration_error",
-                    "printable": False,
-                    "message": f"Nota fiscal nao emitida: {unavailable_reason}",
-                },
-                status=status.HTTP_200_OK,
-            )
-
-        # O pedido pago ja emite sozinho (`order_fully_paid`, em segundo
-        # plano). Quando o PDV pede logo depois, a nota que existe E a
-        # resposta — devolver 400 fazia o caixa ver "Pedido ja possui nota
-        # fiscal emitida" numa venda que deu certo, e o DANFE nao saia.
+        # A NOTA QUE EXISTE E A RESPOSTA, e vem ANTES de qualquer recusa. O
+        # pedido pago ja emite sozinho (`order_fully_paid`): devolver 400 fazia
+        # o caixa ver "ja possui nota" numa venda que deu certo. E a nota que a
+        # LOJA emitiu (ACBrLib) chega aqui pela sincronizacao: a recusa "venda
+        # feita na loja" vale para EMITIR, nao para imprimir a que ja existe.
         # QUEM PEDIU IMPRIME. Um terminal identificado entrega o cupom ele
-        # mesmo, no gesto de concluir a venda. A marca fica na NOTA porque a
-        # autorizacao da SEFAZ chega depois — por webhook ou consulta — e sem
-        # ela aqueles caminhos criavam um cupom automatico que o agente local
-        # imprimia antes de o terminal pedir o dele: duas vias da mesma venda.
+        # mesmo; a marca fica na NOTA porque a autorizacao chega depois, e sem
+        # ela o agente local imprimia antes do terminal: duas vias da venda.
         from apps.invoices.nota_ja_emitida import responder_com_a_nota_existente
         from apps.invoices.services import mark_terminal_prints
         from apps.payments.terminals import installation_id_from_request
@@ -319,6 +303,16 @@ class InvoiceViewSet(InvoiceAcoesMixin, BaseTenantViewSet):
         by_terminal = bool(installation_id_from_request(request))
         if (existente := responder_com_a_nota_existente(order, request, by_terminal=by_terminal)) is not None:
             return existente
+
+        # So recusa antes de criar quando este servidor nao emite a nota. Com
+        # cadastro incompleto a nota e montada assim mesmo, para o erro ficar
+        # gravado nela e o operador poder corrigir e reenviar.
+        unavailable_reason = fiscal_emission_skipped_reason(order)
+        if unavailable_reason:
+            return Response({
+                "emitted": False, "fiscal_state": "configuration_error", "printable": False,
+                "message": f"Nota fiscal nao emitida: {unavailable_reason}",
+            }, status=status.HTTP_200_OK)
         try:
             invoice = emit_fiscal_invoice(
                 order,

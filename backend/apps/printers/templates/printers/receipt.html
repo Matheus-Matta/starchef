@@ -51,8 +51,9 @@
   <table>
     {% for item in items %}{% if item.status != "cancelled" %}
       <tr>
-        {# Por peso, a quantidade aparece uma vez só: o preço por kg completa a mesma linha.
-           A variação sai colada no produto; o adicional vira uma linha indentada abaixo. #}
+        {% comment %}Por peso, a quantidade aparece uma vez só: o preço por kg completa a mesma linha.
+           A variação sai colada no produto; o adicional vira uma linha indentada abaixo.
+           (Comentário curto do Django é de UMA linha só: quebrado em duas, saía impresso.){% endcomment %}
         <td>{{ item.quantity|floatformat:"-3" }} × {{ item.product.name }}{{ item.variation_suffix }}{% if item.product.is_weighed %} {{ item.unit_price }}/kg{% endif %}</td>
         <td>R$ {{ item.total_price }}</td>
       </tr>

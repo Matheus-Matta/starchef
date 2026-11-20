@@ -79,7 +79,8 @@ def motivo_para_a_nuvem_nao_emitir(order, config):
         return ("A nota desta venda é emitida pelo servidor da loja (ACBrLib). Para a nuvem "
                 "emitir as vendas feitas nela, ligue \"A nuvem também emite\" no cadastro fiscal.")
     if not _feita_na_nuvem(order):
-        return "Venda feita na loja: a nota é emitida pelo servidor da loja (ACBrLib)."
+        return ("Venda feita na loja: a nota é emitida pelo servidor da loja (ACBrLib) e fica "
+                "disponível aqui para imprimir quando a sincronização trouxer.")
     return ""
 
 
