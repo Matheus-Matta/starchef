@@ -53,3 +53,19 @@ def test_le_chave_qr_e_digest_do_xml_assinado():
     xml = ('<NFe><infNFe Id="NFe' + "3" * 44 + '"/><DigestValue>abc=</DigestValue>'
            "<infNFeSupl><qrCode><![CDATA[https://qr?p=1]]></qrCode></infNFeSupl></NFe>")
     assert _do_xml(xml) == {"chave": "3" * 44, "qrcode": "https://qr?p=1", "digest_value": "abc="}
+
+
+def test_erro_de_schema_com_url_do_namespace_e_documento_invalido():
+    """21/11/2026: o CEST "300504" fora do padrão foi lido como "sem comunicação".
+
+    A mensagem do schema cita o namespace `{http://www.portalfiscal.inf.br/nfe}`,
+    e o "http" casava com falha de rede: a nota ia para contingência e ficava
+    "aguardando autorização" com um dado que a SEFAZ nunca vai aceitar.
+    """
+    mensagem = ("Falha na validação dos dados da nota: 24 TAG:%TAGNIVEL% ID:I05c/CEST"
+                "(Código Identificador da Substitução Tributária) - Tamanho menor que o "
+                "mínimo permitido [300504]. --> 1839 - Element "
+                "'{http://www.portalfiscal.inf.br/nfe}CEST': [facet 'pattern'] The value "
+                "'300504' is not accepted by the pattern '[0-9]{7}'.")
+
+    assert isinstance(_classificar(mensagem), sefaz.DocumentoInvalido)

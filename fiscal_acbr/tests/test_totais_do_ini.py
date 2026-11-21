@@ -74,3 +74,11 @@ def test_o_resto_do_ini_nao_muda():
     texto = completar_totais(INI_DO_BACKEND_ANTIGO)
 
     assert "vProd=60.00" in texto and "[pag001]\ntPag=01" in texto
+
+
+def test_pis_e_cofins_monofasico_ficam_fora_do_total():
+    """21/11/2026: CST 04 com valor no INI — a lib descarta no item; o total também."""
+    texto = completar_totais("[PIS001]\nCST=04\nvPIS=0.10\n[COFINS001]\nCST=4\nvCOFINS=0.46\n"
+                             "[PIS002]\nCST=01\nvPIS=0.33\n[Total]\nvNF=10.00\n")
+
+    assert "vPIS=0.33" in texto and "vCOFINS=0.00" in texto

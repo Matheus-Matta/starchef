@@ -20,6 +20,10 @@ TAMANHOS = {
     "cofins_cst": 2,
     "ibs_cbs_cst": 3,
     "ibs_cbs_cclass_trib": 6,
+    # 21/11/2026: "CEST '300504' ... pattern [0-9]{7}" — o 03.005.04 do Excel.
+    # O NCM tem o mesmo risco (capítulos 01 a 09: carne, leite, café).
+    "ncm": 8,
+    "cest": 7,
 }
 
 
@@ -34,3 +38,17 @@ def completar_codigos(attrs):
 def codigo(valor, campo):
     """Um código só, no tamanho do campo: `codigo("4", "pis_cst")` → "04"."""
     return completar_zeros(valor, TAMANHOS[campo]) if valor else valor
+
+
+#: CST do PIS/COFINS sem valor no leiaute (grupos PISNT/COFINSNT): 04 a 09.
+#: 21/11/2026: refrigerante com CST 04 (monofásico) e alíquota no perfil — o
+#: valor ia ao total da nota e a ACBrLib o descartava no item (rejeição 602).
+CST_PIS_COFINS_SEM_VALOR = {"04", "05", "06", "07", "08", "09"}
+
+
+def pis_cofins_tem_valor(cst):
+    return codigo(cst, "pis_cst") not in CST_PIS_COFINS_SEM_VALOR
+
+
+def perfil_tem_valor_pis_cofins(perfil, campo):
+    return bool(perfil) and pis_cofins_tem_valor(getattr(perfil, campo))

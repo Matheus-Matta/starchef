@@ -13,10 +13,17 @@ tem: o item saía sem ICMS e o total com ele (532).
 """
 from decimal import Decimal
 
+from apps.invoices.codigos_fiscais import pis_cofins_tem_valor
+
 #: CST do regime normal cujo grupo traz vBC/pICMS/vICMS próprios.
 CST_COM_ICMS = {"00", "10", "20", "51", "70", "90"}
 #: No Simples, só o CSOSN 900 destaca ICMS próprio.
 CSOSN_COM_ICMS = {"900"}
+
+
+def leva_valor(item, prefixo):
+    """O grupo do PIS/COFINS tem `vPIS`/`vCOFINS`? No PISNT (CST 04-09) não."""
+    return pis_cofins_tem_valor(item.get(f"{prefixo}_situacao_tributaria"))
 
 
 def destaca_icms(item, simples):
@@ -46,6 +53,6 @@ def totais(items, simples):
     return {
         "vBC": str(soma("icms_base_calculo", com_icms)),
         "vICMS": str(soma("icms_valor", com_icms)),
-        "vPIS": str(soma("pis_valor")),
-        "vCOFINS": str(soma("cofins_valor")),
+        "vPIS": str(soma("pis_valor", lambda item: leva_valor(item, "pis"))),
+        "vCOFINS": str(soma("cofins_valor", lambda item: leva_valor(item, "cofins"))),
     }

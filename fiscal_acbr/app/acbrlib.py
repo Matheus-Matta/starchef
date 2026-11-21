@@ -164,7 +164,8 @@ def _classificar(mensagem):
     texto = mensagem.lower()
     if any(p in texto for p in ("certificado", "pfx", "senha", "csc", "biblioteca")):
         return sefaz.FalhaDeConfiguracao(mensagem, _motivo_de_configuracao(texto))
-    if any(p in texto for p in ("schema", "validar", "rejei", "ini inv")):
+    # "valida" antes de "http": o erro de schema cita o namespace {http://www.portalfiscal...}.
+    if any(p in texto for p in ("schema", "valida", "rejei", "ini inv", "element '{")):
         return sefaz.DocumentoInvalido(mensagem)
     if any(p in texto for p in ("timeout", "tempo limite", "timed out", "read timed")):
         return sefaz.FalhaIncerta(mensagem)

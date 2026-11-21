@@ -28,7 +28,7 @@ class DocumentoFiscal(DocumentoRegras):
             "numero_item": item.line_number,
             "codigo_produto": item.code or str(item.line_number),
             "descricao": item.description,
-            "codigo_ncm": item.ncm or "00000000",
+            "codigo_ncm": codigo(item.ncm, "ncm") or "00000000",
             "cfop": item.cfop or (config.default_profile and config.default_profile.cfop) or "5102",
             "unidade_comercial": item.unit,
             "quantidade_comercial": str(item.quantity),
@@ -51,7 +51,7 @@ class DocumentoFiscal(DocumentoRegras):
             payload["cfop"] = cfop_do_csosn.ajustar(
                 payload["cfop"], payload["icms_situacao_tributaria"], descricao=item.description)
         if item.cest:
-            payload["codigo_cest"] = item.cest
+            payload["codigo_cest"] = codigo(item.cest, "cest")
         if discount:
             payload["valor_desconto"] = str(discount)
         if other_expenses:

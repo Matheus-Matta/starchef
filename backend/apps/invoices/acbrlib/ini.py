@@ -165,6 +165,8 @@ def _produto(item):
 
 
 def _tributo(item, prefixo, campo_aliquota, campo_valor):
+    if not ini_impostos.leva_valor(item, prefixo):
+        return {"CST": item[f"{prefixo}_situacao_tributaria"]}
     campos = {"CST": item[f"{prefixo}_situacao_tributaria"], campo_valor: item[f"{prefixo}_valor"]}
     if item.get(f"{prefixo}_aliquota_porcentual"):
         campos["vBC"] = item[f"{prefixo}_base_calculo"]

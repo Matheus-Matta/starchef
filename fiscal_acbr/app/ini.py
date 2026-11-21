@@ -31,9 +31,10 @@ def primeira(secoes, *nomes_ou_prefixos):
     return {}
 
 
-#: Seção do item no INI → (campo do código, quantos dígitos ele tem).
-_CODIGOS = {"pis": ("CST", 2), "cofins": ("CST", 2), "icms": ("CST", 2)}
-_CSOSN = 3
+#: Seção do item no INI → {campo do código: quantos dígitos ele tem}.
+#: 21/11/2026: "CEST '300504' ... pattern [0-9]{7}" — o mesmo Excel, no CEST.
+_CODIGOS = {"pis": {"CST": 2}, "cofins": {"CST": 2}, "icms": {"CST": 2, "CSOSN": 3},
+            "produto": {"CEST": 7, "NCM": 8}}
 
 
 def completar_codigos(texto):
@@ -52,10 +53,8 @@ def completar_codigos(texto):
             secao = limpa[1:-1].rstrip("0123456789").lower()
         elif "=" in limpa:
             chave, valor = (parte.strip() for parte in limpa.split("=", 1))
-            campo, tamanho = _CODIGOS.get(secao, ("", 0))
-            if secao == "icms" and chave.upper() == "CSOSN":
-                campo, tamanho = "CSOSN", _CSOSN
-            if campo and chave.upper() == campo and valor.isdigit() and len(valor) < tamanho:
+            tamanho = _CODIGOS.get(secao, {}).get(chave.upper(), 0)
+            if valor.isdigit() and len(valor) < tamanho:
                 linha = f"{chave}={valor.zfill(tamanho)}"
         linhas.append(linha)
     return "\n".join(linhas)

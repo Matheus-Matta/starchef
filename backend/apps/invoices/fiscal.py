@@ -1,16 +1,16 @@
-"""
-Utilitarios fiscais puros (sem estado): chave de acesso, QR Code NFC-e e tributos.
+"""Utilitarios fiscais puros (sem estado): chave de acesso, QR Code NFC-e e tributos.
 
 Implementam a parte *deterministica* da NFC-e/NF-e — o que nao depende de
 certificado nem da SEFAZ. As partes que dependem de integracao externa
 (assinatura A1, transmissao, protocolo de autorizacao) ficam nos providers,
 propositalmente em branco ate a configuracao.
-
 Referencias: Manual de Orientacao do Contribuinte (MOC) NF-e/NFC-e.
 """
 import hashlib
 import secrets
 from decimal import ROUND_HALF_UP, Decimal
+
+from apps.invoices.codigos_fiscais import perfil_tem_valor_pis_cofins as tem_valor
 
 # Codigo IBGE da UF (cUF) — usado no inicio da chave de acesso.
 UF_CODES = {
@@ -98,8 +98,8 @@ def compute_item_taxes(*, total_price, profile):
         return (base * Decimal(str(rate or 0)) / Decimal("100")).quantize(TWO, rounding=ROUND_HALF_UP)
 
     icms_value = pct(profile.icms_rate if profile else 0)
-    pis_value = pct(profile.pis_rate if profile else 0)
-    cofins_value = pct(profile.cofins_rate if profile else 0)
+    pis_value = pct(profile.pis_rate if tem_valor(profile, "pis_cst") else 0)  # CST 04-09: sem valor (602)
+    cofins_value = pct(profile.cofins_rate if tem_valor(profile, "cofins_cst") else 0)
     approx_value = pct(profile.approx_tax_rate if profile else 0)  # Lei 12.741 (tributos aprox.)
     return {
         "icms_base": base,

@@ -14,6 +14,9 @@ from decimal import Decimal, InvalidOperation
 
 CST_COM_ICMS = {"00", "10", "20", "51", "70", "90"}
 CSOSN_COM_ICMS = {"900"}
+#: PIS/COFINS CST 04 a 09 (grupo PISNT): a lib descarta o valor no item, e o
+#: total que o somasse daria a 602 (21/11/2026, refrigerante monofásico).
+CST_SEM_VALOR = {"04", "05", "06", "07", "08", "09"}
 
 
 def _numero(valor):
@@ -25,28 +28,26 @@ def _numero(valor):
 
 def _somas(linhas):
     somas = dict.fromkeys(("vBC", "vICMS", "vPIS", "vCOFINS"), Decimal("0.00"))
-    secao, icms = "", {}
+    secao, campos = "", {}
 
-    def fechar_icms():
-        situacao = icms.get("CST") or icms.get("CSOSN") or ""
-        if situacao in CST_COM_ICMS | CSOSN_COM_ICMS:
-            somas["vBC"] += _numero(icms.get("vBC"))
-            somas["vICMS"] += _numero(icms.get("vICMS"))
+    def fechar():
+        situacao = (campos.get("CST") or campos.get("CSOSN") or "").zfill(2)
+        if secao == "icms" and situacao in CST_COM_ICMS | CSOSN_COM_ICMS:
+            somas["vBC"] += _numero(campos.get("vBC"))
+            somas["vICMS"] += _numero(campos.get("vICMS"))
+        elif secao in ("pis", "cofins") and situacao not in CST_SEM_VALOR:
+            chave = f"v{secao.upper()}"
+            somas[chave] += _numero(campos.get(chave))
 
     for linha in linhas:
         limpa = linha.strip()
         if limpa.startswith("[") and limpa.endswith("]"):
-            if secao == "icms":
-                fechar_icms()
-            secao, icms = limpa[1:-1].rstrip("0123456789").lower(), {}
+            fechar()
+            secao, campos = limpa[1:-1].rstrip("0123456789").lower(), {}
         elif "=" in limpa:
             chave, valor = (parte.strip() for parte in limpa.split("=", 1))
-            if secao == "icms":
-                icms[chave] = valor
-            elif secao in ("pis", "cofins") and chave == f"v{secao.upper()}":
-                somas[chave] += _numero(valor)
-    if secao == "icms":
-        fechar_icms()
+            campos[chave] = valor
+    fechar()
     return somas
 
 
