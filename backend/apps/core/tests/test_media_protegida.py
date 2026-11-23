@@ -1,7 +1,6 @@
 """O certificado A1 não pode ser baixado pela URL de /media/."""
 
 import pytest
-from django.test import override_settings
 
 from apps.core.media_protegida import caminho_privado
 
