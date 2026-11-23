@@ -244,7 +244,17 @@ urlpatterns = [
 if settings.DEBUG:
     # Em dev o Django serve estáticos e media diretamente.
     urlpatterns += staticfiles_urlpatterns()
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Mesma trava da produção: `static()` serviria a pasta de certificados.
+    from django.urls import re_path
+    from apps.core.media_protegida import servir_media
+
+    urlpatterns += [
+        re_path(
+            rf"^{settings.MEDIA_URL.lstrip('/')}(?P<path>.*)$",
+            servir_media,
+            {"document_root": settings.MEDIA_ROOT},
+        ),
+    ]
 else:
     # Em produção:
     #  - estáticos são servidos pelo WhiteNoise (middleware, hasheados/comprimidos);
@@ -253,7 +263,7 @@ else:
     #    posteriores não apareceriam. Não há proxy reverso na frente servindo
     #    /media/ direto de um volume — isto é o único caminho de servi-la.
     from django.urls import re_path
-    from django.views.static import serve as media_serve
+    from apps.core.media_protegida import servir_media as media_serve
 
     media_prefix = settings.MEDIA_URL.lstrip("/")
     urlpatterns += [

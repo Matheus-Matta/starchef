@@ -12,6 +12,10 @@
 }
 
 :80 {
+	# Certificado A1 (.pfx) nunca sai pela URL; o backend também recusa.
+	@certificados path_regexp (?i)^/media/+certificates(/|$)
+	respond @certificados 404
+
 	@backend path /api/* /ws/* /admin /admin/* /static/* /media/* /health/*
 	handle @backend {
 		reverse_proxy backend:8000
