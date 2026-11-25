@@ -29,6 +29,7 @@ from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.invoices import contingencia_offline
 from apps.invoices.models import Invoice
+from apps.invoices.nota_do_desktop import do_desktop
 
 #: Estados em que a SEFAZ pode já ter a nota: recriar duplicaria a venda.
 _CONSULTAR_ANTES = {
@@ -53,6 +54,8 @@ def recriar_nota(invoice, *, user=None):
     with transaction.atomic():
         nota = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
         with tenant_context(nota.account):
+            if do_desktop(nota):
+                raise NotaNaoRecriavel("Esta nota foi emitida no StarChef Desktop: só o terminal que a emitiu pode refazê-la.")
             estado = fiscal_state_of(nota)
             if estado == "authorized":
                 raise NotaNaoRecriavel("Nota autorizada não é recriada: cancele-a, se for o caso.")

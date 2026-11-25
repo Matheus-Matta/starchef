@@ -37,6 +37,7 @@ from apps.invoices.fiscal import (
     format_access_key,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
+from apps.invoices.nota_do_desktop import PROVEDOR as PROVEDOR_DESKTOP, recusar_se_do_desktop
 from apps.invoices.chave_do_emitente import emitente_da_chave
 from apps.invoices import imprimir_aguardando
 from apps.invoices import contingencia_offline, lei_da_transparencia, models_ibs_cbs, numero_ja_usado
@@ -861,6 +862,7 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
         with tenant_context(locked.account):
             if locked.status == Invoice.STATUS_CANCELLED:
                 return locked  # idempotente: cancelar de novo nao e erro.
+            recusar_se_do_desktop(locked)
             if em_voo_recente(locked):
                 # Descartar agora a daria por "nunca autorizada" enquanto a SEFAZ
                 # pode estar autorizando — e a gravação da emissão a ressuscitaria.
@@ -1008,6 +1010,7 @@ def resend_fiscal_invoice(invoice, *, user=None):
         if em_voo_recente(locked):
             raise ValidationError("Esta nota esta sendo transmitida agora. Aguarde a resposta da SEFAZ.")
         with tenant_context(locked.account):
+            recusar_se_do_desktop(locked)
             if locked.status in {Invoice.STATUS_ISSUED, Invoice.STATUS_CANCELLED}:
                 raise ValidationError("Uma nota autorizada ou cancelada nao pode ser reenviada.")
             config = _resolve_fiscal_config(locked.restaurant, locked.branch)
@@ -1150,7 +1153,8 @@ def reprocess_pending_fiscal_invoices(*, account=None):
     tenant "atual" — cada nota e reprocessada dentro do proprio `tenant_context`.
     """
     logger = logging.getLogger(__name__)
-    queryset = Invoice.all_objects.filter(status=Invoice.STATUS_PENDING)
+    # A do desktop é transmitida por ele: daqui sairia outra chave (`nota_do_desktop.py`).
+    queryset = Invoice.all_objects.filter(status=Invoice.STATUS_PENDING).exclude(provider=PROVEDOR_DESKTOP)
     if account is not None:
         queryset = queryset.filter(account=account)
 
@@ -1485,6 +1489,7 @@ def refresh_fiscal_invoice_status(invoice, *, user=None, manual_print=False):
             if config is None:
                 raise ValidationError("Configuracao fiscal ativa nao encontrada para esta nota.")
 
+            recusar_se_do_desktop(locked)
             provider = get_provider(locked.provider or config.provider)
             if not provider.transmits:
                 raise ValidationError(

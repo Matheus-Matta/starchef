@@ -479,6 +479,33 @@ responde 400 e o banco tem a trava (`fiscal_config_serie_da_nuvem_distinta`)
 para o que não passa por ele (admin, shell). Ao ligar em produção, confira na
 SEFAZ que a série escolhida não tem uso anterior.
 
+## A nota que o StarChef Desktop já emitiu
+
+O StarChef Desktop (Electron, outro repositório) emite com a ACBrLib dele, numa
+série só dele, e manda o XML pronto: `POST /invoices/register/` com
+`{"order": "<uuid>", "xml": "<nfeProc ...>"}` (`nota_do_desktop.py`). O servidor
+guarda; nunca emite de novo.
+
+Tudo que é fato fiscal sai do XML. É conferido: chave e DV, emitente, ambiente,
+série (não pode ser a da loja nem a da nuvem), total do pedido e, na autorizada,
+o protocolo daquela chave. A assinatura digital em si não é validada.
+
+| Resposta | Quando |
+|---|---|
+| 201 / 200 | guardada / reenvio da mesma nota (não duplica) |
+| 400 | XML ilegível, editado, sem assinatura ou normal sem protocolo |
+| 404 | pedido fora do acesso de quem envia |
+| 409 | outro emitente, ambiente, série ou total; pedido já tem outra nota |
+
+Exemplo: a contingência das 20h entra `pending`; às 21h o desktop transmite e
+registra o XML autorizado, e a mesma linha vira `issued`. A contingência que
+chegar atrasada não desfaz a autorizada.
+
+Quem manda nessa nota é o desktop: reenvio, recriação, consulta, cancelamento e
+a varredura de pendentes a recusam ou ignoram (`recusar_se_do_desktop`) — daqui
+ela sairia em outra chave. **A loja que emite pelo desktop usa o provedor
+`manual`**: com outro, o servidor emitiria a segunda nota ao receber a venda paga.
+
 ## Teste no par Docker (loja ⇄ nuvem)
 
 Com o par de `docker/loadtest/docker-compose.pair.yml` no ar (cada lado com o

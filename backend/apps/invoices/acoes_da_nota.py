@@ -22,6 +22,29 @@ _ID_DO_LOTE = r"xml-export/(?P<job_id>[0-9a-fA-F-]{36})"
 
 
 class InvoiceAcoesMixin(InvoiceBulkResendMixin):
+    @action(detail=False, methods=["post"], url_path="register")
+    def register(self, request):
+        """Guarda a NFC-e já emitida no StarChef Desktop: POST { order, xml } (`nota_do_desktop.py`)."""
+        from apps.invoices.nota_do_desktop import NotaEmConflito, registrar
+        from apps.orders.models import Order
+        from apps.payments.terminals import installation_id_from_request
+
+        try:
+            pedidos = Order.objects.filter(account=self._account(), pk=request.data.get("order"))
+            restaurante = self._restaurante_de_quem_pede()
+            if restaurante is not None:  # "" = perfil sem restaurante: não vê pedido nenhum
+                pedidos = pedidos.filter(restaurant_id=restaurante or None)
+            pedido = pedidos.first()
+            if pedido is None:
+                return Response({"detail": "Pedido nao encontrado."}, status=status.HTTP_404_NOT_FOUND)
+            nota, criada = registrar(
+                pedido, request.data.get("xml"), user=request.user, terminal=installation_id_from_request(request))
+        except NotaEmConflito as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return self._serialize(nota, status.HTTP_201_CREATED if criada else status.HTTP_200_OK)
+
     @action(detail=True, methods=["post"], url_path="recreate")
     def recreate(self, request, pk=None):
         """Descarta a tentativa travada e emite a nota de novo (`recriar_nota.py`)."""
