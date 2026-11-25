@@ -72,6 +72,34 @@ def registrar(order, xml, *, user=None, terminal=""):
         return nota, criada
 
 
+def registrar_cancelamento(order, dados, *, user=None):
+    """O evento que o terminal já homologou na SEFAZ. Só depois disto o pedido pode ser cancelado aqui.
+
+    Com `verificar`, só confere: o terminal pergunta ANTES de cancelar na SEFAZ.
+    """
+    dados = dados if isinstance(dados, dict) else {}
+    protocolo, motivo = str(dados.get("protocolo") or "").strip(), str(dados.get("justificativa") or "").strip()
+    verificar = dados.get("verificar") is True
+    if not verificar and (not re.fullmatch(r"\d{10,20}", protocolo) or not 15 <= len(motivo) <= 255):
+        raise ValidationError("Informe o protocolo do cancelamento e a justificativa (15 a 255 caracteres).")
+    with transaction.atomic(), tenant_context(order.account):
+        nota = Invoice.all_objects.select_for_update().filter(order=order).first()
+        if not do_desktop(nota) or nota.access_key != str(dados.get("chave") or ""):
+            raise NotaEmConflito("Este pedido não tem essa nota do desktop.")
+        if nota.status == Invoice.STATUS_CANCELLED:
+            return nota
+        if nota.status != Invoice.STATUS_ISSUED:
+            raise NotaEmConflito("Só uma nota autorizada pode ser cancelada.")
+        if verificar:
+            return nota
+        nota.status, nota.error_message, nota.updated_by = Invoice.STATUS_CANCELLED, motivo, user
+        nota.fiscal_payload = {**(nota.fiscal_payload or {}), "protocolo_cancelamento": protocolo}
+        nota.save(update_fields=["status", "error_message", "updated_by", "fiscal_payload", "updated_at"])
+        record_audit(action=AuditLog.ACTION_CANCELLED, instance=nota, actor=user, reason=motivo,
+                     metadata={"event": "desktop_invoice_cancelled", "protocol": protocolo})
+        return nota
+
+
 def _conferir(order, lida):
     from apps.invoices.acbrlib.emitente import Emitente
     from apps.invoices.services import _resolve_fiscal_config

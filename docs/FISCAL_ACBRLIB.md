@@ -501,6 +501,11 @@ Exemplo: a contingência das 20h entra `pending`; às 21h o desktop transmite e
 registra o XML autorizado, e a mesma linha vira `issued`. A contingência que
 chegar atrasada não desfaz a autorizada.
 
+O cancelamento também é do desktop. Homologado o evento na SEFAZ, ele manda
+`{"order": ..., "cancelamento": {"chave", "protocolo", "justificativa"}}` para a
+mesma rota; só então o pedido pode ser cancelado aqui. Com `"verificar": true`
+a rota só confere, para o terminal perguntar antes de ir à SEFAZ.
+
 Quem manda nessa nota é o desktop: reenvio, recriação, consulta, cancelamento e
 a varredura de pendentes a recusam ou ignoram (`recusar_se_do_desktop`) — daqui
 ela sairia em outra chave. **A loja que emite pelo desktop usa o provedor
