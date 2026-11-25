@@ -42,6 +42,20 @@ def test_contingencia_pendente_nao_aceita_cancelamento(api_client, pedido):
     assert r.status_code == 409
 
 
+def test_recusa_fica_na_auditoria_e_nao_cria_nota(api_client, pedido):
+    from apps.core.models import AuditLog
+
+    def recusar(**dados):
+        return api_client.post(URL, {"order": str(pedido.pk), "recusa": dados}, format="json")
+
+    assert recusar(situacao="rejected", motivo="778 NCM inexistente", serie=50, numero=7).status_code == 200
+    assert recusar(situacao="authorized", motivo="x").status_code == 400
+    assert recusar(situacao="rejected", motivo=" ").status_code == 400
+    assert not Invoice.all_objects.filter(order=pedido).exists()
+    registro = AuditLog.all_objects if hasattr(AuditLog, "all_objects") else AuditLog.objects
+    assert registro.filter(reason="778 NCM inexistente").count() == 1
+
+
 def _cancelar_pedido(pedido):
     from apps.orders.services import cancel_order
 

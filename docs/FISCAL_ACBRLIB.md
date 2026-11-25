@@ -505,6 +505,8 @@ O cancelamento também é do desktop. Homologado o evento na SEFAZ, ele manda
 `{"order": ..., "cancelamento": {"chave", "protocolo", "justificativa"}}` para a
 mesma rota; só então o pedido pode ser cancelado aqui. Com `"verificar": true`
 a rota só confere, para o terminal perguntar antes de ir à SEFAZ.
+`{"order": ..., "recusa": {"situacao", "motivo"}}` só grava na auditoria por que
+a venda está sem nota.
 
 Quem manda nessa nota é o desktop: reenvio, recriação, consulta, cancelamento e
 a varredura de pendentes a recusam ou ignoram (`recusar_se_do_desktop`) — daqui

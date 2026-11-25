@@ -24,8 +24,8 @@ _ID_DO_LOTE = r"xml-export/(?P<job_id>[0-9a-fA-F-]{36})"
 class InvoiceAcoesMixin(InvoiceBulkResendMixin):
     @action(detail=False, methods=["post"], url_path="register")
     def register(self, request):
-        """Guarda a NFC-e já emitida no StarChef Desktop: POST { order, xml | cancelamento } (`nota_do_desktop.py`)."""
-        from apps.invoices.nota_do_desktop import NotaEmConflito, registrar, registrar_cancelamento
+        """Guarda a NFC-e já emitida no StarChef Desktop: POST { order, xml | cancelamento | recusa } (`nota_do_desktop.py`)."""
+        from apps.invoices.nota_do_desktop import NotaEmConflito, registrar, registrar_cancelamento, registrar_recusa
         from apps.orders.models import Order
         from apps.payments.terminals import installation_id_from_request
 
@@ -39,6 +39,9 @@ class InvoiceAcoesMixin(InvoiceBulkResendMixin):
                 return Response({"detail": "Pedido nao encontrado."}, status=status.HTTP_404_NOT_FOUND)
             if request.data.get("cancelamento"):
                 return self._serialize(registrar_cancelamento(pedido, request.data["cancelamento"], user=request.user))
+            if request.data.get("recusa"):
+                registrar_recusa(pedido, request.data["recusa"], user=request.user)
+                return Response({"detail": "Recusa registrada."})
             nota, criada = registrar(
                 pedido, request.data.get("xml"), user=request.user, terminal=installation_id_from_request(request))
         except NotaEmConflito as exc:

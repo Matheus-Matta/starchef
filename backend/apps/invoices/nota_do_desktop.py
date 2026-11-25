@@ -100,6 +100,18 @@ def registrar_cancelamento(order, dados, *, user=None):
         return nota
 
 
+def registrar_recusa(order, dados, *, user=None):
+    """Por que a venda do desktop está sem nota. Só auditoria: nenhuma nota nasce de uma recusa."""
+    dados = dados if isinstance(dados, dict) else {}
+    motivo = str(dados.get("motivo") or "").strip()[:300]
+    if dados.get("situacao") not in {"rejected", "blocked"} or not motivo:
+        raise ValidationError("Informe a situação e o motivo da recusa.")
+    with tenant_context(order.account):
+        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=motivo, metadata={
+            "event": "desktop_invoice_refused", "situacao": dados["situacao"],
+            **{campo: str(dados.get(campo) or "")[:60] for campo in ("chave", "serie", "numero")}})
+
+
 def _conferir(order, lida):
     from apps.invoices.acbrlib.emitente import Emitente
     from apps.invoices.services import _resolve_fiscal_config
