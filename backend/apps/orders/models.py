@@ -178,6 +178,13 @@ class Order(TenantModel):
     # sobrescrever: o que foi registrado no pedido é mais recente e mais
     # específico, e apagá-lo trocaria o rastro de quem fechou pelo de quem abriu.
     metafields = models.JSONField(default=dict, blank=True, help_text="Campos adicionais livres. Dicionário raso, valores escalares curtos.")
+    # O StarChef Desktop com "Usar o Comunicador neste terminal" emite a nota
+    # da venda ele mesmo e a registra depois (`/invoices/register/`). Sem esta
+    # marca, a automática do pagamento emitiria a segunda nota da mesma venda.
+    fiscal_by_terminal = models.BooleanField(
+        default=False,
+        help_text="A NFC-e desta venda é emitida pelo terminal (StarChef Desktop): a nuvem não emite.",
+    )
     delivery_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_status = models.CharField(

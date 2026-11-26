@@ -80,6 +80,7 @@ def executar(*, restaurant, user, dados, responder, simular=False, terminal=None
         # os registros dela.
         with captura, auditoria_em_lote(descartar=simular):
             pedido, nova = _pedido(restaurant, user, order_id, dados)
+            _nota_no_terminal(pedido, dados)
             lancar_itens(pedido, user, dados.get("items") or [])
             _comandas(pedido, user, dados.get("commands") or [], nova, dados.get("command_items"))
             _cozinha(pedido, user, dados.get("kitchen"))
@@ -111,6 +112,17 @@ def _pedido(restaurant, user, order_id, dados):
     extras = {"customer_id": dados["customer"]} if dados.get("customer") else {}
     return create_order(restaurant=restaurant, order_type=tipo, user=user, id=order_id,
                         metafields=dados.get("metafields"), **extras), True
+
+
+def _nota_no_terminal(pedido, dados):
+    """`nota_no_terminal`: o desktop emite a NFC-e desta venda; a nuvem não.
+
+    Só liga, nunca desliga: o reenvio sem a marca (versão antiga do desktop)
+    não pode fazer a nuvem emitir a nota que o terminal já emitiu.
+    """
+    if dados.get("nota_no_terminal") is True and not pedido.fiscal_by_terminal:
+        pedido.fiscal_by_terminal = True
+        pedido.save(update_fields=["fiscal_by_terminal"])
 
 
 def _comandas(pedido, user, comandas, nova, vistas=None):

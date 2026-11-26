@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.access import is_tenant_admin
 from apps.core.viewsets import BaseTenantViewSet
+from apps.invoices.csc_do_desktop import CscDoDesktopMixin
 from apps.invoices.acoes_da_nota import InvoiceAcoesMixin
 from apps.invoices.focus import (
     FocusCompanySyncResult,
@@ -97,7 +98,7 @@ class FiscalProfileViewSet(BaseTenantViewSet):
         return Response(suggestion.as_response())
 
 
-class FiscalConfigViewSet(BaseTenantViewSet):
+class FiscalConfigViewSet(CscDoDesktopMixin, BaseTenantViewSet):
     """Configuracao fiscal por filial (emitente + parametros de emissao)."""
 
     required_module = MODULE_FINANCEIRO
