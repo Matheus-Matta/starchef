@@ -456,10 +456,6 @@ def fiscal_emission_skipped_reason(order):
         motivo = motivo_para_a_nuvem_nao_emitir(order, config)
         if motivo:
             return motivo
-        if getattr(order, "fiscal_by_terminal", False):
-            # `nota_no_terminal` no envio: o StarChef Desktop emitiu (ou vai
-            # emitir) e registra a nota pronta. Emitir aqui seria a segunda.
-            return "A nota desta venda é emitida pelo terminal (StarChef Desktop)."
         if config.document_model == FiscalConfig.MODEL_NFCE and order.total <= 0:
             # Sem valor não há meio de pagamento que a SEFAZ aceite (899).
             return "Pedido de valor zero não gera NFC-e."

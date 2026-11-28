@@ -73,6 +73,10 @@ def _nuvem_dividindo_com_a_loja(order, config):
 
 def motivo_para_a_nuvem_nao_emitir(order, config):
     """Na nuvem, com ACBrLib e loja com servidor próprio: a nota é da loja."""
+    if getattr(order, "fiscal_by_terminal", False):
+        # `nota_no_terminal` no envio: o StarChef Desktop emite e registra a
+        # nota pronta (`/invoices/register/`). Emitir aqui seria a segunda.
+        return "A nota desta venda é emitida pelo terminal (StarChef Desktop)."
     if not _nuvem_dividindo_com_a_loja(order, config):
         return ""
     if not getattr(config, "cloud_emission", False):
